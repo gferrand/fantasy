@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -28,6 +28,20 @@ jobs:
 
       - name: Fetch, validate, and build compact feed
         run: python scripts/build_sleeper_feed.py
+
+      - name: Publish rendered task snapshots to the repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f public/sleeper_feed.json public/sleeper_available_players.json \
+            public/sleeper_feed.html public/sleeper_available_players.html \
+            public/sleeper_task_core.md public/sleeper_task_available.md
+          if git diff --cached --quiet; then
+            echo "No feed changes to commit"
+          else
+            git commit -m "Update Sleeper task snapshots [skip ci]"
+            git push
+          fi
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

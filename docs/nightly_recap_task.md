@@ -62,6 +62,7 @@ This is not standard FPL scoring. Read the live `scoring_settings` object from t
 
 DATA AND VERIFICATION RULES
 PRIMARY DURABLE FEED
+- The most reliable task-readable sources are the rendered GitHub pages `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md` and `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_available.md`. Open those ordinary GitHub pages and parse the JSON code blocks after each hourly snapshot commit.
 - Prefer opening `https://gferrand.github.io/fantasy/sleeper_feed.html` as a normal web page and read the machine-readable JSON inside its `pre` block. The `.json` URL is an alternate endpoint if raw JSON retrieval is supported.
 - Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, and `completed_trades_today`.
 - Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, and completed trades. The core feed intentionally leaves `available_players` empty to stay small enough for reliable scheduled-task retrieval.
