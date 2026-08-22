@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 import json
 from pathlib import Path
 import sys
@@ -167,6 +168,29 @@ def main() -> int:
         json.dumps(availability_feed, ensure_ascii=False, separators=(",", ":")) + "\n"
     )
     availability_temporary.replace(availability_output)
+    for json_path, html_name, title, payload in (
+        (output, "sleeper_feed.html", "Fantasy EPL Sleeper feed", feed),
+        (
+            availability_output,
+            "sleeper_available_players.html",
+            "Fantasy EPL available-player feed",
+            availability_feed,
+        ),
+    ):
+        html_output = ROOT / "public" / html_name
+        html_temporary = html_output.with_suffix(html_output.suffix + ".tmp")
+        rendered = (
+            "<!doctype html><html><head><meta charset=\"utf-8\"><title>"
+            + escape(title)
+            + "</title></head><body><h1>"
+            + escape(title)
+            + "</h1><p>Machine-readable JSON is below.</p><pre id=\"feed\">"
+            + escape(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+            + "</pre></body></html>\n"
+        )
+        html_temporary.write_text(rendered)
+        html_temporary.replace(html_output)
+        print(f"Wrote {html_output} ({html_output.stat().st_size} bytes)")
     print(f"Wrote {output} ({output.stat().st_size} bytes)")
     print(f"Wrote {availability_output} ({availability_output.stat().st_size} bytes)")
     print(f"Available players: {len(feed['available_players'])}; trades today: {len(feed['completed_trades_today'])}")

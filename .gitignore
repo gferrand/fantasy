@@ -11,3 +11,5 @@ data/*.csv
 reports/*.csv
 public/sleeper_feed.json
 public/sleeper_available_players.json
+public/sleeper_feed.html
+public/sleeper_available_players.html
