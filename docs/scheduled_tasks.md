@@ -2,7 +2,7 @@
 
 These prompts are templates for recurring ChatGPT Scheduled Tasks. They are intentionally read-only and advisory. Paste the relevant prompt into ChatGPT when creating a task, then choose the schedule there.
 
-The implemented nightly 10:00 PM Eastern recap has its complete schedule and copy-ready prompt in [`nightly_recap_task.md`](nightly_recap_task.md). The hourly transfer monitor has its complete definition in [`transfer_monitor_task.md`](transfer_monitor_task.md).
+The implemented nightly 10:00 PM Eastern recap is a lean decision-preparation briefing: actionable roster news, the next one to three fixtures, lineup changes, significant league trades, and pickup opportunities. It always sends a brief quiet-day report. Its complete schedule and copy-ready prompt are in [`nightly_recap_task.md`](nightly_recap_task.md). The hourly transfer monitor has its complete definition in [`transfer_monitor_task.md`](transfer_monitor_task.md).
 
 The nightly recap's primary task-readable sources are the rendered GitHub pages `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md` and `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_available.md`; GitHub Actions commits fresh snapshots hourly. The GitHub Pages HTML/JSON feeds remain alternate endpoints. The task should validate `schema_version=1`, `complete=true`, the expected league ID, and a recent `retrieved_at` before using either snapshot. Direct Sleeper endpoints remain a fallback/validation path when the snapshots are unavailable.
 
@@ -65,13 +65,13 @@ Recommend a provisional starting lineup that fits `F F M M M D D D GK FM_FLEX MD
 
 Add these sections to the nightly Los Blancos recap:
 
-COMPLETED TRADES TODAY
+SIGNIFICANT COMPLETED TRADES TODAY
 - First fetch and validate `https://gferrand.github.io/fantasy/sleeper_feed.json`. Prefer its `completed_trades_today` field and use its `transactions`, `users`, `rosters`, and `players` fields for reconstruction.
 - If the feed is unavailable or fails integrity checks, report "Trade data unavailable for this run" with the feed URL and failure before attempting the direct fallback.
 - Read the numeric current week from https://api.sleeper.app/v1/state/clubsoccer:epl, then substitute that number into https://api.sleeper.app/v1/league/1378147559444348928/transactions/{round}. Do not request the literal `{round}` placeholder.
 - Validate that the response is a top-level JSON array, deduplicate by transaction_id, and include only transactions with type `trade`, status `complete`, and a created timestamp on today's America/New_York date.
 - Reconstruct each trade from roster_ids, adds, drops, draft_picks, and waiver_budget, mapping IDs to managers and player names.
-- Summarize managers, players sent and received, completion time, picks or FAAB exchanged, and meaningful fantasy impact. If none occurred, say "No completed league trades today." Do not include ordinary free-agent or waiver moves here.
+- Summarize only trades that materially affect a contender, rival, rostered player, likely target, or the league market. Include managers, players sent and received, completion time, picks or FAAB exchanged, and meaningful fantasy impact. If none occurred, say briefly that no significant league trade occurred; for a validated empty trade array, "No completed league trades today." is acceptable. Do not include ordinary free-agent or waiver moves or insignificant trades here.
 - If the endpoint is empty, truncated, non-JSON, or otherwise invalid, say "Trade data unavailable for this run" and name the endpoint and failure. Never convert a parsing failure into "no trades."
 
 WAIVER AUCTION TARGETS
