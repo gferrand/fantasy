@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""Build the compact, public JSON feed consumed by the scheduled advisor."""
+
+from __future__ import annotations
+
+from datetime import datetime
+import json
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from fantasy_advisor.sleeper import (  # noqa: E402
+    current_roster_player_ids,
+    normalize_completed_trades,
+    available_epl_players,
+    eastern_today,
+)
+from fetch_sleeper_snapshot import fetch_snapshot  # noqa: E402
+
+
+LEAGUE_ID = "1378147559444348928"
+EXCLUDED_NAMES = {"Mohamed Salah", "Leandro Trossard"}
+
+
+def compact_player(player_id: str, player: dict) -> dict:
+    return {
+        "player_id": str(player_id),
+        "name": (
+            player.get("full_name")
+            or (player.get("metadata") or {}).get("full_name")
+            or " ".join(part for part in (player.get("first_name"), player.get("last_name")) if part)
+        ).strip(),
+        "club": player.get("team_abbr"),
+        "positions": player.get("fantasy_positions") or [],
+        "active": player.get("active"),
+        "status": player.get("status"),
+        "injury_status": player.get("injury_status"),
+        "injury_notes": player.get("injury_notes"),
+        "competitions": player.get("competitions") or [],
+    }
+
+
+def build_feed(snapshot: dict) -> dict:
+    players = snapshot["players"]
+    rosters = snapshot["rosters"]
+    users = snapshot["users"]
+    user_by_id = {str(user["user_id"]): user for user in users}
+    roster_names = {
+        int(roster["roster_id"]): (roster.get("metadata") or {}).get("team_name")
+        or user_by_id.get(str(roster.get("owner_id")), {}).get("display_name", "Unknown")
+        for roster in rosters
+    }
+    trades = normalize_completed_trades(
+        snapshot["transactions"],
+        day=eastern_today(),
+        roster_names=roster_names,
+        players=players,
+    )
+    available = available_epl_players(
+        players,
+        rosters,
+        excluded_names=EXCLUDED_NAMES,
+    )
+    owned = current_roster_player_ids(rosters)
+    compact_ids = owned | {item["player_id"] for item in available}
+    for transaction in snapshot["transactions"]:
+        for field in ("adds", "drops"):
+            compact_ids.update(str(pid) for pid in (transaction.get(field) or {}).keys())
+    for row in snapshot["stats"]:
+        if row.get("player_id"):
+            compact_ids.add(str(row["player_id"]))
+
+    compact_stats = []
+    for row in snapshot["stats"]:
+        player_id = str(row.get("player_id") or "")
+        if not player_id:
+            continue
+        compact_stats.append(
+            {
+                "player_id": player_id,
+                "game_id": row.get("game_id"),
+                "stats": row.get("stats") or {},
+                "player": compact_player(player_id, row.get("player") or {}),
+            }
+        )
+
+    return {
+        "schema_version": 1,
+        "complete": True,
+        "retrieved_at": snapshot["retrieved_at"],
+        "generated_at": datetime.now().astimezone().isoformat(),
+        "league_id": LEAGUE_ID,
+        "round": snapshot["round"],
+        "league": {
+            "name": snapshot["league"].get("name"),
+            "sport": snapshot["league"].get("sport"),
+            "season": snapshot["league"].get("season"),
+            "scoring_settings": snapshot["league"].get("scoring_settings") or {},
+            "roster_positions": snapshot["league"].get("roster_positions") or [],
+            "settings": snapshot["league"].get("settings") or {},
+        },
+        "state": snapshot["state"],
+        "users": [
+            {
+                "user_id": str(user["user_id"]),
+                "display_name": user.get("display_name"),
+                "username": user.get("username"),
+                "team_name": (user.get("metadata") or {}).get("team_name"),
+            }
+            for user in users
+        ],
+        "rosters": rosters,
+        "players": {
+            player_id: compact_player(player_id, players[player_id])
+            for player_id in compact_ids
+            if player_id in players
+        },
+        "stats": compact_stats,
+        "transactions": snapshot["transactions"],
+        "completed_trades_today": trades,
+        "available_players": available,
+        "availability_note": (
+            "Sleeper's public API does not distinguish direct free agents from pending waivers. "
+            "Confirm the Add option in Sleeper before acting."
+        ),
+    }
+
+
+def main() -> int:
+    output = ROOT / "public" / "sleeper_feed.json"
+    snapshot = fetch_snapshot(LEAGUE_ID)
+    feed = build_feed(snapshot)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    temporary.write_text(json.dumps(feed, ensure_ascii=False, separators=(",", ":")) + "\n")
+    temporary.replace(output)
+    print(f"Wrote {output} ({output.stat().st_size} bytes)")
+    print(f"Available players: {len(feed['available_players'])}; trades today: {len(feed['completed_trades_today'])}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

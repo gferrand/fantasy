@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.env
+.DS_Store
+
+# Local/generated data can contain large or transient API responses.
+data/*.json
+data/*.csv
+reports/*.csv
+public/sleeper_feed.json
