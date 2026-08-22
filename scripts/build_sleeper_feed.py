@@ -21,6 +21,7 @@ from fetch_sleeper_snapshot import fetch_snapshot  # noqa: E402
 
 
 LEAGUE_ID = "1378147559444348928"
+MANAGER_ID = "1127171221277331456"
 EXCLUDED_NAMES = {"Mohamed Salah", "Leandro Trossard"}
 
 
@@ -63,19 +64,26 @@ def build_feed(snapshot: dict) -> dict:
         rosters,
         excluded_names=EXCLUDED_NAMES,
     )
-    owned = current_roster_player_ids(rosters)
-    compact_ids = owned | {item["player_id"] for item in available}
+    owned = {
+        str(player_id)
+        for roster in rosters
+        if str(roster.get("owner_id")) == MANAGER_ID
+        for player_id in (roster.get("players") or [])
+    }
+    # Keep the core feed small enough for scheduled-task retrieval. The full
+    # unrostered universe is published separately below.
+    compact_ids = set(owned)
     for transaction in snapshot["transactions"]:
         for field in ("adds", "drops"):
             compact_ids.update(str(pid) for pid in (transaction.get(field) or {}).keys())
-    for row in snapshot["stats"]:
-        if row.get("player_id"):
-            compact_ids.add(str(row["player_id"]))
+    # Stats for the complete league are too large for reliable scheduled-task
+    # retrieval. The core feed carries stats for owned/transaction-referenced
+    # players; the availability supplement remains the bounded pickup source.
 
     compact_stats = []
     for row in snapshot["stats"]:
         player_id = str(row.get("player_id") or "")
-        if not player_id:
+        if not player_id or player_id not in compact_ids:
             continue
         compact_stats.append(
             {
@@ -120,7 +128,11 @@ def build_feed(snapshot: dict) -> dict:
         "stats": compact_stats,
         "transactions": snapshot["transactions"],
         "completed_trades_today": trades,
-        "available_players": available,
+        "available_players": [],
+        "available_players_complete": False,
+        "available_players_feed_url": (
+            "https://gferrand.github.io/fantasy/sleeper_available_players.json"
+        ),
         "availability_note": (
             "Sleeper's public API does not distinguish direct free agents from pending waivers. "
             "Confirm the Add option in Sleeper before acting."
@@ -136,7 +148,27 @@ def main() -> int:
     temporary = output.with_suffix(output.suffix + ".tmp")
     temporary.write_text(json.dumps(feed, ensure_ascii=False, separators=(",", ":")) + "\n")
     temporary.replace(output)
+    available = available_epl_players(
+        snapshot["players"], snapshot["rosters"], excluded_names=EXCLUDED_NAMES
+    )
+    availability_output = ROOT / "public" / "sleeper_available_players.json"
+    availability_feed = {
+        "schema_version": 1,
+        "complete": True,
+        "retrieved_at": snapshot["retrieved_at"],
+        "generated_at": feed["generated_at"],
+        "league_id": LEAGUE_ID,
+        "round": snapshot["round"],
+        "available_players": available,
+        "availability_note": feed["availability_note"],
+    }
+    availability_temporary = availability_output.with_suffix(availability_output.suffix + ".tmp")
+    availability_temporary.write_text(
+        json.dumps(availability_feed, ensure_ascii=False, separators=(",", ":")) + "\n"
+    )
+    availability_temporary.replace(availability_output)
     print(f"Wrote {output} ({output.stat().st_size} bytes)")
+    print(f"Wrote {availability_output} ({availability_output.stat().st_size} bytes)")
     print(f"Available players: {len(feed['available_players'])}; trades today: {len(feed['completed_trades_today'])}")
     return 0
 

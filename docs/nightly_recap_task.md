@@ -63,8 +63,10 @@ This is not standard FPL scoring. Read the live `scoring_settings` object from t
 DATA AND VERIFICATION RULES
 PRIMARY DURABLE FEED
 - Fetch `https://gferrand.github.io/fantasy/sleeper_feed.json` directly with a normal user-agent before using any other fantasy data.
-- Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, `completed_trades_today`, and `available_players`.
-- Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, completed trades, and available-player candidate pool. The feed's `availability_note` explains the limitation that Sleeper does not reliably distinguish immediate free agents from pending waivers.
+- Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, and `completed_trades_today`.
+- Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, and completed trades. The core feed intentionally leaves `available_players` empty to stay small enough for reliable scheduled-task retrieval.
+- For waiver and immediate-pickup sections, fetch `https://gferrand.github.io/fantasy/sleeper_available_players.json` and require `schema_version=1`, `complete=true`, the expected league ID, a recent `retrieved_at`, and a complete `available_players` array. Its `availability_note` explains the limitation that Sleeper does not reliably distinguish immediate free agents from pending waivers.
+- If the availability supplement is missing, stale, invalid, incomplete, or truncated, mark both pickup sections unavailable; never interpret that failure as no available players.
 - If the feed is missing, stale, invalid, incomplete, or has the wrong league ID, explicitly report the affected section as unavailable and include the feed URL and failure. Do not silently treat a feed failure as zero trades or an empty waiver pool.
 
 DIRECT SLEEPER FALLBACK

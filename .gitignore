@@ -10,3 +10,4 @@ data/*.json
 data/*.csv
 reports/*.csv
 public/sleeper_feed.json
+public/sleeper_available_players.json
