@@ -11,7 +11,7 @@
 | Output | Concise briefing in the task conversation |
 | Permissions | Read-only; no Sleeper actions |
 
-The scheduled task must fetch live Sleeper JSON directly on every run. The embedded context below is fallback guidance only; it is not authoritative for the current roster, scoring map, or player IDs.
+The scheduled task should use the durable compact feed below as its primary Sleeper data source. The feed is rebuilt hourly by GitHub Actions from live Sleeper endpoints and published through GitHub Pages. The embedded context below is fallback guidance only; it is not authoritative for the current roster, scoring map, or player IDs.
 
 ## Complete task prompt
 
@@ -61,7 +61,14 @@ SCORING
 This is not standard FPL scoring. Read the live `scoring_settings` object from the league endpoint on every run. Calculate player fantasy points by matching eligible positions to the live `pos_{position}_*` scoring keys and the current stats fields. Show scoring components and exact totals when the raw data supports them; never substitute standard FPL scoring or the stale summary below.
 
 DATA AND VERIFICATION RULES
-Use a normal user-agent and fetch these public Sleeper URLs directly; do not rely on search snippets:
+PRIMARY DURABLE FEED
+- Fetch `https://gferrand.github.io/fantasy/sleeper_feed.json` directly with a normal user-agent before using any other fantasy data.
+- Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, `completed_trades_today`, and `available_players`.
+- Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, completed trades, and available-player candidate pool. The feed's `availability_note` explains the limitation that Sleeper does not reliably distinguish immediate free agents from pending waivers.
+- If the feed is missing, stale, invalid, incomplete, or has the wrong league ID, explicitly report the affected section as unavailable and include the feed URL and failure. Do not silently treat a feed failure as zero trades or an empty waiver pool.
+
+DIRECT SLEEPER FALLBACK
+Only if the feed is unavailable or fails integrity checks, use these public Sleeper URLs directly; do not rely on search snippets:
 - `https://api.sleeper.app/v1/league/1378147559444348928`
 - `https://api.sleeper.app/v1/league/1378147559444348928/users`
 - `https://api.sleeper.app/v1/league/1378147559444348928/rosters`
@@ -69,6 +76,8 @@ Use a normal user-agent and fetch these public Sleeper URLs directly; do not rel
 - `https://api.sleeper.app/v1/players/clubsoccer:epl`
 - `https://api.sleeper.app/v1/league/1378147559444348928/transactions/{round}` after substituting the numeric current round from the live state endpoint
 - `https://api.sleeper.com/stats/clubsoccer:epl/2026?season_type=regular`
+
+The direct Sleeper endpoints are a fallback and validation path; do not mix partial direct responses with the feed as if they were one complete snapshot. Use `api.sleeper.com/stats/...` for stats; the equivalent `api.sleeper.app/v1/stats/...` route is invalid.
 
 Use `api.sleeper.com/stats/...` for stats; the equivalent `api.sleeper.app/v1/stats/...` route is invalid. Resolve my current roster by finding `owner_id=1127171221277331456`, then resolve player IDs through current player metadata. Use the live state endpoint for season/week. The soccer league matchup endpoint may return 404; if so, still report per-player calculated points and Los Blancos' live `fpts`/`fpts_decimal` when present, and say only that head-to-head matchup totals are unavailable. Never say all Sleeper scoring data is inaccessible when the league, scoring, or stats JSON was fetched successfully. Cite the exact Sleeper URLs and retrieval date.
 

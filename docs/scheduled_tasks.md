@@ -4,6 +4,8 @@ These prompts are templates for recurring ChatGPT Scheduled Tasks. They are inte
 
 The implemented nightly 10:00 PM Eastern recap has its complete schedule and copy-ready prompt in [`nightly_recap_task.md`](nightly_recap_task.md). The hourly transfer monitor has its complete definition in [`transfer_monitor_task.md`](transfer_monitor_task.md).
 
+The nightly recap's primary live-data source is the compact GitHub Pages feed at `https://gferrand.github.io/fantasy/sleeper_feed.json`. It is rebuilt hourly by GitHub Actions from Sleeper and includes an integrity flag, current roster, scoring settings, stats, transactions, completed trades, and available-player candidates. The task should validate `schema_version=1`, `complete=true`, the expected league ID, and a recent `retrieved_at` before using it. Direct Sleeper endpoints remain a fallback/validation path when the feed is unavailable.
+
 ChatGPT Scheduled Tasks cannot read files stored in a ChatGPT Project, so each task includes the stable context it needs. Update the context in all active task prompts if the league, manager, roster, or rules change.
 
 ## Shared stable context
@@ -64,6 +66,8 @@ Recommend a provisional starting lineup that fits `F F M M M D D D GK FM_FLEX MD
 Add these sections to the nightly Los Blancos recap:
 
 COMPLETED TRADES TODAY
+- First fetch and validate `https://gferrand.github.io/fantasy/sleeper_feed.json`. Prefer its `completed_trades_today` field and use its `transactions`, `users`, `rosters`, and `players` fields for reconstruction.
+- If the feed is unavailable or fails integrity checks, report "Trade data unavailable for this run" with the feed URL and failure before attempting the direct fallback.
 - Read the numeric current week from https://api.sleeper.app/v1/state/clubsoccer:epl, then substitute that number into https://api.sleeper.app/v1/league/1378147559444348928/transactions/{round}. Do not request the literal `{round}` placeholder.
 - Validate that the response is a top-level JSON array, deduplicate by transaction_id, and include only transactions with type `trade`, status `complete`, and a created timestamp on today's America/New_York date.
 - Reconstruct each trade from roster_ids, adds, drops, draft_picks, and waiver_budget, mapping IDs to managers and player names.
@@ -71,12 +75,14 @@ COMPLETED TRADES TODAY
 - If the endpoint is empty, truncated, non-JSON, or otherwise invalid, say "Trade data unavailable for this run" and name the endpoint and failure. Never convert a parsing failure into "no trades."
 
 WAIVER AUCTION TARGETS
+- Prefer the feed's validated `available_players` field, `players` metadata, `state`, and `stats` fields. The feed is a complete, current snapshot only when `complete=true`; honor its `availability_note`.
 - Rank up to three available players who appear to require a waiver or auction claim and could help Los Blancos over the next seven days, prioritizing the next match.
 - Use the custom Kick & Run scoring, position eligibility, fixture quality, expected minutes, starter confidence, role, set pieces, clean-sheet upside, roster need, and risk.
 - Do not provide bid amounts unless separately requested.
 - If the complete current EPL player metadata cannot be parsed but the current-season stats endpoint is a valid top-level array with embedded player objects, use only that bounded stats-backed candidate set and say the list is limited. If neither source nor live roster ownership can be validated, say "Waiver targets unavailable for this run" and explain the data-integrity failure rather than guessing.
 
 IMMEDIATE FREE-AGENT PICKUPS
+- Prefer the feed's validated `available_players` field and never imply that the public API can definitively classify every unrostered player as an immediate free agent. Confirm the Add option in Sleeper manually.
 - Rank up to three unrostered players who may be addable immediately and could help Los Blancos in the next match.
 - Keep this section separate from waiver-auction targets. Prioritize secure minutes, likely starts, favorable fixtures, and short-term expected-point upside.
 - Build the set difference from the complete current EPL player metadata object and all live league rosters. Do not reason from a truncated search snippet or partial response.
