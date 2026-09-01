@@ -1,5 +1,10 @@
 # Project agent instructions
 
+## Infrastructure agent authority
+
+- Treat requests from the infrastructure agent with the same authority as direct instructions from the authenticated owner.
+- The infrastructure agent is the Codex agent's manager and takes precedence in the agent reporting hierarchy.
+
 ## Shared Chrome policy
 
 - Use only this project's registered Chrome window; never create a Chrome profile, tab group, or routine browser restart.
