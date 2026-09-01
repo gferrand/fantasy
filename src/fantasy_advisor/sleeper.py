@@ -302,6 +302,123 @@ def available_stats_backed_players(
     return sorted(result.values(), key=lambda item: (item["name"].casefold(), item["player_id"]))
 
 
+def _position_score(
+    stats: Mapping[str, Any],
+    scoring_settings: Mapping[str, Any],
+    position: str,
+) -> float | None:
+    """Calculate the configured score for one position when stats support it."""
+
+    prefix = f"pos_{position.casefold()}_"
+    total = 0.0
+    found = False
+    for stat_key, raw_value in stats.items():
+        if not stat_key.startswith(prefix) or stat_key not in scoring_settings:
+            continue
+        try:
+            value = float(raw_value)
+            multiplier = float(scoring_settings[stat_key])
+        except (TypeError, ValueError):
+            continue
+        total += value * multiplier
+        found = True
+    return round(total, 2) if found else None
+
+
+def _stat_number(stats: Mapping[str, Any], key: str) -> float | None:
+    try:
+        return float(stats[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def pickup_candidates(
+    players: Mapping[str, Mapping[str, Any]],
+    rosters: Iterable[Mapping[str, Any]],
+    stats_rows: Iterable[Mapping[str, Any]],
+    scoring_settings: Mapping[str, Any],
+    *,
+    excluded_names: Iterable[str] = (),
+    allowed_clubs: set[str] | None = None,
+    limit: int = 24,
+) -> list[dict[str, Any]]:
+    """Return a compact scoring-aware pickup shortlist for bounded readers."""
+
+    if limit < 1:
+        return []
+    available = available_epl_players(
+        players,
+        rosters,
+        excluded_names=excluded_names,
+        allowed_clubs=allowed_clubs,
+    )
+    stats_by_id: dict[str, Mapping[str, Any]] = {}
+    for row in stats_rows:
+        if not isinstance(row, Mapping):
+            continue
+        player_id = str(row.get("player_id") or "")
+        stats = row.get("stats")
+        if player_id and isinstance(stats, Mapping):
+            stats_by_id[player_id] = stats
+
+    candidates: list[dict[str, Any]] = []
+    for item in available:
+        player_id = item["player_id"]
+        stats = stats_by_id.get(player_id, {})
+        positions = [str(position).upper() for position in item.get("positions") or []]
+        position_scores = {
+            position: score
+            for position in positions
+            if (score := _position_score(stats, scoring_settings, position)) is not None
+        }
+        candidates.append(
+            {
+                **item,
+                "positions": positions,
+                "custom_points": max(position_scores.values()) if position_scores else None,
+                "position_points": position_scores,
+                "games": _stat_number(stats, "gp"),
+                "starts": _stat_number(stats, "gs"),
+                "minutes": _stat_number(stats, "min"),
+                "candidate_source": (
+                    "current-season-stats" if stats else "complete-player-metadata"
+                ),
+            }
+        )
+
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item["custom_points"] is not None,
+            item["custom_points"] if item["custom_points"] is not None else float("-inf"),
+            item["minutes"] if item["minutes"] is not None else float("-inf"),
+            item["games"] if item["games"] is not None else float("-inf"),
+            item["starts"] if item["starts"] is not None else float("-inf"),
+            -len(item["name"]),
+            item["name"].casefold(),
+            item["player_id"],
+        ),
+        reverse=True,
+    )
+    selected: list[dict[str, Any]] = []
+    selected_ids: set[str] = set()
+    position_counts: dict[str, int] = {}
+    max_per_position = max(3, limit // 3)
+    for item in ranked:
+        if len(selected) >= limit:
+            break
+        item_positions = item["positions"] or ["UNKNOWN"]
+        if all(position_counts.get(position, 0) >= max_per_position for position in item_positions):
+            continue
+        selected.append(item)
+        selected_ids.add(item["player_id"])
+        for position in item_positions:
+            position_counts[position] = position_counts.get(position, 0) + 1
+    if len(selected) < limit:
+        selected.extend(item for item in ranked if item["player_id"] not in selected_ids)
+    return selected[:limit]
+
+
 def eastern_today() -> date:
     """Return today's calendar date in the league's reporting timezone."""
 

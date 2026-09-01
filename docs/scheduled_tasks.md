@@ -4,7 +4,7 @@ These prompts are templates for recurring ChatGPT Scheduled Tasks. They are inte
 
 The implemented nightly 10:00 PM Eastern recap is a lean decision-preparation briefing: actionable roster news, the next one to three fixtures, lineup changes, significant league trades, and pickup opportunities. It always sends a brief quiet-day report. Its complete schedule and copy-ready prompt are in [`nightly_recap_task.md`](nightly_recap_task.md). The hourly transfer monitor has its complete definition in [`transfer_monitor_task.md`](transfer_monitor_task.md).
 
-The nightly recap's primary task-readable sources are the rendered GitHub pages `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md` and `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_available.md`; GitHub Actions commits fresh snapshots hourly. The GitHub Pages HTML/JSON feeds remain alternate endpoints. The task should validate `schema_version=1`, `complete=true`, the expected league ID, and a recent `retrieved_at` before using either snapshot. Direct Sleeper endpoints remain a fallback/validation path when the snapshots are unavailable.
+The nightly recap's primary task-readable source is the compact rendered GitHub page `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md`; GitHub Actions commits fresh snapshots hourly. The core snapshot contains a bounded, scoring-aware `available_players` shortlist so pickup guidance survives a failure to retrieve the larger optional availability feed. The GitHub Pages HTML/JSON feeds remain alternate endpoints. The task should validate `schema_version=1`, `complete=true`, the expected league ID, and a recent `retrieved_at` before using a snapshot. Direct Sleeper endpoints remain a fallback/validation path when the snapshots are unavailable.
 
 ChatGPT Scheduled Tasks cannot read files stored in a ChatGPT Project, so each task includes the stable context it needs. Update the context in all active task prompts if the league, manager, roster, or rules change.
 
@@ -75,20 +75,21 @@ SIGNIFICANT COMPLETED TRADES TODAY
 - If the endpoint is empty, truncated, non-JSON, or otherwise invalid, say "Trade data unavailable for this run" and name the endpoint and failure. Never convert a parsing failure into "no trades."
 
 WAIVER AUCTION TARGETS
-- Prefer the feed's validated `available_players` field, `players` metadata, `state`, and `stats` fields. The feed is a complete, current snapshot only when `complete=true`; honor its `availability_note`.
+- Prefer the core feed's validated `available_players` field, `players` metadata, `state`, and `stats` fields. When `available_players_complete=false`, it is a bounded current-season shortlist: rank from it, label the result limited, and do not claim it represents every available player.
+- Optionally fetch `https://gferrand.github.io/fantasy/sleeper_available_players.json` or its rendered GitHub page for the complete current metadata-minus-rosters universe. If the optional feed fails, continue with the validated core shortlist instead of marking this section unavailable.
 - Rank up to three available players who appear to require a waiver or auction claim and could help Los Blancos over the next seven days, prioritizing the next match.
 - Use the custom Kick & Run scoring, position eligibility, fixture quality, expected minutes, starter confidence, role, set pieces, clean-sheet upside, roster need, and risk.
 - Do not provide bid amounts unless separately requested.
-- If the complete current EPL player metadata cannot be parsed but the current-season stats endpoint is a valid top-level array with embedded player objects, use only that bounded stats-backed candidate set and say the list is limited. If neither source nor live roster ownership can be validated, say "Waiver targets unavailable for this run" and explain the data-integrity failure rather than guessing.
+- If the complete current EPL player metadata cannot be parsed but the current-season stats endpoint is a valid top-level array with embedded player objects, use only that bounded stats-backed candidate set and say the list is limited. Say "Waiver targets unavailable for this run" only if the core shortlist, complete availability feed, and stats-backed/direct fallback all fail validation.
 
 IMMEDIATE FREE-AGENT PICKUPS
-- Prefer the feed's validated `available_players` field and never imply that the public API can definitively classify every unrostered player as an immediate free agent. Confirm the Add option in Sleeper manually.
+- Prefer the core feed's validated `available_players` field and never imply that the public API can definitively classify every unrostered player as an immediate free agent. Confirm the Add option in Sleeper manually.
 - Rank up to three unrostered players who may be addable immediately and could help Los Blancos in the next match.
 - Keep this section separate from waiver-auction targets. Prioritize secure minutes, likely starts, favorable fixtures, and short-term expected-point upside.
-- Build the set difference from the complete current EPL player metadata object and all live league rosters. Do not reason from a truncated search snippet or partial response.
+- Use the complete current EPL player metadata object minus all live league rosters when the optional availability feed is valid. Otherwise use the bounded core shortlist and explicitly label it limited. Do not reason from a truncated search snippet or partial response.
 - If the complete player object is unavailable but the current-season stats array is valid, use only its embedded player objects as a limited stats-backed shortlist and label that limitation.
 - Sleeper's public API does not definitively expose direct-free-agent versus pending-waiver status for every unrostered player. State that these are shortlist candidates and include: "Confirm the player shows an Add option in Sleeper before acting."
-- If neither player source nor ownership set can be validated, say "Immediate free-agent targets unavailable for this run" and explain the data-integrity failure.
+- Say "Immediate free-agent targets unavailable for this run" only if the core shortlist, complete availability feed, and stats-backed/direct fallback all fail validation. Explain the data-integrity failure rather than guessing.
 - Apply current-club, transfer, active-status, and injury verification. Never perform or imply any Sleeper action.
 ```
 

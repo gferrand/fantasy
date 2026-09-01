@@ -62,12 +62,13 @@ This is not standard FPL scoring. Read the live `scoring_settings` object from t
 
 DATA AND VERIFICATION RULES
 PRIMARY DURABLE FEED
-- The most reliable task-readable sources are the rendered GitHub pages `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md` and `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_available.md`. Open those ordinary GitHub pages and parse the JSON code blocks after each hourly snapshot commit.
+- The most reliable task-readable source is the compact rendered GitHub page `https://github.com/gferrand/fantasy/blob/main/public/sleeper_task_core.md`. Open it as an ordinary GitHub page and parse the JSON code block after the latest hourly snapshot commit.
 - Prefer opening `https://gferrand.github.io/fantasy/sleeper_feed.html` as a normal web page and read the machine-readable JSON inside its `pre` block. The `.json` URL is an alternate endpoint if raw JSON retrieval is supported.
-- Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, and `completed_trades_today`.
-- Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, and completed trades. The core feed intentionally leaves `available_players` empty to stay small enough for reliable scheduled-task retrieval.
-- For waiver and immediate-pickup sections, prefer opening `https://gferrand.github.io/fantasy/sleeper_available_players.html` and read the JSON inside its `pre` block. The `.json` URL is an alternate endpoint. Require `schema_version=1`, `complete=true`, the expected league ID, a recent `retrieved_at`, and a complete `available_players` array. Its `availability_note` explains the limitation that Sleeper does not reliably distinguish immediate free agents from pending waivers.
-- If the availability supplement is missing, stale, invalid, incomplete, or truncated, mark both pickup sections unavailable; never interpret that failure as no available players.
+- Require valid JSON with `schema_version=1`, `complete=true`, a recent `retrieved_at`, the expected league ID, and the fields `league`, `state`, `users`, `rosters`, `players`, `stats`, `transactions`, `completed_trades_today`, and `available_players`.
+- Use this feed for the live league, scoring settings, roster, player metadata, stats, current-round transactions, completed trades, and the bounded pickup shortlist.
+- The core feed's `available_players` is a bounded, scoring-aware shortlist when `available_players_complete=false`; use it for limited pickup guidance rather than treating it as a full player-pool scan.
+- For a fuller scan, optionally open `https://gferrand.github.io/fantasy/sleeper_available_players.html` and read the JSON inside its `pre` block. The `.json` URL is an alternate endpoint. Require `schema_version=1`, `complete=true`, the expected league ID, a recent `retrieved_at`, and a complete `available_players` array before treating that supplement as exhaustive.
+- If the optional availability supplement is missing, stale, invalid, incomplete, or truncated, continue with the validated core shortlist and label recommendations as limited. Never interpret a retrieval failure as no available players.
 - If the feed is missing, stale, invalid, incomplete, or has the wrong league ID, explicitly report the affected section as unavailable and include the feed URL and failure. Do not silently treat a feed failure as zero trades or an empty waiver pool.
 
 DIRECT SLEEPER FALLBACK
@@ -96,9 +97,9 @@ TRANSACTION AND AVAILABILITY RULES
 - Query the transactions endpoint for the numeric current round from the live state endpoint. For a same-day report, the current round is sufficient; do not send the literal `{round}` placeholder. Validate that the response is a top-level JSON array before processing it.
 - Deduplicate transactions by transaction_id, and retain only transactions with type `trade`, status `complete`, and a created timestamp on the current Eastern Time calendar date for the daily trade section.
 - Reconstruct completed trades by mapping roster_ids to managers, adds and drops to player metadata, and any draft_picks or waiver_budget fields. Do not include ordinary free-agent adds, drops, or waiver claims in the trade section.
-- Build the available-player pool from the complete current EPL player metadata object minus every player on a live league roster. Validate that the player payload is a complete top-level JSON object before taking the set difference; never reason from a truncated search snippet or partial response.
+- Prefer the core feed's validated bounded `available_players` shortlist for pickup recommendations. When the complete availability supplement is available, use the complete current EPL player metadata object minus every player on a live league roster for the fuller candidate pool. Validate that any player payload used for a set difference is a complete top-level JSON object; never reason from a truncated search snippet or partial response.
 - If the complete player object cannot be parsed but the current-season stats response is a valid top-level JSON array with embedded player objects, use only those embedded player objects as a bounded stats-backed candidate set. Label the shortlist as limited and do not imply that it represents every available player.
-- Apply current-club, active-status, transfer, and injury validation before recommending anyone. If neither the complete player object nor a valid stats-backed fallback can be parsed, explicitly mark both pickup sections as unavailable for this run instead of guessing or using an incomplete candidate pool.
+- Apply current-club, active-status, transfer, and injury validation before recommending anyone. If the core shortlist is valid, it is enough to produce limited pickup guidance. Mark both pickup sections unavailable only when the core shortlist, complete supplement, and valid stats-backed/direct fallback are all unavailable or fail integrity checks.
 - Sleeper's public API does not reliably expose whether each unrostered player is currently a direct free agent or pending waivers. Treat live roster and transaction data as a shortlist signal only, and tell me to confirm that the player shows an Add option in Sleeper before making an immediate pickup.
 - Never submit or imply a trade, waiver claim, free-agent add, lineup change, or other Sleeper action.
 
@@ -140,8 +141,8 @@ REPORT FORMAT — LEAN DECISION PREP
    - Rank up to three relevant candidates in each section for the next match, considering expected starts/minutes, fixture, position need, custom-scoring fit, upside, and risk.
    - Do not recommend a waiver bid amount unless separately requested.
    - Do not force recommendations. Because Sleeper does not reliably expose Add versus waiver status, say: "Confirm the player shows an Add option in Sleeper before acting."
-   - If the validated player universe or ownership data is unavailable, say "Waiver targets unavailable for this run" rather than guessing.
-   - If the validated player universe or ownership data is unavailable for direct adds, say "Immediate free-agent targets unavailable for this run" rather than guessing.
+   - If only the bounded core shortlist is available, rank from it, label the result limited, and explain that the full availability scan was unavailable. Keep `Confirm the player shows an Add option in Sleeper before acting.` in both sections.
+   - Say "Waiver targets unavailable for this run" and "Immediate free-agent targets unavailable for this run" only when no validated core shortlist, complete supplement, or stats-backed/direct fallback is available. Never guess from an empty or malformed response.
 
 7. What I should do
    - Give no more than three prioritized manual actions with deadlines.

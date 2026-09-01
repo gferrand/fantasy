@@ -16,6 +16,7 @@ from fantasy_advisor.sleeper import (  # noqa: E402
     current_roster_player_ids,
     normalize_completed_trades,
     available_epl_players,
+    pickup_candidates,
     eastern_today,
 )
 from fetch_sleeper_snapshot import fetch_snapshot  # noqa: E402
@@ -79,6 +80,13 @@ def build_feed(snapshot: dict) -> dict:
         rosters,
         excluded_names=EXCLUDED_NAMES,
     )
+    pickup_shortlist = pickup_candidates(
+        players,
+        rosters,
+        snapshot["stats"],
+        snapshot["league"].get("scoring_settings") or {},
+        excluded_names=EXCLUDED_NAMES,
+    )
     owned = {
         str(player_id)
         for roster in rosters
@@ -86,14 +94,16 @@ def build_feed(snapshot: dict) -> dict:
         for player_id in (roster.get("players") or [])
     }
     # Keep the core feed small enough for scheduled-task retrieval. The full
-    # unrostered universe is published separately below.
+    # unrostered universe is published separately below. The bounded shortlist
+    # remains in the core feed so availability advice still works when the
+    # larger supplement cannot be retrieved.
     compact_ids = set(owned)
     for transaction in snapshot["transactions"]:
         for field in ("adds", "drops"):
             compact_ids.update(str(pid) for pid in (transaction.get(field) or {}).keys())
     # Stats for the complete league are too large for reliable scheduled-task
     # retrieval. The core feed carries stats for owned/transaction-referenced
-    # players; the availability supplement remains the bounded pickup source.
+    # players; the availability supplement remains the complete pickup source.
 
     compact_stats = []
     for row in snapshot["stats"]:
@@ -143,8 +153,10 @@ def build_feed(snapshot: dict) -> dict:
         "stats": compact_stats,
         "transactions": snapshot["transactions"],
         "completed_trades_today": trades,
-        "available_players": [],
+        "available_players": pickup_shortlist,
         "available_players_complete": False,
+        "available_players_scope": "bounded_current_season_shortlist",
+        "available_players_count": len(available),
         "available_players_feed_url": (
             "https://gferrand.github.io/fantasy/sleeper_available_players.json"
         ),
