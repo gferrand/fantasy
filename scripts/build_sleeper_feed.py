@@ -17,6 +17,7 @@ from fantasy_advisor.sleeper import (  # noqa: E402
     normalize_completed_trades,
     available_epl_players,
     pickup_candidates,
+    roster_swap_recommendations,
     eastern_today,
 )
 from fetch_sleeper_snapshot import fetch_snapshot  # noqa: E402
@@ -86,6 +87,15 @@ def build_feed(snapshot: dict) -> dict:
         snapshot["stats"],
         snapshot["league"].get("scoring_settings") or {},
         excluded_names=EXCLUDED_NAMES,
+        limit=30,
+    )
+    swap_recommendations = roster_swap_recommendations(
+        pickup_shortlist,
+        players,
+        rosters,
+        snapshot["stats"],
+        snapshot["league"].get("scoring_settings") or {},
+        manager_id=MANAGER_ID,
     )
     owned = {
         str(player_id)
@@ -156,7 +166,14 @@ def build_feed(snapshot: dict) -> dict:
         "available_players": pickup_shortlist,
         "available_players_complete": False,
         "available_players_scope": "bounded_current_season_shortlist",
+        "available_players_limit": 30,
         "available_players_count": len(available),
+        "team_swap_recommendations": swap_recommendations,
+        "team_swap_recommendations_scope": "same-position_current-season_scoring_signal",
+        "team_swap_recommendations_note": (
+            "Manual review only. Verify current role, injury status, fixture, and the "
+            "Sleeper Add option before making any decision."
+        ),
         "available_players_feed_url": (
             "https://gferrand.github.io/fantasy/sleeper_available_players.json"
         ),

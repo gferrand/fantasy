@@ -340,7 +340,7 @@ def pickup_candidates(
     *,
     excluded_names: Iterable[str] = (),
     allowed_clubs: set[str] | None = None,
-    limit: int = 24,
+    limit: int = 30,
 ) -> list[dict[str, Any]]:
     """Return a compact scoring-aware pickup shortlist for bounded readers."""
 
@@ -417,6 +417,124 @@ def pickup_candidates(
     if len(selected) < limit:
         selected.extend(item for item in ranked if item["player_id"] not in selected_ids)
     return selected[:limit]
+
+
+def roster_swap_recommendations(
+    candidates: Iterable[Mapping[str, Any]],
+    players: Mapping[str, Mapping[str, Any]],
+    rosters: Iterable[Mapping[str, Any]],
+    stats_rows: Iterable[Mapping[str, Any]],
+    scoring_settings: Mapping[str, Any],
+    *,
+    manager_id: str,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Compare bounded pickup candidates to a manager's roster by shared position.
+
+    These are read-only current-season scoring signals, not transactions or
+    projections. A candidate and a rostered player must share a fantasy
+    position, and each proposed pair is unique.
+    """
+
+    if limit < 1:
+        return []
+    roster = next(
+        (
+            item for item in rosters
+            if str(item.get("owner_id") or "") == str(manager_id)
+        ),
+        None,
+    )
+    if not isinstance(roster, Mapping):
+        return []
+    stats_by_id: dict[str, Mapping[str, Any]] = {}
+    for row in stats_rows:
+        if not isinstance(row, Mapping):
+            continue
+        player_id = str(row.get("player_id") or "")
+        stats = row.get("stats")
+        if player_id and isinstance(stats, Mapping):
+            stats_by_id[player_id] = stats
+
+    rostered: list[dict[str, Any]] = []
+    for player_id in (roster.get("players") or []):
+        player_id = str(player_id)
+        raw = players.get(player_id)
+        if not isinstance(raw, Mapping):
+            continue
+        stats = stats_by_id.get(player_id, {})
+        positions = [str(position).upper() for position in raw.get("fantasy_positions") or []]
+        position_points = {
+            position: score
+            for position in positions
+            if (score := _position_score(stats, scoring_settings, position)) is not None
+        }
+        if not position_points:
+            continue
+        rostered.append(
+            {
+                "player_id": player_id,
+                "name": _player_name(player_id, players),
+                "club": raw.get("team_abbr"),
+                "positions": positions,
+                "custom_points": max(position_points.values()),
+                "position_points": position_points,
+                "games": _stat_number(stats, "gp"),
+                "starts": _stat_number(stats, "gs"),
+                "minutes": _stat_number(stats, "min"),
+            }
+        )
+
+    options: list[dict[str, Any]] = []
+    for candidate in candidates:
+        candidate_points = candidate.get("position_points")
+        if not isinstance(candidate_points, Mapping):
+            continue
+        for current in rostered:
+            shared_positions = set(candidate_points).intersection(current["position_points"])
+            for position in shared_positions:
+                try:
+                    add_score = float(candidate_points[position])
+                    drop_score = float(current["position_points"][position])
+                except (TypeError, ValueError):
+                    continue
+                gain = round(add_score - drop_score, 2)
+                if gain <= 0:
+                    continue
+                options.append(
+                    {
+                        "add": dict(candidate),
+                        "drop": current,
+                        "position": position,
+                        "current_season_point_gain": gain,
+                        "recommendation_status": "manual_review_required",
+                    }
+                )
+
+    ranked = sorted(
+        options,
+        key=lambda option: (
+            option["current_season_point_gain"],
+            option["add"].get("custom_points") or float("-inf"),
+            option["add"]["name"].casefold(),
+            option["drop"]["name"].casefold(),
+        ),
+        reverse=True,
+    )
+    selected: list[dict[str, Any]] = []
+    used_adds: set[str] = set()
+    used_drops: set[str] = set()
+    for option in ranked:
+        add_id = str(option["add"].get("player_id") or "")
+        drop_id = str(option["drop"].get("player_id") or "")
+        if add_id in used_adds or drop_id in used_drops:
+            continue
+        selected.append(option)
+        used_adds.add(add_id)
+        used_drops.add(drop_id)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def eastern_today() -> date:
