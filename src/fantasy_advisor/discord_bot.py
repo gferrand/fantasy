@@ -138,6 +138,14 @@ def build_client(config: AppConfig) -> discord.Client:
             context_packet=context_packet,
             waiver_analysis=waiver_analysis,
         )
+        if waiver_analysis:
+            return (
+                "🏟️ **Los Blancos — Waiver Wire**\n"
+                "📱 *Phone-friendly view · manual review only*\n\n"
+                f"{result.text}",
+                True,
+                result.thread_id,
+            )
         return (
             f"**On-demand fantasy advisor** · Codex task `"
             f"{result.thread_id or 'local'}`\n\n{result.text}",

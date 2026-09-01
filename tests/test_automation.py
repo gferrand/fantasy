@@ -149,7 +149,11 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("Not verified for the active Premier League season", one_off)
         self.assertIn("Evidence\nwindow:", one_off)
         waiver = interactive_prompt("Waiver analysis", waiver_analysis=True)
-        self.assertIn("entire supplied", waiver)
+        self.assertIn("phone-first Discord waiver report", waiver)
+        self.assertIn("Never use a Markdown table", waiver)
+        self.assertIn("🎯 BEST PICKUPS", waiver)
+        self.assertIn("🔁 RECOMMENDED SWAPS", waiver)
+        self.assertIn("📋 FULL TOP 30", waiver)
         self.assertIn("team_swap_recommendations", waiver)
         self.assertNotIn("assess no more than six candidates", waiver)
 

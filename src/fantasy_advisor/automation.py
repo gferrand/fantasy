@@ -742,13 +742,38 @@ making a recommendation.
 {live_feed_packet.strip()}
 """
     waiver_report_rules = """
-For this dedicated waiver-analysis request, present the entire supplied
-`available_player_shortlist` in compact ranked form: rank, player, club,
-positions, current custom points, and minutes. Then present every supplied
-`team_swap_recommendations` signal with the potential add, possible drop,
-shared position, and current-season scoring gap. Give a concise recommendation
-summary after those lists. The swap signals are manual-review candidates only;
-never claim that a Sleeper transaction occurred.
+This is a phone-first Discord waiver report. Make it skimmable before making it
+complete. Use short paragraphs, blank lines between cards, bold player names,
+and familiar emoji section labels. Never use a Markdown table, a code block, or
+a wide multi-column layout.
+
+Use this exact information order:
+
+1. `🏟️ WAIVER WIRE` — one short evidence/status line, including the active
+   season, Premier League, gameweek or snapshot cutoff, and that the scoring is
+   custom.
+2. `🎯 BEST PICKUPS` — six or fewer decision-ready cards, ordered by your
+   recommendation. Each card must be no more than three short lines:
+   `#rank **Player** · Club · position`, then `Points · minutes · availability`,
+   then a one-sentence reason or caution. Prefer clear words such as `safer`,
+   `upside`, `GTD`, or `verify starter`.
+3. `🔁 RECOMMENDED SWAPS — MANUAL REVIEW` — show every supplied
+   `team_swap_recommendations` signal as an individual, easy-to-scan card:
+   `✅ ADD **Player** (club, position)`; `⬇️ DROP **Player**`; and
+   `📈 +X custom points`. Add one short explanation or verification caveat.
+   Lead with the one to three clearest choices, but do not hide the remaining
+   supplied signals.
+4. `📋 FULL TOP 30` — present the entire supplied
+   `available_player_shortlist`, still ranked, as one compact player per line:
+   `#rank **Player** · Club · positions · X pts · Y min`. Group the lines in
+   clearly labelled rank ranges of five (for example `1–5`, `6–10`) so a phone
+   reader can resume where they left off.
+5. `⚠️ BEFORE YOU ACT` — one short reminder that the owner must manually verify
+   role, injury, fixture, and the live Sleeper Add option; no transaction was
+   made or simulated.
+
+Use the supplied live packet for every number. The swap signals are
+manual-review candidates only; never claim that a Sleeper transaction occurred.
 """ if waiver_analysis else """
 For pickup questions, assess no more than six candidates from the compact
 shortlist. For a question about fit, compare those candidates against the

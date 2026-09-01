@@ -43,6 +43,8 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn('name="analyze-waivers"', source)
         self.assertIn("WAIVER_ANALYSIS_REQUEST", source)
         self.assertIn("waiver_analysis=True", source)
+        self.assertIn("Los Blancos — Waiver Wire", source)
+        self.assertIn("Phone-friendly view", source)
 
     def test_canonical_context_contains_league_identity(self):
         context = (ROOT / "league_context.md").read_text()
