@@ -7,7 +7,14 @@ name = "fantasy-epl-advisor"
 version = "0.1.0"
 description = "Read-only fantasy English Premier League advisor for a Sleeper league"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "discord.py>=2.4,<3",
+    "openai>=1.0,<3",
+]
+
+[project.scripts]
+fantasy-dispatch = "fantasy_advisor.automation:main"
+fantasy-discord-bot = "fantasy_advisor.discord_bot:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

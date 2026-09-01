@@ -1,0 +1,28 @@
+# Local task registry. These jobs are launched by macOS launchd, not by
+# ChatGPT Scheduled Tasks. The prompt files remain the source of truth.
+
+[settings]
+timezone = "America/New_York"
+
+[[tasks]]
+id = "nightly_recap"
+name = "Los Blancos nightly game-day recap"
+prompt_file = "docs/nightly_recap_task.md"
+schedule_type = "daily"
+run_at = "22:00"
+
+[[tasks]]
+id = "transfer_monitor"
+name = "EPL top-player transfer monitor"
+prompt_file = "docs/transfer_monitor_task.md"
+schedule_type = "hourly"
+minute_past_hour = 17
+state_file = "data/automation/transfer_monitor_last_result.md"
+
+[[tasks]]
+id = "watchlist_report"
+name = "Premier League watchlist daily status"
+prompt_file = "docs/watchlist_report_task.md"
+schedule_type = "daily"
+run_at = "08:00"
+state_file = "data/automation/watchlist_last_result.md"

@@ -1,11 +1,49 @@
 import unittest
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).parents[1]
+sys.path.insert(0, str(ROOT / "src"))
 
 
 class ProjectSetupTests(unittest.TestCase):
+    def test_analyze_waivers_command_is_registered(self):
+        from fantasy_advisor.automation import AppConfig
+        from fantasy_advisor.discord_bot import build_client
+
+        config = AppConfig(
+            repo_root=ROOT,
+            task_registry_path=ROOT / "automation" / "tasks.toml",
+            discord_bot_token="test",
+            discord_allowed_user_id="1",
+            discord_scheduled_channel_id="2",
+            codex_bin="codex",
+            codex_model="gpt-5.6-luna",
+            codex_reasoning_effort="medium",
+            codex_sandbox="read-only",
+            codex_timeout_seconds=60,
+            codex_ephemeral=True,
+        )
+        client = build_client(config)
+        tree = client._fantasy_command_tree
+        self.assertIn("analyze-waivers", [command.name for command in tree.get_commands()])
+
+    def test_discord_presence_is_best_effort_and_guild_handling_stays_disabled(self):
+        source = (ROOT / "src" / "fantasy_advisor" / "discord_bot.py").read_text()
+        self.assertIn("async def set_online_presence()", source)
+        self.assertIn("client.change_presence(status=discord.Status.online)", source)
+        self.assertIn("asyncio.wait_for(", source)
+        self.assertIn("def schedule_online_presence()", source)
+        self.assertIn("Fantasy Discord presence set online", source)
+        self.assertIn("async def on_resumed()", source)
+        self.assertIn("Fantasy Discord presence update failed", source)
+        self.assertIn("if message.guild is not None or not isinstance(message.channel, discord.DMChannel):", source)
+        self.assertIn("allowed_installs(users=True, guilds=False)", source)
+        self.assertIn('name="analyze-waivers"', source)
+        self.assertIn("WAIVER_ANALYSIS_REQUEST", source)
+        self.assertIn("waiver_analysis=True", source)
+
     def test_canonical_context_contains_league_identity(self):
         context = (ROOT / "league_context.md").read_text()
         self.assertIn("1378147559444348928", context)
@@ -82,6 +120,15 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("NO_MATERIAL_TRANSFER_UPDATE", task)
         self.assertIn("CONFIRMED, ADVANCED REPORT, or RUMOR", task)
         self.assertIn("must not make, simulate, or imply any Sleeper transaction", task)
+
+    def test_watchlist_task_requires_current_pl_evidence_and_quiet_day_status(self):
+        task = (ROOT / "docs" / "watchlist_report_task.md").read_text()
+        self.assertIn("8:00 AM", task)
+        self.assertIn("2026/27 Premier League", task)
+        self.assertIn("No material update", task)
+        self.assertIn("previous-season, preseason, cup", task)
+        self.assertIn("do not recommend, simulate, or imply", task)
+        self.assertIn("no Discord conversation context", task)
 
 
 if __name__ == "__main__":

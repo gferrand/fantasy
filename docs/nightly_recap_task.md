@@ -31,6 +31,18 @@ Season: 2026 (2026/27)
 My team: Los Blancos
 Manager: TioG (Sleeper user ID 1127171221277331456)
 
+CURRENT-SEASON PREMIER LEAGUE EVIDENCE RULE
+For player minutes, appearances, form, role, injuries, availability, or likely
+starts, use only 2026/27 Premier League evidence. A source's publication date
+alone is insufficient: it must explicitly concern 2026/27 or a current Premier
+League match. Do not use 2025/26, preseason, domestic-cup, European, youth, or
+career data as evidence for a current Premier League conclusion unless I
+explicitly request historical or non-Premier-League context. If current-season
+Premier League evidence cannot be verified, say so and do not project minutes
+from a prior-season article. Include `Evidence window: 2026/27 Premier League
+through GW{current round}` with direct links for every player-specific
+current-season claim.
+
 Roster slots: F F M M M D D D GK FM_FLEX MD_FLEX BN BN BN BN BN
 Waiver budget: 100
 Trade deadline: week 30

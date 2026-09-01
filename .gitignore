@@ -8,6 +8,7 @@ __pycache__/
 # Local/generated data can contain large or transient API responses.
 data/*.json
 data/*.csv
+data/automation/
 reports/*.csv
 public/sleeper_feed.json
 public/sleeper_available_players.json
