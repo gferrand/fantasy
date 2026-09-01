@@ -765,9 +765,9 @@ Use this exact information order:
    supplied signals.
 4. `📋 FULL TOP 30` — present the entire supplied
    `available_player_shortlist`, still ranked, as one compact player per line:
-   `#rank **Player** · Club · positions · X pts · Y min`. Group the lines in
-   clearly labelled rank ranges of five (for example `1–5`, `6–10`) so a phone
-   reader can resume where they left off.
+   `#rank **Player** · Club · positions · X pts · Y min`. Keep this as one
+   continuous sequence from #1 through #30: do not add rank-range headings,
+   subgroup labels, or dividers between players.
 5. `⚠️ BEFORE YOU ACT` — one short reminder that the owner must manually verify
    role, injury, fixture, and the live Sleeper Add option; no transaction was
    made or simulated.

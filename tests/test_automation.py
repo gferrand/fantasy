@@ -154,6 +154,8 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("🎯 BEST PICKUPS", waiver)
         self.assertIn("🔁 RECOMMENDED SWAPS", waiver)
         self.assertIn("📋 FULL TOP 30", waiver)
+        self.assertIn("continuous sequence from #1 through #30", waiver)
+        self.assertIn("do not add rank-range headings", waiver)
         self.assertIn("team_swap_recommendations", waiver)
         self.assertNotIn("assess no more than six candidates", waiver)
 

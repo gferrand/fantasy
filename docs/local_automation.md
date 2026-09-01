@@ -142,8 +142,8 @@ use:
 
 The waiver report is optimized for phone reading: emoji-led pickup cards,
 clear `ADD` → `DROP` swap cards, then the complete 30-player shortlist in
-five-player rank groups. The bot acknowledges either command, opens a new local
-Codex task, and replies in the same personal DM with the result. `/tasks` lists registered jobs, and
+one continuous ranked list. The bot acknowledges either command, opens a new
+local Codex task, and replies in the same personal DM with the result. `/tasks` lists registered jobs, and
 `/task nightly_recap`, `/task transfer_monitor`, or `/task watchlist_report` runs a registered job
 immediately in the DM. Text DMs remain supported when Discord exposes them to
 the bot. Only automatic scheduler invocations post to `#fantasy`.
