@@ -380,6 +380,7 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         remember_dm_channel(interaction.channel)
         registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
+        LOGGER.info("Rendering mobile /tasks menu for the allowlisted Discord user")
         await interaction.response.send_message(
             task_menu(registry.tasks),
             allowed_mentions=discord.AllowedMentions.none(),
