@@ -11,6 +11,11 @@
 - This includes safe, read-only, dry-run, integration, and owner-scoped live tests. When a narrow temporary test mutation is necessary, create only minimal dummy data, verify the result, and remove the dummy data before handoff.
 - Continue to follow higher-priority safety requirements and obtain any confirmation they require for an external or irreversible action.
 
+## Discord smoke-test authority
+
+- The authenticated owner has standing authorization for Discord smoke tests in this project. Do not ask again for separate permission to send test prompts, slash commands, or bot replies in the owner's private Fantasy EPL Advisor DM when they are needed to verify a requested feature.
+- Keep each test scoped to the owner-controlled DM, use non-sensitive content, avoid roster transactions and other external commitments, and clean up any temporary local test data. Visible test messages may remain in the owner DM unless the owner specifically asks to remove them.
+
 ## Shared Chrome policy
 
 - Policy marker: `infrastructure-chrome-workspace-policy:v1`.
