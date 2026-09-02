@@ -13,6 +13,7 @@ import tempfile
 import discord
 from discord import app_commands
 
+from .advisor_router import AdvisorRoute, route_interactive_request
 from .automation import (
     AppConfig,
     AutomationError,
@@ -24,6 +25,7 @@ from .automation import (
     persist_advisor_context_event,
     load_registry,
     run_interactive_task,
+    run_web_briefing,
     run_scheduled_task,
     split_discord_message,
     watchlist_file,
@@ -43,6 +45,7 @@ from .discord_presentation import (
     response_limit_notice,
     task_menu,
     waiver_header,
+    web_briefing_header,
     watchlist_card,
     watchlist_change,
     watchlist_empty,
@@ -133,7 +136,8 @@ def build_client(config: AppConfig) -> discord.Client:
         *,
         context_packet: str | None = None,
         waiver_analysis: bool = False,
-    ) -> tuple[str, bool, str | None]:
+        has_attachment: bool = False,
+    ) -> tuple[str, bool, str | None, AdvisorRoute | None]:
         if content.startswith("!task "):
             task_id = content[6:].strip()
             registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
@@ -144,26 +148,49 @@ def build_client(config: AppConfig) -> discord.Client:
                 task_id,
                 deliver=False,
             )
-            return build_report_header(task, result) + result.text, False, result.thread_id
+            return build_report_header(task, result) + result.text, False, result.thread_id, None
 
-        result = await asyncio.to_thread(
-            run_interactive_task,
-            config,
+        decision = route_interactive_request(
             content,
-            context_packet=context_packet,
             waiver_analysis=waiver_analysis,
+            has_attachment=has_attachment,
         )
+        LOGGER.info("Routing Discord advisor request through %s: %s", decision.route.value, decision.reason)
+        if decision.route is AdvisorRoute.CODEX:
+            result = await asyncio.to_thread(
+                run_interactive_task,
+                config,
+                content,
+                context_packet=context_packet,
+                waiver_analysis=waiver_analysis,
+            )
+        else:
+            result = await asyncio.to_thread(
+                run_web_briefing,
+                config,
+                content,
+                context_packet=context_packet,
+            )
         if waiver_analysis:
             return (
                 waiver_header() + "\n\n"
                 f"{result.text}",
                 True,
                 result.thread_id,
+                decision.route,
+            )
+        if decision.route is AdvisorRoute.CHAT:
+            return (
+                web_briefing_header() + f"\n\n{result.text}",
+                True,
+                None,
+                decision.route,
             )
         return (
             advisor_header() + f"\n\n{result.text}",
             True,
             result.thread_id,
+            decision.route,
         )
 
     def remember_user_message(content: str, *, metadata: dict | None = None) -> None:
@@ -174,13 +201,18 @@ def build_client(config: AppConfig) -> discord.Client:
             metadata={"source": "discord_dm", **(metadata or {})},
         )
 
-    def remember_advisor_response(content: str, thread_id: str | None) -> None:
+    def remember_advisor_response(
+        content: str,
+        thread_id: str | None,
+        *,
+        route: AdvisorRoute | None,
+    ) -> None:
         persist_advisor_context_event(
             config,
             kind=DISCORD_ASSISTANT_RESPONSE,
             content=content,
             thread_id=thread_id,
-            metadata={"source": "discord_dm"},
+            metadata={"source": "discord_dm", **({"route": route.value} if route else {})},
         )
 
     async def run_and_reply(
@@ -200,15 +232,16 @@ def build_client(config: AppConfig) -> discord.Client:
                 # request is supplied exactly once to the new Codex task.
                 context_packet = "" if content.startswith("!task ") else load_advisor_context(config)
                 remember_user_message(content, metadata=user_metadata)
-                report, is_interactive, thread_id = await report_for_content(
+                report, is_interactive, thread_id, route = await report_for_content(
                     content,
                     context_packet=context_packet,
+                    has_attachment=user_metadata is not None,
                 )
                 if is_interactive:
-                    remember_advisor_response(report, thread_id)
+                    remember_advisor_response(report, thread_id, route=route)
                 await send_chunks(message.channel, report)
             except AutomationError as exc:
-                LOGGER.exception("Codex task failed for Discord message")
+                LOGGER.exception("Advisor request failed for Discord message")
                 await send_chunks(message.channel, error_card("I couldn’t complete that task", str(exc)))
             except Exception:
                 LOGGER.exception("Unexpected Discord task failure")
@@ -311,13 +344,13 @@ def build_client(config: AppConfig) -> discord.Client:
             try:
                 context_packet = "" if content.startswith("!task ") else load_advisor_context(config)
                 remember_user_message(content)
-                report, is_interactive, thread_id = await report_for_content(
+                report, is_interactive, thread_id, route = await report_for_content(
                     content,
                     context_packet=context_packet,
                     waiver_analysis=waiver_analysis,
                 )
                 if is_interactive:
-                    remember_advisor_response(report, thread_id)
+                    remember_advisor_response(report, thread_id, route=route)
                 chunks = split_discord_message(report, limit=1900)
                 # User-installed interactions have a bounded follow-up budget.
                 # Keep the response complete for normal reports and make an
@@ -332,7 +365,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         allowed_mentions=discord.AllowedMentions.none(),
                     )
             except AutomationError as exc:
-                LOGGER.exception("Codex task failed for Discord command")
+                LOGGER.exception("Advisor request failed for Discord command")
                 await interaction.edit_original_response(
                     content=compact_interaction_error("I couldn’t complete that task", exc)
                 )
@@ -342,8 +375,8 @@ def build_client(config: AppConfig) -> discord.Client:
                     content=error_card("I couldn’t complete that task", "Please try again shortly.")
                 )
 
-    @command_tree.command(name="ask", description="Run a read-only fantasy advisor task")
-    @app_commands.describe(prompt="What should the local Codex fantasy advisor research?")
+    @command_tree.command(name="ask", description="Ask a football or fantasy question")
+    @app_commands.describe(prompt="Ask about news, your team, waivers, or a player")
     @app_commands.allowed_installs(users=True, guilds=False)
     @app_commands.allowed_contexts(guilds=False, dms=True, private_channels=False)
     async def ask_command(interaction: discord.Interaction, prompt: str) -> None:

@@ -20,6 +20,10 @@ def advisor_header() -> str:
     return "🧠 **Fantasy Advisor**\n📱 *Quick, read-only guidance for Los Blancos*"
 
 
+def web_briefing_header() -> str:
+    return "🌐 **Fantasy Briefing**\n📱 *Focused live-web research · read-only*"
+
+
 def waiver_header() -> str:
     return "🏟️ **Los Blancos — Waiver Wire**\n📱 *Phone-friendly view · manual review only*"
 

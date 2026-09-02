@@ -18,6 +18,7 @@ from fantasy_advisor.automation import (
     CodexRunner,
     FANTASY_CODEX_MODEL,
     FANTASY_CODEX_REASONING_EFFORT,
+    FANTASY_WEB_MODEL,
     TaskSpec,
     final_message_from_events,
     load_live_compact_feed_context,
@@ -35,10 +36,12 @@ from fantasy_advisor.automation import (
     persist_task_state,
     read_discord_channel_id,
     run_interactive_task,
+    run_web_briefing,
     split_discord_message,
     run_scheduled_task,
     task_prompt_for_run,
     thread_id_from_events,
+    web_briefing_prompt,
 )
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
 from fantasy_advisor.watchlist import add_watchlist_player
@@ -76,6 +79,46 @@ class AutomationTests(unittest.TestCase):
                 )
         self.assertEqual(config.codex_model, "gpt-5.6-luna")
         self.assertEqual(config.codex_reasoning_effort, "medium")
+        self.assertEqual(config.openai_web_model, FANTASY_WEB_MODEL)
+
+    def test_web_briefing_uses_responses_web_search_and_preserves_context(self):
+        class FakeResponses:
+            def __init__(self):
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Response", (), {"output_text": "🌐 **Update**\nConfirmed.", "id": "resp-1"})()
+
+        fake_responses = FakeResponses()
+        fake_client = type("Client", (), {"responses": fake_responses})()
+        config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "test-key"})
+        with patch("openai.OpenAI", return_value=fake_client) as client:
+            result = run_web_briefing(
+                config,
+                "What happened to the Balogun Everton deal?",
+                context_packet="RECENT_MARKER",
+            )
+
+        self.assertEqual(result.text, "🌐 **Update**\nConfirmed.")
+        self.assertEqual(result.response_id, "resp-1")
+        client.assert_called_once_with(api_key="test-key", timeout=config.codex_interactive_timeout_seconds)
+        call = fake_responses.calls[0]
+        self.assertEqual(call["model"], FANTASY_WEB_MODEL)
+        self.assertEqual(call["tools"], [{"type": "web_search_preview", "search_context_size": "medium"}])
+        self.assertFalse(call["store"])
+        self.assertIn("RECENT_MARKER", call["instructions"])
+        self.assertIn("historical conversation", call["instructions"])
+
+    def test_web_briefing_requires_an_api_key(self):
+        with self.assertRaisesRegex(AutomationError, "OPENAI_API_KEY"):
+            run_web_briefing(test_config(), "What happened yesterday?")
+
+    def test_web_briefing_prompt_keeps_league_data_outside_the_web_path(self):
+        prompt = web_briefing_prompt("What happened to the Balogun Everton deal?", context_packet="MEMORY")
+        self.assertIn("MEMORY", prompt)
+        self.assertIn("Do not claim access to Sleeper", prompt)
+        self.assertIn("focused web research", prompt)
 
     def test_scheduled_discord_configuration_requires_numeric_channel(self):
         missing = test_config().__class__(

@@ -15,17 +15,20 @@ launchd
                  GF Control Room #fantasy
 ```
 
-The scheduled jobs and future Discord questions use the installed local Codex
-CLI. By default, the runner does not pass `--ephemeral`, so each invocation is
-a real persistent Codex task and its thread ID is included in the response.
-The project remains read-only with respect to Sleeper; Codex may research and
-explain, but it is instructed not to make league changes.
+The scheduled jobs use the installed local Codex CLI. Private Discord
+questions are routed by the data they need: public current-events and transfer
+questions use an OpenAI Responses API web-research briefing, while Sleeper,
+roster, waiver, player-fit, fixture, and scoring questions use local Codex
+with the validated league packet. Both paths remain read-only; neither makes
+or simulates a Sleeper transaction.
 
 Fantasy analysis is permanently pinned in application code to
 `gpt-5.6-luna` with `medium` reasoning. The runner sends both settings on every
-scheduled and on-demand invocation, including requests routed through the
+scheduled and league-data invocation, including requests routed through the
 shared host executor, so host-wide Codex defaults and environment variables do
-not alter the Fantasy profile. This pin does not apply to attachment
+not alter the Fantasy profile. Public web briefings use `gpt-5.6-terra` with
+low reasoning and built-in web search; override that model only with
+`OPENAI_WEB_MODEL` in the local `.env`. These pins do not apply to attachment
 preprocessing: voice transcription continues to use
 `gpt-4o-mini-transcribe`, and PDF/document extraction continues to use
 `gpt-4.1-mini`.
@@ -142,8 +145,10 @@ use:
 
 The waiver report is optimized for phone reading: emoji-led pickup cards,
 clear `ADD` → `DROP` swap cards, then the complete 30-player shortlist in
-one continuous ranked list. The bot acknowledges either command, opens a new
-local Codex task, and replies in the same personal DM with the result. `/tasks` lists registered jobs, and
+one continuous ranked list. `/ask` chooses the web briefing for a general
+public question such as a transfer update, and the Codex analysis path whenever
+your roster or league data is relevant. The bot replies in the same personal
+DM with the result. `/tasks` lists registered jobs, and
 `/task nightly_recap`, `/task transfer_monitor`, or `/task watchlist_report` runs a registered job
 immediately in the DM. Text DMs remain supported when Discord exposes them to
 the bot. Only automatic scheduler invocations post to `#fantasy`.
@@ -184,11 +189,12 @@ gateway and scheduled dispatchers in the runtime mirror. It records:
 - completed on-demand advisor responses; and
 - completed nightly or transfer-monitor reports.
 
-When a plain-text DM or `/ask` starts an interactive Codex task, the bot loads
-the recent Discord turns and latest scheduled reports into a bounded context
+When a plain-text DM or `/ask` starts an interactive request, the bot loads the
+recent Discord turns and latest scheduled reports into a bounded context
 packet. The current request is added separately, so it is not duplicated in
-the packet. Codex is told to use the saved material for continuity only and to
-recheck current player, fixture, injury, club, and availability facts.
+the packet. Both the web-research and Codex routes treat saved material as
+continuity only. Codex must recheck player, fixture, injury, club, and
+availability facts; the web route independently verifies current public news.
 
 Scheduled runs never load Discord conversation context. They run their normal
 standalone prompts and only write their completed reports to the store for

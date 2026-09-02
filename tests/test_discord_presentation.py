@@ -6,6 +6,7 @@ from fantasy_advisor.discord_presentation import (
     help_menu,
     scheduled_header,
     task_menu,
+    web_briefing_header,
     watchlist_card,
     watchlist_change,
 )
@@ -20,6 +21,7 @@ class _Task:
 class DiscordPresentationTests(unittest.TestCase):
     def test_headers_hide_internal_thread_metadata(self):
         self.assertIn("🧠", advisor_header())
+        self.assertIn("🌐", web_briefing_header())
         self.assertIn("📬", scheduled_header("Nightly recap", "Sep 1 · 10:00 PM EDT"))
         self.assertNotIn("Codex task", advisor_header())
 
