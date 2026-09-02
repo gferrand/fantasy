@@ -64,6 +64,28 @@ class ContextStoreTests(unittest.TestCase):
             self.assertIn("LATEST_REPORT_MARKER", packet)
             self.assertIn("SCHEDULED REPORT · latest", packet)
 
+    def test_default_packet_represents_each_of_the_latest_twenty_dm_messages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "advisor_context.sqlite3"
+            for number in range(24):
+                append_event(
+                    database,
+                    kind=DISCORD_USER_MESSAGE if number % 2 == 0 else DISCORD_ASSISTANT_RESPONSE,
+                    content=f"TURN-{number:02d} " + ("detail " * 700),
+                    created_at=f"2026-08-24T22:{number:02d}:00+00:00",
+                )
+
+            packet = build_context_packet(database)
+
+            self.assertLessEqual(len(packet), 32_000)
+            self.assertIn("up to 20 latest messages", packet)
+            for number in range(4, 24):
+                self.assertIn(f"TURN-{number:02d}", packet)
+            for number in range(4, 23):
+                self.assertLess(packet.index(f"TURN-{number:02d}"), packet.index(f"TURN-{number + 1:02d}"))
+            self.assertNotIn("TURN-00", packet)
+            self.assertNotIn("TURN-03", packet)
+
     def test_interactive_prompt_accepts_context_but_scheduled_prompt_does_not(self):
         interactive = interactive_prompt(
             "Follow up on that recommendation",
