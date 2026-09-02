@@ -21,14 +21,14 @@ class RouteDecision:
 
 
 # League-state questions need the validated Sleeper packet and the Codex
-# workflow.  Keep this explicit and conservative: news questions may mention a
-# player, but should not use the heavier league path unless they depend on the
-# owner's team or fantasy-league state.
+# workflow. Keep this explicit: public player facts such as injury news,
+# minutes, likely starts, and fixtures belong on the lighter web path unless
+# the owner asks us to apply them to their team or league.
 _LEAGUE_STATE_PATTERN = re.compile(
     r"\b(?:sleeper|waivers?|free\s+agents?|available\s+players?|pickup|pick\s+up|"
-    r"drop|swap|roster|squad|my\s+team|los\s+blancos|team\s+fit|fit\s+for\s+my|"
-    r"fantasy\s+points?|league\s+settings?|scoring|gameweek|fixture|lineup|captain|"
-    r"minutes?|starting|starter|add\s+option|watchlist|injur(?:y|ies))\b",
+    r"drop|swap|replace|roster|squad|my\s+team|my\s+players?|los\s+blancos|"
+    r"team\s+fit|fit\s+for\s+my|fantasy\s+points?|league\s+settings?|scoring|"
+    r"gameweek|my\s+lineup|set\s+(?:my\s+)?lineup|captain|add\s+option|watchlist)\b",
     re.IGNORECASE,
 )
 _NEWS_PATTERN = re.compile(

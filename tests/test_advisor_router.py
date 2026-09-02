@@ -36,6 +36,22 @@ class AdvisorRouterTests(unittest.TestCase):
             AdvisorRoute.CHAT,
         )
 
+    def test_public_player_facts_do_not_need_the_private_league_path(self):
+        self.assertEqual(
+            route_interactive_request("Is Balogun injured or likely to start this weekend?").route,
+            AdvisorRoute.CHAT,
+        )
+        self.assertEqual(
+            route_interactive_request("Who does Balogun face in the next fixture?").route,
+            AdvisorRoute.CHAT,
+        )
+
+    def test_applying_public_facts_to_the_owner_roster_uses_codex(self):
+        self.assertEqual(
+            route_interactive_request("Which injured starter should I replace in my lineup?").route,
+            AdvisorRoute.CODEX,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
