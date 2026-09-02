@@ -43,8 +43,8 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn('name="analyze-waivers"', source)
         self.assertIn("WAIVER_ANALYSIS_REQUEST", source)
         self.assertIn("waiver_analysis=True", source)
-        self.assertIn("Los Blancos — Waiver Wire", source)
-        self.assertIn("Phone-friendly view", source)
+        self.assertIn("waiver_header()", source)
+        self.assertIn("advisor_header()", source)
 
     def test_canonical_context_contains_league_identity(self):
         context = (ROOT / "league_context.md").read_text()
@@ -119,9 +119,18 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("EPL top-player transfer monitor", task)
         self.assertIn("Every hour", task)
         self.assertIn("America/New_York", task)
-        self.assertIn("NO_MATERIAL_TRANSFER_UPDATE", task)
+        self.assertIn("✅ TRANSFER WATCH", task)
         self.assertIn("CONFIRMED, ADVANCED REPORT, or RUMOR", task)
         self.assertIn("must not make, simulate, or imply any Sleeper transaction", task)
+
+    def test_discord_prompts_define_mobile_first_layouts(self):
+        nightly = (ROOT / "docs" / "nightly_recap_task.md").read_text()
+        transfer = (ROOT / "docs" / "transfer_monitor_task.md").read_text()
+        watchlist = (ROOT / "docs" / "watchlist_report_task.md").read_text()
+        self.assertIn("DISCORD MOBILE PRESENTATION (binding)", nightly)
+        self.assertIn("🌙 NIGHTLY RECAP", nightly)
+        self.assertIn("🚨 TRANSFER WATCH", transfer)
+        self.assertIn("👀 WATCHLIST UPDATE", watchlist)
 
     def test_watchlist_task_requires_current_pl_evidence_and_quiet_day_status(self):
         task = (ROOT / "docs" / "watchlist_report_task.md").read_text()

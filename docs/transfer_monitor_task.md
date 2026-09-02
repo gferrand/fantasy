@@ -28,7 +28,8 @@ CHANGE DETECTION
 - Compare each run with the prior monitor result in this task conversation.
 - Report only new stories or material changes in status, destination, fee, timing, medical, contract, or expected role.
 - Do not repeat unchanged rumors.
-- If there is no material new information, respond with exactly: `NO_MATERIAL_TRANSFER_UPDATE`
+- If there is no material new information, use the concise quiet-run card in
+  the output format below.
 
 SOURCE AND CONFIDENCE RULES
 - Prefer official club, Premier League, player, or agent announcements for confirmed moves.
@@ -44,12 +45,17 @@ FANTASY CONTEXT
 - Mention Los Blancos relevance only when there is a real connection; otherwise keep the report league-wide.
 
 OUTPUT FORMAT FOR A MATERIAL UPDATE
-1. Player and clubs
-2. What changed this hour
-3. Status label and confidence
-4. Source(s) with publication date/time and links
-5. Fantasy EPL impact
-6. What I should watch next
+
+Use a mobile-first Discord card, not a numbered report, table, or code block:
+- Begin `🚨 TRANSFER WATCH`, then one `✅ CONFIRMED`, `🟠 ADVANCED REPORT`, or
+  `⚪ RUMOR` line with the player and clubs.
+- Use at most four short sections when relevant: `📰 WHAT CHANGED`, `🎯 FANTASY
+  IMPACT`, `👀 WATCH NEXT`, and `🔗 SOURCES`.
+- Bold the player name; keep one concise fact per line; leave a blank line
+  between sections. Put publication time and confidence beside the source rather
+  than in a metadata block.
+- If there is no material new information, respond with exactly:
+  `✅ TRANSFER WATCH\nNo material transfer update this hour.`
 
 Keep the output concise. Never perform or recommend an automatic Sleeper action.
 ```

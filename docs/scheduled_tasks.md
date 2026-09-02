@@ -131,7 +131,8 @@ CHANGE DETECTION
 - Compare each run with the prior monitor result in this task conversation.
 - Report only new stories or material changes in status, destination, fee, timing, medical, contract, or expected role.
 - Do not repeat unchanged rumors.
-- If there is no material new information, respond with exactly: `NO_MATERIAL_TRANSFER_UPDATE`
+- If there is no material new information, respond with exactly:
+  `✅ TRANSFER WATCH\nNo material transfer update this hour.`
 
 SOURCE AND CONFIDENCE RULES
 - Prefer official club, Premier League, player, or agent announcements for confirmed moves.

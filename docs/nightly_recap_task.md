@@ -123,6 +123,23 @@ DATA INTEGRITY RULES
 
 REPORT FORMAT — LEAN DECISION PREP
 
+DISCORD MOBILE PRESENTATION (binding)
+- Start with `🌙 NIGHTLY RECAP`, then a single short `🚨 ACTION NEEDED` or
+  `✅ NO ACTION TONIGHT` line. Do not repeat the date in the title; the Discord
+  message header already shows when the report was delivered.
+- Use only the sections that contain a decision-relevant update: `🩺 ROSTER
+  NEWS`, `📅 NEXT UP`, `🔁 LINEUP CHECK`, `🤝 LEAGUE TRADE`, `🏟️ PICKUPS`, and
+  `✅ NEXT STEPS`.
+- Keep each player or decision as a short card: bold player name first, then
+  one compact fact/evidence line, then a one-line implication or deadline.
+  Leave a blank line between cards. Do not use tables, code blocks, full-roster
+  lists, repeated metadata, or empty headings.
+- Put sources in compact Markdown links at the end of the relevant card. Put
+  the active evidence window once near the top when a player-specific claim is
+  included; do not repeat it for every item.
+- On a quiet day, send only `🌙 NIGHTLY RECAP` and `✅ NO ACTION TONIGHT` with a
+  one-line reason. Do not pad the message with static context.
+
 1. Header
    - State the Eastern Time date covered.
    - Lead with either the most urgent action or: "Nothing actionable to report today."

@@ -35,5 +35,15 @@ selection from older material.
 
 Always deliver a concise status even on quiet days. Begin with the active evidence
 window and source timestamp, then use one short bullet per watched player. Keep
-facts separate from any clearly labeled inference. Return only the report.
+facts separate from any clearly labeled inference.
+
+DISCORD MOBILE PRESENTATION (binding)
+- Begin `👀 WATCHLIST UPDATE`, followed by one compact evidence-window line.
+- Use one easy-to-scan card per watched player: `**Player** · club · position`,
+  then a single status/fact line, then a source or next-fixture note only when
+  it changes the decision. Leave a blank line between players.
+- Use `✅ NO MATERIAL UPDATE` on quiet entries. Do not add empty categories,
+  tables, code blocks, raw snapshot JSON, task identifiers, or process notes.
+- End with `🔎 RECHECK` only if something should be verified before a relevant
+  match; otherwise omit it. Return only the report.
 ```

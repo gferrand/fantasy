@@ -25,6 +25,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .context_store import SCHEDULED_REPORT, append_event, build_context_packet
+from .discord_presentation import scheduled_failure, scheduled_header
 from .watchlist import WatchlistPlayer, list_watchlist
 
 
@@ -401,7 +402,19 @@ def task_prompt_for_run(task: TaskSpec, *, runtime_context: str | None = None) -
         "setup confirmation. Perform the requested briefing or monitor now and "
         "return only its report."
     )
-    prompt = f"{execution_contract}\n\n{prompt}"
+    discord_presentation_contract = (
+        "DISCORD PRESENTATION CONTRACT\n"
+        "Your answer is posted directly to a private Discord conversation. Make it "
+        "phone-first and immediately scannable: lead with a short emoji heading and "
+        "the decision or status, use short lines, blank lines between distinct items, "
+        "and bold player names. Use familiar emoji section labels where they clarify "
+        "the report. Never use Markdown tables, code blocks, wide layouts, a full "
+        "roster dump, process narration, task/thread identifiers, or implementation "
+        "metadata. Keep only one concise evidence or timestamp line when it matters. "
+        "On a quiet run, send a clean one- or two-line status card rather than a "
+        "padded report."
+    )
+    prompt = f"{execution_contract}\n\n{discord_presentation_contract}\n\n{prompt}"
     if runtime_context and runtime_context.strip():
         prompt = f"{prompt}\n\n{runtime_context.strip()}\n"
     if task.state_file is None:
@@ -775,6 +788,14 @@ Use this exact information order:
 Use the supplied live packet for every number. The swap signals are
 manual-review candidates only; never claim that a Sleeper transaction occurred.
 """ if waiver_analysis else """
+This is a phone-first Discord answer. Start with one descriptive emoji heading,
+then lead with the answer or recommendation. Use short lines, blank lines
+between distinct options, bold player names, and familiar emoji labels only
+where they add scanning value. Never use a Markdown table, code block, wide
+multi-column layout, task/thread identifier, or implementation/process
+metadata. Do not repeat the full roster or raw feed; put evidence in one compact
+line only when it affects the decision.
+
 For pickup questions, assess no more than six candidates from the compact
 shortlist. For a question about fit, compare those candidates against the
 current Los Blancos roster, open position needs, and custom scoring in the
@@ -879,7 +900,11 @@ def split_discord_message(text: str, *, limit: int = 2000) -> list[str]:
         return [""]
     chunks: list[str] = []
     while len(remaining) > limit:
-        cut = remaining.rfind("\n", 0, limit + 1)
+        # Prefer an empty line between cards or sections so a phone-sized
+        # message never starts with the tail of a player recommendation.
+        cut = remaining.rfind("\n\n", 0, limit + 1)
+        if cut < limit // 2:
+            cut = remaining.rfind("\n", 0, limit + 1)
         if cut < limit // 2:
             cut = remaining.rfind(" ", 0, limit + 1)
         if cut < limit // 2:
@@ -892,7 +917,7 @@ def split_discord_message(text: str, *, limit: int = 2000) -> list[str]:
 
 def build_report_header(task: TaskSpec, result: CodexResult) -> str:
     timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    return f"**{task.name}** · {timestamp} · Codex task `{result.thread_id or 'local'}`\n\n"
+    return scheduled_header(task.name, timestamp) + "\n\n"
 
 
 def advisor_context_file(config: AppConfig) -> Path:
@@ -1112,7 +1137,7 @@ def run_scheduled_task(
     except AutomationError as exc:
         if deliver:
             try:
-                failure_report = f"**{task.name} failed**\n\n{str(exc)[-2000:]}"
+                failure_report = scheduled_failure(task.name, str(exc)[-1800:])
                 failure_file = persist_outbox_message(config, task.id, "failed", failure_report)
                 transport.send_channel(config.discord_scheduled_channel_id, failure_report)
                 failure_file.unlink()

@@ -33,6 +33,21 @@ from .attachment_intake import (
     normalize_attachment,
 )
 from .context_store import DISCORD_ASSISTANT_RESPONSE, DISCORD_USER_MESSAGE
+from .discord_presentation import (
+    advisor_header,
+    attachment_processing,
+    attachment_ready,
+    error_card,
+    help_menu,
+    private_advisor_only,
+    response_limit_notice,
+    task_menu,
+    waiver_header,
+    watchlist_card,
+    watchlist_change,
+    watchlist_empty,
+    working_card,
+)
 from .watchlist import (
     WatchlistError,
     WatchlistResolutionError,
@@ -99,10 +114,10 @@ def build_client(config: AppConfig) -> discord.Client:
     def compact_interaction_error(prefix: str, exc: Exception) -> str:
         """Keep an interaction error inside Discord's 2,000-character limit."""
 
-        text = f"{prefix}: {exc}"
+        text = error_card(prefix, str(exc))
         if len(text) <= 1900:
             return text
-        return text[:1850].rstrip() + "\n[diagnostic truncated]"
+        return text[:1850].rstrip() + "\n*Details truncated.*"
 
     def remember_dm_channel(channel: discord.abc.Messageable) -> None:
         channel_id = getattr(channel, "id", None)
@@ -140,15 +155,13 @@ def build_client(config: AppConfig) -> discord.Client:
         )
         if waiver_analysis:
             return (
-                "🏟️ **Los Blancos — Waiver Wire**\n"
-                "📱 *Phone-friendly view · manual review only*\n\n"
+                waiver_header() + "\n\n"
                 f"{result.text}",
                 True,
                 result.thread_id,
             )
         return (
-            f"**On-demand fantasy advisor** · Codex task `"
-            f"{result.thread_id or 'local'}`\n\n{result.text}",
+            advisor_header() + f"\n\n{result.text}",
             True,
             result.thread_id,
         )
@@ -179,7 +192,7 @@ def build_client(config: AppConfig) -> discord.Client:
         remember_dm_channel(message.channel)
         async with run_lock:
             await message.channel.send(
-                "Starting a local Codex task. I’ll DM the result here when it finishes.",
+                working_card(),
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             try:
@@ -196,10 +209,10 @@ def build_client(config: AppConfig) -> discord.Client:
                 await send_chunks(message.channel, report)
             except AutomationError as exc:
                 LOGGER.exception("Codex task failed for Discord message")
-                await send_chunks(message.channel, f"I couldn’t complete that task: {exc}")
+                await send_chunks(message.channel, error_card("I couldn’t complete that task", str(exc)))
             except Exception:
                 LOGGER.exception("Unexpected Discord task failure")
-                await send_chunks(message.channel, "I couldn’t complete that task because of an unexpected local error.")
+                await send_chunks(message.channel, error_card("I couldn’t complete that task", "Please try again shortly."))
 
     async def normalize_discord_attachment(
         message: discord.Message,
@@ -215,7 +228,7 @@ def build_client(config: AppConfig) -> discord.Client:
         filename = Path(attachment.filename or "attachment").name
         content_type = attachment.content_type
         await message.channel.send(
-            "Processing your attachment…",
+            attachment_processing(),
             allowed_mentions=discord.AllowedMentions.none(),
         )
         with tempfile.TemporaryDirectory(prefix="fantasy-discord-input-") as temporary:
@@ -251,13 +264,9 @@ def build_client(config: AppConfig) -> discord.Client:
                 if action == "list":
                     watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
                     if not watched:
-                        await send_chunks(message.channel, "Your watchlist is empty. Say “add [player] to my watchlist” to begin.")
+                        await send_chunks(message.channel, watchlist_empty())
                         return
-                    entries = "\n".join(
-                        f"• **{entry.name}** — {entry.club} ({'/'.join(entry.positions) or 'position unavailable'})"
-                        for entry in watched
-                    )
-                    await send_chunks(message.channel, f"**Your watchlist ({len(watched)})**\n{entries}")
+                    await send_chunks(message.channel, watchlist_card(watched))
                     return
                 if not player:
                     raise WatchlistError("Include a player name.")
@@ -265,10 +274,9 @@ def build_client(config: AppConfig) -> discord.Client:
                     index = await asyncio.to_thread(load_current_epl_player_index, config)
                     resolved = resolve_watchlist_player(player, index)
                     saved, added = await asyncio.to_thread(add_watchlist_player, watchlist_file(config), resolved)
-                    verb = "Added" if added else "Already watching"
                     await send_chunks(
                         message.channel,
-                        f"{verb}: **{saved.name}** — {saved.club} ({'/'.join(saved.positions) or 'position unavailable'}).",
+                        watchlist_change("added" if added else "already_watching", saved),
                     )
                     return
                 if action == "remove":
@@ -277,11 +285,11 @@ def build_client(config: AppConfig) -> discord.Client:
                     removed = await asyncio.to_thread(remove_watchlist_player, watchlist_file(config), saved.player_id)
                     if removed is None:
                         raise WatchlistError("That player is no longer on the watchlist.")
-                    await send_chunks(message.channel, f"Removed **{removed.name}** from the watchlist.")
+                    await send_chunks(message.channel, watchlist_change("removed", removed))
                     return
                 raise WatchlistError(f"Unsupported watchlist action: {action}")
             except (AutomationError, WatchlistError) as exc:
-                await send_chunks(message.channel, f"I couldn’t update the watchlist: {exc}")
+                await send_chunks(message.channel, error_card("I couldn’t update the watchlist", str(exc)))
 
     async def run_interaction(
         interaction: discord.Interaction,
@@ -293,7 +301,7 @@ def build_client(config: AppConfig) -> discord.Client:
 
         if str(interaction.user.id) != config.discord_allowed_user_id:
             await interaction.response.send_message(
-                "This private fantasy advisor is not enabled for this Discord account.",
+                private_advisor_only(),
                 ephemeral=True,
             )
             return
@@ -316,10 +324,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 # unusually large report fail visibly instead of silently
                 # dropping its tail.
                 if len(chunks) > 5:
-                    chunks = chunks[:4] + [
-                        "\n\n[The report exceeded Discord’s user-install response limit. "
-                        "Run the same task locally to read the full result.]"
-                    ]
+                    chunks = chunks[:4] + [response_limit_notice()]
                 await interaction.edit_original_response(content=chunks[0])
                 for chunk in chunks[1:]:
                     await interaction.followup.send(
@@ -334,7 +339,7 @@ def build_client(config: AppConfig) -> discord.Client:
             except Exception:
                 LOGGER.exception("Unexpected Discord command failure")
                 await interaction.edit_original_response(
-                    content="I couldn’t complete that task because of an unexpected local error."
+                    content=error_card("I couldn’t complete that task", "Please try again shortly.")
                 )
 
     @command_tree.command(name="ask", description="Run a read-only fantasy advisor task")
@@ -343,7 +348,10 @@ def build_client(config: AppConfig) -> discord.Client:
     @app_commands.allowed_contexts(guilds=False, dms=True, private_channels=False)
     async def ask_command(interaction: discord.Interaction, prompt: str) -> None:
         if not prompt.strip():
-            await interaction.response.send_message("Include a question after `/ask`.", ephemeral=True)
+            await interaction.response.send_message(
+                error_card("Add a question", "Try `/ask` followed by what you want to know."),
+                ephemeral=True,
+            )
             return
         await run_interaction(interaction, prompt.strip())
 
@@ -366,15 +374,14 @@ def build_client(config: AppConfig) -> discord.Client:
     async def tasks_command(interaction: discord.Interaction) -> None:
         if str(interaction.user.id) != config.discord_allowed_user_id:
             await interaction.response.send_message(
-                "This private fantasy advisor is not enabled for this Discord account.",
+                private_advisor_only(),
                 ephemeral=True,
             )
             return
         remember_dm_channel(interaction.channel)
         registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
-        tasks = "\n".join(f"`{task.id}` — {task.name}" for task in registry.tasks)
         await interaction.response.send_message(
-            f"Registered tasks:\n{tasks}",
+            task_menu(registry.tasks),
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
@@ -387,7 +394,7 @@ def build_client(config: AppConfig) -> discord.Client:
             registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
             registry.get(task_id.strip())
         except AutomationError as exc:
-            await interaction.response.send_message(str(exc), ephemeral=True)
+            await interaction.response.send_message(error_card("That report isn’t available", str(exc)), ephemeral=True)
             return
         await run_interaction(interaction, f"!task {task_id.strip()}")
 
@@ -402,7 +409,7 @@ def build_client(config: AppConfig) -> discord.Client:
         if str(interaction.user.id) == config.discord_allowed_user_id:
             return True
         await interaction.response.send_message(
-            "This private fantasy advisor is not enabled for this Discord account.", ephemeral=True
+            private_advisor_only(), ephemeral=True
         )
         return False
 
@@ -412,17 +419,18 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_watchlist_user(interaction):
             return
         if not player.strip():
-            await interaction.response.send_message("Include a player name after `/watch add`.", ephemeral=True)
+            await interaction.response.send_message(
+                error_card("Add a player name", "Try `/watch add player`."),
+                ephemeral=True,
+            )
             return
         await interaction.response.defer()
         try:
             index = await asyncio.to_thread(load_current_epl_player_index, config)
             resolved = resolve_watchlist_player(player, index)
             saved, added = await asyncio.to_thread(add_watchlist_player, watchlist_file(config), resolved)
-            action = "Added" if added else "Already watching"
-            positions = "/".join(saved.positions) or "position unavailable"
             await interaction.edit_original_response(
-                content=f"{action}: **{saved.name}** — {saved.club} ({positions})."
+                content=watchlist_change("added" if added else "already_watching", saved)
             )
         except (AutomationError, WatchlistError) as exc:
             await interaction.edit_original_response(content=compact_interaction_error("Couldn’t update the watchlist", exc))
@@ -439,7 +447,7 @@ def build_client(config: AppConfig) -> discord.Client:
             removed = await asyncio.to_thread(remove_watchlist_player, watchlist_file(config), resolved.player_id)
             if removed is None:
                 raise WatchlistError("That player is no longer on the watchlist.")
-            await interaction.edit_original_response(content=f"Removed **{removed.name}** from the watchlist.")
+            await interaction.edit_original_response(content=watchlist_change("removed", removed))
         except (WatchlistError, WatchlistResolutionError) as exc:
             await interaction.edit_original_response(content=compact_interaction_error("Couldn’t update the watchlist", exc))
 
@@ -450,13 +458,9 @@ def build_client(config: AppConfig) -> discord.Client:
         try:
             watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
             if not watched:
-                content = "Your watchlist is empty. Add one with `/watch add player`."
+                content = watchlist_empty()
             else:
-                entries = "\n".join(
-                    f"• **{entry.name}** — {entry.club} ({'/'.join(entry.positions) or 'position unavailable'})"
-                    for entry in watched
-                )
-                content = f"**Your watchlist ({len(watched)})**\n{entries}"
+                content = watchlist_card(watched)
             await interaction.response.send_message(content, allowed_mentions=discord.AllowedMentions.none())
         except WatchlistError as exc:
             await interaction.response.send_message(compact_interaction_error("Couldn’t read the watchlist", exc), ephemeral=True)
@@ -496,7 +500,7 @@ def build_client(config: AppConfig) -> discord.Client:
         try:
             attachment_input = await normalize_discord_attachment(message)
         except AttachmentIntakeError as exc:
-            await send_chunks(message.channel, f"I couldn’t process that attachment: {exc}")
+            await send_chunks(message.channel, error_card("I couldn’t read that attachment", str(exc)))
             return
         if attachment_input is not None:
             attachment_kind, attachment_metadata, attachment_text = attachment_input
@@ -506,7 +510,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 remember_user_message(context_text, metadata=attachment_metadata)
                 await send_chunks(
                     message.channel,
-                    "I extracted that attachment and saved its text as conversation context. What would you like me to do with it?",
+                    attachment_ready(),
                 )
                 return
             if attachment_kind == "audio" and not caption:
@@ -525,21 +529,15 @@ def build_client(config: AppConfig) -> discord.Client:
         if content.casefold() in {"!help", "help"}:
             await send_chunks(
                 message.channel,
-                "Use `/ask` in my DM to open a local Codex task. "
-                "Use `/analyze-waivers` for the full waiver shortlist and swap analysis. "
-                "Use `/tasks` to see scheduled task IDs or `/task <id>` to run one now. "
-                "Say “add [player] to my watchlist,” “remove [player] from my watchlist,” or “what’s on my watchlist?” "
-                "You can also use `/watch add`, `/watch remove`, or `/watch list`. "
-                "Text DMs are also accepted when Discord exposes them to the bot.",
+                help_menu(),
             )
             return
         if content.casefold() == "!tasks":
             try:
                 registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
-                tasks = "\n".join(f"`{task.id}` — {task.name}" for task in registry.tasks)
-                await send_chunks(message.channel, f"Registered tasks:\n{tasks}")
+                await send_chunks(message.channel, task_menu(registry.tasks))
             except AutomationError as exc:
-                await send_chunks(message.channel, f"I couldn’t read the task registry: {exc}")
+                await send_chunks(message.channel, error_card("I couldn’t load your reports", str(exc)))
             return
         await run_and_reply(message, content, user_metadata=attachment_metadata)
 

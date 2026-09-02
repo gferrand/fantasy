@@ -130,6 +130,7 @@ class AutomationTests(unittest.TestCase):
         registry = load_registry(ROOT / "automation" / "tasks.toml", repo_root=ROOT)
         prompt = task_prompt_for_run(registry.get("nightly_recap"))
         self.assertIn("LOCAL SCHEDULER EXECUTION CONTRACT", prompt)
+        self.assertIn("DISCORD PRESENTATION CONTRACT", prompt)
         self.assertIn("return only its report", prompt)
         self.assertIn("Do not create, edit, enable, disable", prompt)
         self.assertIn("You are my read-only fantasy EPL advisor", prompt)
@@ -420,7 +421,7 @@ class AutomationTests(unittest.TestCase):
             self.assertEqual(transport.channel_attempts[0][0], "789")
             queued = list((root / "data" / "automation" / "outbox").glob("*.md"))
             self.assertEqual(len(queued), 1)
-            self.assertIn("Nightly failed", queued[0].read_text(encoding="utf-8"))
+            self.assertIn("Nightly didn’t run", queued[0].read_text(encoding="utf-8"))
 
     def test_discord_channel_state_is_local_and_atomic(self):
         with tempfile.TemporaryDirectory() as temporary:
