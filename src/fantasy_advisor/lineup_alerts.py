@@ -93,15 +93,15 @@ def load_fixture_schedule(
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             schedule = cached.get("schedule") if isinstance(cached, Mapping) else None
-            if isinstance(schedule, Mapping) and isinstance(schedule.get("events"), list):
+            if _is_complete_fixture_schedule(schedule):
                 return schedule
         except (OSError, json.JSONDecodeError):
             # A partial cache must never block a fresh public schedule fetch.
             pass
     season_start, season_end = fixture_season_window(current)
     schedule = (fixture_client or EplFixtureClient()).get_schedule(season_start, season_end)
-    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("events"), list):
-        raise AutomationError("Premier League fixture schedule did not return an events array")
+    if not _is_complete_fixture_schedule(schedule):
+        raise AutomationError("Premier League fixture schedule did not return a complete valid season")
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
     temporary.write_text(
@@ -117,12 +117,26 @@ def _load_sent(path: Path) -> set[str]:
         return set()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except json.JSONDecodeError:
+        _quarantine_corrupt_state(path)
+        return set()
+    except OSError as exc:
         raise AutomationError("Lineup alert state is unreadable") from exc
     sent = payload.get("sent") if isinstance(payload, Mapping) else None
     if not isinstance(sent, list):
-        raise AutomationError("Lineup alert state is malformed")
+        _quarantine_corrupt_state(path)
+        return set()
     return {str(value) for value in sent if str(value).strip()}
+
+
+def _quarantine_corrupt_state(path: Path) -> None:
+    """Preserve a bad state file while allowing a pending alert to be delivered."""
+
+    backup = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        path.replace(backup)
+    except OSError as exc:
+        raise AutomationError("Lineup alert state is unreadable") from exc
 
 
 def _mark_sent(path: Path, event_id: str) -> None:
@@ -142,6 +156,40 @@ def _parse_kickoff(value: object) -> datetime | None:
     except ValueError:
         return None
     return parsed.astimezone(timezone.utc)
+
+
+def _is_complete_fixture_schedule(schedule: object) -> bool:
+    """Reject partial or malformed season downloads instead of silently missing matches."""
+
+    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("events"), list):
+        return False
+    events = schedule["events"]
+    # A 20-club Premier League season has 380 fixtures. The all-or-nothing
+    # check prevents an incomplete scoreboard response becoming the calendar.
+    if len(events) != 380:
+        return False
+    event_ids: set[str] = set()
+    for event in events:
+        if not isinstance(event, Mapping):
+            return False
+        event_id = str(event.get("id") or "").strip()
+        if not event_id or event_id in event_ids or _parse_kickoff(event.get("date")) is None:
+            return False
+        event_ids.add(event_id)
+        competitions = event.get("competitions")
+        competition = competitions[0] if isinstance(competitions, list) and competitions and isinstance(competitions[0], Mapping) else None
+        competitors = competition.get("competitors") if isinstance(competition, Mapping) else None
+        if not isinstance(competitors, list) or len(competitors) != 2:
+            return False
+        sides = {str(item.get("homeAway") or "") for item in competitors if isinstance(item, Mapping)}
+        names = {
+            str(item.get("team", {}).get("displayName") or "").strip()
+            for item in competitors
+            if isinstance(item, Mapping) and isinstance(item.get("team"), Mapping)
+        }
+        if sides != {"home", "away"} or len(names) != 2 or any(name not in CLUB_ABBRS for name in names):
+            return False
+    return True
 
 
 def roster_fixtures(context: GameweekContext, schedule: object) -> tuple[LineupFixture, ...]:
@@ -247,6 +295,25 @@ def lineup_alert_context(context: GameweekContext, fixtures: Iterable[LineupFixt
     )
 
 
+def fallback_lineup_alert(context: GameweekContext, fixtures: Iterable[LineupFixture]) -> str:
+    """Build a factual alert when optional research cannot complete in time."""
+
+    starters = {
+        str(player_id)
+        for player_id in context.payload.get("your_team", {}).get("current_starters", [])
+    }
+    lines = ["⏰ **Lineup check**", "Live roster + fixture match detected."]
+    for fixture in fixtures:
+        players = ", ".join(
+            f"{player.get('name', 'Unknown player')} ({'currently starting' if str(player.get('player_id')) in starters else 'not currently starting'})"
+            for player in fixture.players
+        )
+        lines.append(f"{fixture.home} vs {fixture.away} — {fixture.kickoff:%Y-%m-%d %H:%M UTC}")
+        lines.append(f"Your players: {players}")
+    lines.append("The live research briefing was unavailable; confirm manually in Sleeper before kickoff.")
+    return "\n".join(lines)
+
+
 def run_lineup_alerts(
     config: AppConfig,
     *,
@@ -287,8 +354,14 @@ def run_lineup_alerts(
     for fixture in pending:
         windows.setdefault(fixture.kickoff, []).append(fixture)
     for fixtures in windows.values():
-        result = briefing(config, live_context=lineup_alert_context(context, fixtures))
-        sender.send_dm(config.discord_allowed_user_id or "", result.text)
+        try:
+            result = briefing(config, live_context=lineup_alert_context(context, fixtures))
+            text = result.text
+        except Exception:
+            # Research is valuable but must never suppress the time-sensitive
+            # fixture alert when the roster and kickoff are already known.
+            text = fallback_lineup_alert(context, fixtures)
+        sender.send_dm(config.discord_allowed_user_id or "", text)
         for fixture in fixtures:
             _mark_sent(state_path, fixture.event_id)
         delivered += 1
