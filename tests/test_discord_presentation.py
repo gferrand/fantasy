@@ -9,8 +9,10 @@ from fantasy_advisor.discord_presentation import (
     web_briefing_header,
     watchlist_card,
     watchlist_change,
+    watchlist_stats_card,
 )
 from fantasy_advisor.watchlist import WatchlistPlayer
+from fantasy_advisor.watchlist_stats import WatchlistStat, WatchlistStatsReport
 
 
 class _Task:
@@ -42,6 +44,23 @@ class DiscordPresentationTests(unittest.TestCase):
 
     def test_error_card_keeps_action_and_detail_separate(self):
         self.assertEqual(error_card("Couldn’t load report", "Try again."), "⚠️ **Couldn’t load report**\nTry again.")
+
+    def test_watchlist_stats_card_is_compact_and_marks_missing_rows(self):
+        player = WatchlistPlayer("1", "Bukayo Saka", "ARS", ("F", "M"), "2026-09-01T00:00:00+00:00")
+        missing = WatchlistPlayer("2", "Former Player", "", ("M",), "2026-09-01T00:00:00+00:00")
+        report = WatchlistStatsReport(
+            "2026", 3, "2026-09-03T02:10:00+00:00",
+            (
+                WatchlistStat(player, 22.5, 2.0, 2.0, 180.0, 2.0, 1.0, None, None, None, None, True),
+                WatchlistStat(missing, None, None, None, None, None, None, None, None, None, None, False),
+            ),
+        )
+        card = watchlist_stats_card(report)
+        self.assertIn("Watchlist stats · 2 players", card)
+        self.assertIn("Pts 22.5 · GP 2 · GS 2 · Min 180", card)
+        self.assertIn("G 2 · A 1", card)
+        self.assertIn("Former Player", card)
+        self.assertIn("No current regular-season Sleeper stats returned.", card)
 
 
 if __name__ == "__main__":

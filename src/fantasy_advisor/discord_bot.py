@@ -36,6 +36,7 @@ from .attachment_intake import (
     normalize_attachment,
 )
 from .context_store import DISCORD_ASSISTANT_RESPONSE, DISCORD_USER_MESSAGE
+from .sleeper import SleeperDataError
 from .discord_presentation import (
     advisor_header,
     attachment_processing,
@@ -51,6 +52,7 @@ from .discord_presentation import (
     watchlist_card,
     watchlist_change,
     watchlist_empty,
+    watchlist_stats_card,
     working_card,
 )
 from .watchlist import (
@@ -63,6 +65,7 @@ from .watchlist import (
     resolve_saved_watchlist_player,
     resolve_watchlist_player,
 )
+from .watchlist_stats import load_current_watchlist_stats
 
 
 LOGGER = logging.getLogger(__name__)
@@ -500,6 +503,33 @@ def build_client(config: AppConfig) -> discord.Client:
             await interaction.response.send_message(content, allowed_mentions=discord.AllowedMentions.none())
         except WatchlistError as exc:
             await interaction.response.send_message(compact_interaction_error("Couldn’t read the watchlist", exc), ephemeral=True)
+
+    @watch_group.command(name="stats", description="Fetch current Sleeper stats for every watched player")
+    async def watch_stats_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
+            if not watched:
+                await interaction.edit_original_response(content=watchlist_empty())
+                return
+            async with run_lock:
+                report = await asyncio.to_thread(load_current_watchlist_stats, watched)
+            chunks = split_discord_message(watchlist_stats_card(report), limit=1900)
+            await interaction.edit_original_response(content=chunks[0])
+            for chunk in chunks[1:]:
+                await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+        except (AutomationError, SleeperDataError, WatchlistError) as exc:
+            LOGGER.exception("Could not load current Sleeper watchlist stats")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t load watchlist stats", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure loading current Sleeper watchlist stats")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t load watchlist stats", "Please try again shortly.")
+            )
 
     command_tree.add_command(watch_group)
 

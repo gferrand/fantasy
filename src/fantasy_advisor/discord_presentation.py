@@ -51,7 +51,7 @@ def help_menu() -> str:
         "🏟️ **Waivers**\n`/analyze-waivers` — pickups and manual-review swaps\n\n"
         "🧠 **Ask anything**\n`/ask` — research a player, fixture, or decision\n\n"
         "📬 **Reports**\n`/tasks` — see scheduled reports\n`/task <id>` — run one now\n\n"
-        "👀 **Watchlist**\n`/watch add`, `/watch remove`, `/watch list`\n"
+        "👀 **Watchlist**\n`/watch add`, `/watch remove`, `/watch list`, `/watch stats`\n"
         "Refresh player references: `/player_catalog update`\n"
         "You can also message me normally when Discord supports bot DMs."
     )
@@ -95,6 +95,50 @@ def watchlist_change(action: str, entry: object) -> str:
     if action == "removed":
         return f"🗑️ **Removed from watchlist**\n**{name}**"
     raise ValueError(f"Unknown watchlist action: {action}")
+
+
+def _stat_value(value: object) -> str:
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def watchlist_stats_card(report: object) -> str:
+    """Render the just-fetched current Sleeper totals for every watched player."""
+
+    season = str(getattr(report, "season"))
+    week = getattr(report, "week")
+    retrieved_at = str(getattr(report, "retrieved_at"))
+    entries = list(getattr(report, "entries"))
+    window = f"Sleeper EPL · {season} regular season"
+    if week is not None:
+        window += f" · GW{week}"
+    lines = [f"📊 **Watchlist stats · {len(entries)} players**", f"*{window} · fetched {retrieved_at}*"]
+    for entry in entries:
+        player = getattr(entry, "player")
+        club = str(getattr(player, "club")) or "no current club"
+        positions = "/".join(getattr(player, "positions")) or "position unavailable"
+        lines.extend(("", f"• **{getattr(player, 'name')}** · {club} · {positions}"))
+        if not getattr(entry, "found"):
+            lines.append("  No current regular-season Sleeper stats returned.")
+            continue
+        summary = []
+        for label, field in (("Pts", "points"), ("GP", "games"), ("GS", "starts"), ("Min", "minutes")):
+            value = getattr(entry, field)
+            if value is not None:
+                summary.append(f"{label} {_stat_value(value)}")
+        lines.append("  " + " · ".join(summary or ["No scored stats returned."]))
+        details = []
+        for label, field in (("G", "goals"), ("A", "assists"), ("CS", "clean_sheets"), ("SV", "saves")):
+            value = getattr(entry, field)
+            if value is not None:
+                details.append(f"{label} {_stat_value(value)}")
+        if details:
+            lines.append("  " + " · ".join(details))
+        injury_status = getattr(entry, "injury_status")
+        if injury_status:
+            lines.append(f"  Injury status: {injury_status}")
+    return "\n".join(lines)
 
 
 def attachment_processing() -> str:
