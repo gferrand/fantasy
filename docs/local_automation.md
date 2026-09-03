@@ -178,6 +178,14 @@ player; it is read-only and does not update the catalog. The 8:00 AM Eastern
 watchlist report is silent when that list is empty and does not use Discord
 conversation context.
 
+For decisions rather than just raw totals, `/watch outlook` combines that
+fresh Sleeper snapshot with focused current web research to assess role,
+minutes, injury, transfer, and competition risk for every watched player.
+`/watch recommend` additionally reads the current Los Blancos roster and live
+league scoring to surface bounded same-position add/drop signals, then uses
+current web research to qualify them. Both commands are private, read-only,
+and explicitly label every pickup/drop as a manual Sleeper decision.
+
 The transfer monitor stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or
 materially changed reports. Scheduled reports are written to a local outbox

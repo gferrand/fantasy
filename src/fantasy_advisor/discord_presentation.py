@@ -52,6 +52,8 @@ def help_menu() -> str:
         "🧠 **Ask anything**\n`/ask` — research a player, fixture, or decision\n\n"
         "📬 **Reports**\n`/tasks` — see scheduled reports\n`/task <id>` — run one now\n\n"
         "👀 **Watchlist**\n`/watch add`, `/watch remove`, `/watch list`, `/watch stats`\n"
+        "`/watch outlook` — current news and expert view\n"
+        "`/watch recommend` — manual roster-fit ideas\n"
         "Refresh player references: `/player_catalog update`\n"
         "You can also message me normally when Discord supports bot DMs."
     )

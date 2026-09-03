@@ -37,11 +37,13 @@ from fantasy_advisor.automation import (
     read_discord_channel_id,
     run_interactive_task,
     run_web_briefing,
+    run_watchlist_web_briefing,
     split_discord_message,
     run_scheduled_task,
     task_prompt_for_run,
     thread_id_from_events,
     web_briefing_prompt,
+    watchlist_web_briefing_prompt,
 )
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
 from fantasy_advisor.player_catalog import refresh_player_catalog
@@ -114,6 +116,42 @@ class AutomationTests(unittest.TestCase):
     def test_web_briefing_requires_an_api_key(self):
         with self.assertRaisesRegex(AutomationError, "OPENAI_API_KEY"):
             run_web_briefing(test_config(), "What happened yesterday?")
+
+    def test_watchlist_web_briefing_uses_private_live_context(self):
+        class FakeResponses:
+            def __init__(self):
+                self.calls = []
+
+            def create(self, **kwargs):
+                self.calls.append(kwargs)
+                return type("Response", (), {"output_text": "🎯 **Watchlist recommendations**\nManual review.", "id": "resp-watch"})()
+
+        fake_responses = FakeResponses()
+        fake_client = type("Client", (), {"responses": fake_responses})()
+        config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "test-key"})
+        with patch("openai.OpenAI", return_value=fake_client):
+            result = run_watchlist_web_briefing(
+                config,
+                "Assess my watched players.",
+                live_context='{"watched_players":["Ryan Giles"]}',
+                recommendation=True,
+            )
+
+        self.assertEqual(result.response_id, "resp-watch")
+        call = fake_responses.calls[0]
+        self.assertEqual(call["tools"], [{"type": "web_search_preview", "search_context_size": "medium"}])
+        self.assertFalse(call["store"])
+        self.assertIn("Ryan Giles", call["instructions"])
+        self.assertIn("MANUAL ADD", call["instructions"])
+
+    def test_watchlist_web_prompt_requires_manual_and_current_evidence(self):
+        prompt = watchlist_web_briefing_prompt(
+            "Give me an outlook.",
+            live_context="WATCHLIST_CONTEXT",
+        )
+        self.assertIn("WATCHLIST_CONTEXT", prompt)
+        self.assertIn("Never make, simulate, or imply a Sleeper transaction", prompt)
+        self.assertIn("Priority", prompt)
 
     def test_web_briefing_prompt_keeps_league_data_outside_the_web_path(self):
         prompt = web_briefing_prompt("What happened to the Balogun Everton deal?", context_packet="MEMORY")

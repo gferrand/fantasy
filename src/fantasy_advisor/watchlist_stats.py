@@ -104,10 +104,24 @@ def load_current_watchlist_stats(
     or alter the watchlist.
     """
 
-    entries = tuple(watched)
     sleeper = client or SleeperClient()
-    season, week = _current_season(sleeper.get_json(f"{API_BASE}/state/clubsoccer:epl"))
+    state = sleeper.get_json(f"{API_BASE}/state/clubsoccer:epl")
+    season, _ = _current_season(state)
     rows = sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular")
+    return build_watchlist_stats_report(watched, state=state, rows=rows, retrieved_at=retrieved_at)
+
+
+def build_watchlist_stats_report(
+    watched: Iterable[WatchlistPlayer],
+    *,
+    state: object,
+    rows: object,
+    retrieved_at: str | None = None,
+) -> WatchlistStatsReport:
+    """Build a watchlist report from already-fetched current Sleeper payloads."""
+
+    entries = tuple(watched)
+    season, week = _current_season(state)
     if not isinstance(rows, list):
         raise SleeperDataError("Sleeper current EPL stats did not return an array")
     by_id = {
