@@ -8,6 +8,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from .automation import AppConfig, AutomationError, TaskSpec, load_registry, run_scheduled_task
+from .lineup_alerts import run_lineup_alerts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ def main() -> int:
                 LOGGER.info("Completed scheduled task %s", task.id)
             except AutomationError:
                 LOGGER.exception("Scheduled task %s failed", task.id)
+        try:
+            delivered = run_lineup_alerts(config, now=now)
+            if delivered:
+                LOGGER.info("Delivered %d lineup alert(s)", delivered)
+        except AutomationError:
+            LOGGER.exception("Lineup alert check failed")
         completed_minutes = {key for key in completed_minutes if key[1] == minute_key}
         time.sleep(max(1, 60 - datetime.now(zone).second))
 

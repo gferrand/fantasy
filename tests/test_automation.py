@@ -45,6 +45,7 @@ from fantasy_advisor.automation import (
     web_briefing_prompt,
     watchlist_web_briefing_prompt,
     gameweek_web_briefing_prompt,
+    lineup_alert_web_briefing_prompt,
 )
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
 from fantasy_advisor.player_catalog import refresh_player_catalog
@@ -168,6 +169,13 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("does not expose the H2H matchup", prompt)
         self.assertIn("Ideal XI", prompt)
         self.assertIn("Fantasy analyst view:", prompt)
+
+    def test_lineup_alert_prompt_requires_manual_time_sensitive_guidance(self):
+        prompt = lineup_alert_web_briefing_prompt(live_context='{"fixture":{"home":"Hull City"}}')
+        self.assertIn("Hull City", prompt)
+        self.assertIn("Sleeper fantasy", prompt)
+        self.assertIn("START", prompt)
+        self.assertIn("Confirm manually in Sleeper before kickoff", prompt)
 
     def test_web_briefing_prompt_keeps_league_data_outside_the_web_path(self):
         prompt = web_briefing_prompt("What happened to the Balogun Everton deal?", context_packet="MEMORY")

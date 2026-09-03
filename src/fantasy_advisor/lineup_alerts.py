@@ -1,0 +1,205 @@
+"""Fixture-aware, private lineup alerts for the owner's Sleeper roster."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
+from typing import Any, Callable, Iterable, Mapping
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from .automation import AppConfig, AutomationError, EXPECTED_MANAGER_ID, WebResult
+from .gameweek import GameweekContext, load_gameweek_prepare_context
+
+
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard"
+CLUB_ABBRS = {
+    "Arsenal": "ARS", "Aston Villa": "AVL", "AFC Bournemouth": "BOU", "Bournemouth": "BOU",
+    "Brentford": "BRE", "Brighton & Hove Albion": "BHA", "Brighton": "BHA", "Chelsea": "CHE",
+    "Crystal Palace": "CRY", "Everton": "EVE", "Fulham": "FUL", "Hull City": "HUL",
+    "Ipswich Town": "IPS", "Leeds United": "LEE", "Liverpool": "LIV", "Manchester City": "MCI",
+    "Manchester United": "MUN", "Newcastle United": "NEW", "Nottingham Forest": "NFO",
+    "Sunderland": "SUN", "Tottenham Hotspur": "TOT", "Coventry City": "COV",
+}
+
+
+@dataclass(frozen=True)
+class LineupFixture:
+    event_id: str
+    kickoff: datetime
+    home: str
+    away: str
+    players: tuple[dict[str, Any], ...]
+
+
+class EplFixtureClient:
+    """Small read-only client for the public EPL scoreboard schedule."""
+
+    def get_schedule(self, start: datetime, end: datetime) -> object:
+        query = urlencode({"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": "100"})
+        # ESPN's public scoreboard currently accepts its lightweight API clients
+        # but rejects browser-style and product-branded User-Agent strings.
+        request = Request(f"{ESPN_SCOREBOARD_URL}?{query}", headers={"User-Agent": "curl/8.7.1"})
+        try:
+            with urlopen(request, timeout=30) as response:
+                return json.loads(response.read())
+        except Exception as exc:  # pragma: no cover - network behavior is exercised live
+            raise AutomationError("Could not load the current Premier League fixture schedule") from exc
+
+
+def lineup_alert_state_file(config: AppConfig) -> Path:
+    return config.repo_root / "data" / "automation" / "lineup_alerts.json"
+
+
+def _load_sent(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AutomationError("Lineup alert state is unreadable") from exc
+    sent = payload.get("sent") if isinstance(payload, Mapping) else None
+    if not isinstance(sent, list):
+        raise AutomationError("Lineup alert state is malformed")
+    return {str(value) for value in sent if str(value).strip()}
+
+
+def _mark_sent(path: Path, event_id: str) -> None:
+    prior = _load_sent(path)
+    prior.add(event_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps({"sent": sorted(prior)}, separators=(",", ":")) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def _parse_kickoff(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def roster_fixtures(context: GameweekContext, schedule: object) -> tuple[LineupFixture, ...]:
+    """Return scheduled fixtures containing one or more current roster players."""
+
+    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("events"), list):
+        raise AutomationError("Premier League fixture schedule did not return an events array")
+    team = context.payload.get("your_team")
+    players = team.get("players") if isinstance(team, Mapping) else []
+    players = [item for item in players if isinstance(item, Mapping)] if isinstance(players, list) else []
+    results: list[LineupFixture] = []
+    for event in schedule["events"]:
+        if not isinstance(event, Mapping):
+            continue
+        event_id = str(event.get("id") or "").strip()
+        kickoff = _parse_kickoff(event.get("date"))
+        competitions = event.get("competitions")
+        competition = competitions[0] if isinstance(competitions, list) and competitions and isinstance(competitions[0], Mapping) else {}
+        competitors = competition.get("competitors") if isinstance(competition, Mapping) else []
+        home = away = None
+        if isinstance(competitors, list):
+            for competitor in competitors:
+                if not isinstance(competitor, Mapping) or not isinstance(competitor.get("team"), Mapping):
+                    continue
+                name = str(competitor["team"].get("displayName") or "").strip()
+                if competitor.get("homeAway") == "home":
+                    home = name
+                elif competitor.get("homeAway") == "away":
+                    away = name
+        if not event_id or kickoff is None or not home or not away:
+            continue
+        clubs = {CLUB_ABBRS.get(home), CLUB_ABBRS.get(away)}
+        relevant = tuple(dict(player) for player in players if str(player.get("club") or "").upper() in clubs)
+        if relevant:
+            results.append(LineupFixture(event_id, kickoff, home, away, relevant))
+    return tuple(sorted(results, key=lambda fixture: fixture.kickoff))
+
+
+def due_fixtures(
+    fixtures: Iterable[LineupFixture], *, now: datetime, lead_minutes: int, sent: set[str]
+) -> tuple[LineupFixture, ...]:
+    """Return unsent fixtures whose decision window is open and kickoff has not passed."""
+
+    current = now.astimezone(timezone.utc)
+    lead = timedelta(minutes=lead_minutes)
+    return tuple(
+        fixture for fixture in fixtures
+        if fixture.event_id not in sent and fixture.kickoff - lead <= current < fixture.kickoff
+    )
+
+
+def lineup_alert_context(context: GameweekContext, fixtures: Iterable[LineupFixture]) -> str:
+    """Serialize one kickoff window, which can contain several simultaneous matches."""
+
+    fixture_list = tuple(fixtures)
+    starters = context.payload.get("your_team", {}).get("current_starters", [])
+    return json.dumps(
+        {
+            "source": "live Sleeper roster plus current Premier League schedule",
+            "gameweek": context.gameweek,
+            "fixtures": [
+                {
+                    "event_id": fixture.event_id,
+                    "kickoff_utc": fixture.kickoff.isoformat(),
+                    "home": fixture.home,
+                    "away": fixture.away,
+                    "relevant_roster_players": fixture.players,
+                }
+                for fixture in fixture_list
+            ],
+            "current_sleeper_starter_ids": starters,
+            "starting_slots": context.payload.get("starting_slots", []),
+            "instruction": "This is a read-only alert. Do not make a Sleeper lineup or roster change.",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def run_lineup_alerts(
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+    fixture_client: EplFixtureClient | None = None,
+    prepare_loader: Callable[..., GameweekContext] = load_gameweek_prepare_context,
+    analyst: Callable[..., WebResult] | None = None,
+    transport: Any | None = None,
+) -> int:
+    """Send each fixture's private check once, inside its pre-kickoff window."""
+
+    from .automation import run_lineup_alert_web_briefing
+    from .discord_transport import DiscordTransport
+
+    current = now or datetime.now(timezone.utc)
+    current = current.astimezone(timezone.utc)
+    context = prepare_loader(manager_id=EXPECTED_MANAGER_ID)
+    schedule = (fixture_client or EplFixtureClient()).get_schedule(current, current + timedelta(days=3))
+    state_path = lineup_alert_state_file(config)
+    pending = due_fixtures(
+        roster_fixtures(context, schedule),
+        now=current,
+        lead_minutes=config.lineup_alert_lead_minutes,
+        sent=_load_sent(state_path),
+    )
+    if not pending:
+        return 0
+    config.require_discord()
+    sender = transport or DiscordTransport(config.discord_bot_token or "")
+    briefing = analyst or run_lineup_alert_web_briefing
+    delivered = 0
+    windows: dict[datetime, list[LineupFixture]] = {}
+    for fixture in pending:
+        windows.setdefault(fixture.kickoff, []).append(fixture)
+    for fixtures in windows.values():
+        result = briefing(config, live_context=lineup_alert_context(context, fixtures))
+        sender.send_dm(config.discord_allowed_user_id or "", result.text)
+        for fixture in fixtures:
+            _mark_sent(state_path, fixture.event_id)
+        delivered += 1
+    return delivered
