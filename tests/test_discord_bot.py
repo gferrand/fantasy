@@ -39,7 +39,10 @@ class DiscordBotTests(unittest.TestCase):
         client = build_client(self._config())
         group = client._fantasy_command_tree.get_command("watch")  # type: ignore[attr-defined]
         self.assertIsNotNone(group)
-        self.assertEqual([command.name for command in group.commands], ["add", "remove", "list", "stats"])
+        self.assertEqual(
+            [command.name for command in group.commands],
+            ["add", "remove", "list", "stats", "outlook", "recommend"],
+        )
         self.assertFalse(group.allowed_contexts.guild)
         self.assertTrue(group.allowed_contexts.dm_channel)
 

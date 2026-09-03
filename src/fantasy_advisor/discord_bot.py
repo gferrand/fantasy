@@ -17,6 +17,7 @@ from .advisor_router import AdvisorRoute, route_interactive_request
 from .automation import (
     AppConfig,
     AutomationError,
+    EXPECTED_MANAGER_ID,
     build_report_header,
     load_local_player_catalog,
     load_advisor_context,
@@ -26,6 +27,7 @@ from .automation import (
     load_registry,
     run_interactive_task,
     run_web_briefing,
+    run_watchlist_web_briefing,
     run_scheduled_task,
     split_discord_message,
     update_player_catalog,
@@ -66,6 +68,11 @@ from .watchlist import (
     resolve_watchlist_player,
 )
 from .watchlist_stats import load_current_watchlist_stats
+from .watchlist_recommendations import (
+    load_current_watchlist_recommendation_context,
+    watchlist_outlook_context,
+    watchlist_recommendation_context,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -126,6 +133,19 @@ def build_client(config: AppConfig) -> discord.Client:
         if len(text) <= 1900:
             return text
         return text[:1850].rstrip() + "\n*Details truncated.*"
+
+    async def edit_interaction_with_chunks(interaction: discord.Interaction, text: str) -> None:
+        """Complete an interaction without silently truncating a long watchlist report."""
+
+        chunks = split_discord_message(text, limit=1900)
+        if len(chunks) > 5:
+            chunks = chunks[:4] + [response_limit_notice()]
+        await interaction.edit_original_response(
+            content=chunks[0],
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        for chunk in chunks[1:]:
+            await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
 
     def remember_dm_channel(channel: discord.abc.Messageable) -> None:
         channel_id = getattr(channel, "id", None)
@@ -516,10 +536,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 return
             async with run_lock:
                 report = await asyncio.to_thread(load_current_watchlist_stats, watched)
-            chunks = split_discord_message(watchlist_stats_card(report), limit=1900)
-            await interaction.edit_original_response(content=chunks[0])
-            for chunk in chunks[1:]:
-                await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+            await edit_interaction_with_chunks(interaction, watchlist_stats_card(report))
         except (AutomationError, SleeperDataError, WatchlistError) as exc:
             LOGGER.exception("Could not load current Sleeper watchlist stats")
             await interaction.edit_original_response(
@@ -529,6 +546,71 @@ def build_client(config: AppConfig) -> discord.Client:
             LOGGER.exception("Unexpected failure loading current Sleeper watchlist stats")
             await interaction.edit_original_response(
                 content=error_card("Couldn’t load watchlist stats", "Please try again shortly.")
+            )
+
+    @watch_group.command(name="outlook", description="Analyze current news and expert outlooks for watched players")
+    async def watch_outlook_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
+            if not watched:
+                await interaction.edit_original_response(content=watchlist_empty())
+                return
+            async with run_lock:
+                report = await asyncio.to_thread(load_current_watchlist_stats, watched)
+                result = await asyncio.to_thread(
+                    run_watchlist_web_briefing,
+                    config,
+                    "Give me a current outlook for every player on my watchlist.",
+                    live_context=watchlist_outlook_context(report),
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError, WatchlistError) as exc:
+            LOGGER.exception("Could not load current watchlist outlook")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t analyze the watchlist", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure loading current watchlist outlook")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t analyze the watchlist", "Please try again shortly.")
+            )
+
+    @watch_group.command(name="recommend", description="Suggest manual watchlist pickup/drop swaps for your roster")
+    async def watch_recommend_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
+            if not watched:
+                await interaction.edit_original_response(content=watchlist_empty())
+                return
+            async with run_lock:
+                context = await asyncio.to_thread(
+                    load_current_watchlist_recommendation_context,
+                    watched,
+                    manager_id=EXPECTED_MANAGER_ID,
+                )
+                result = await asyncio.to_thread(
+                    run_watchlist_web_briefing,
+                    config,
+                    "Assess my watched players against my current roster and identify only the best manual pickup/drop opportunities.",
+                    live_context=watchlist_recommendation_context(context),
+                    recommendation=True,
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError, WatchlistError) as exc:
+            LOGGER.exception("Could not load watchlist recommendations")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t recommend watchlist moves", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure loading watchlist recommendations")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t recommend watchlist moves", "Please try again shortly.")
             )
 
     command_tree.add_command(watch_group)
