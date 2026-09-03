@@ -166,10 +166,14 @@ Discord OGG/Opus voice notes are uploaded directly to OpenAI; no FFmpeg
 installation is required. Downloaded source files are temporary; only
 normalized text is retained in the existing private conversation context.
 
-Use `/watch add player`, `/watch remove player`, and `/watch list` in the
-personal DM to manage a private player watchlist. The 8:00 AM Eastern
-watchlist report is silent when that list is empty and does not use Discord
-conversation context.
+Use `/player_catalog update` in the personal DM before adding players or
+whenever you want to refresh Sleeper references. It fetches the complete
+Sleeper EPL player catalog once and stores only identity metadata locally; it
+does not fetch player stats and it never refreshes automatically. Then use
+`/watch add player`, `/watch remove player`, and `/watch list` to manage the
+private player watchlist. Watchlist adds resolve only from that local catalog,
+so they do not make a Sleeper request. The 8:00 AM Eastern watchlist report is
+silent when that list is empty and does not use Discord conversation context.
 
 The transfer monitor stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or
@@ -201,9 +205,11 @@ standalone prompts and only write their completed reports to the store for
 future interactive questions. `/task` follows the same standalone behavior,
 even though it is launched from Discord.
 
-The store is created automatically on the first relevant run. It is ignored by
-git and remains in the runtime mirror because `sync_runtime` preserves the
-generated `data/automation/` directory.
+The stores are created automatically on their first relevant run. The manually
+refreshed `data/automation/player_catalog.sqlite3` is a private Sleeper player
+identity mirror; `advisor_context.sqlite3` stores conversation continuity.
+Both are ignored by git and remain in the runtime mirror because `sync_runtime`
+preserves the generated `data/automation/` directory.
 
 Discord-originated Codex questions use a 120-second timeout by default so a
 hung local CLI cannot block the private advisor indefinitely. Scheduled reports

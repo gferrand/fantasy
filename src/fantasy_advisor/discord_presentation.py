@@ -52,7 +52,20 @@ def help_menu() -> str:
         "🧠 **Ask anything**\n`/ask` — research a player, fixture, or decision\n\n"
         "📬 **Reports**\n`/tasks` — see scheduled reports\n`/task <id>` — run one now\n\n"
         "👀 **Watchlist**\n`/watch add`, `/watch remove`, `/watch list`\n"
+        "Refresh player references: `/player_catalog update`\n"
         "You can also message me normally when Discord supports bot DMs."
+    )
+
+
+def player_catalog_updated(result: object) -> str:
+    """Render the result of a manual local player catalog refresh."""
+
+    count = int(getattr(result, "player_count"))
+    refreshed_at = str(getattr(result, "refreshed_at"))
+    return (
+        "📚 **Player catalog updated**\n"
+        f"{count:,} Sleeper EPL player references saved locally.\n"
+        f"Updated: {refreshed_at}"
     )
 
 
@@ -65,7 +78,7 @@ def watchlist_card(entries: Iterable[object]) -> str:
     lines = []
     for entry in watched:
         name = str(getattr(entry, "name"))
-        club = str(getattr(entry, "club"))
+        club = str(getattr(entry, "club")) or "no current club"
         positions = "/".join(getattr(entry, "positions")) or "position unavailable"
         lines.append(f"• **{name}** · {club} · {positions}")
     return f"👀 **Your watchlist · {len(watched)} players**\n\n" + "\n".join(lines)
@@ -73,7 +86,7 @@ def watchlist_card(entries: Iterable[object]) -> str:
 
 def watchlist_change(action: str, entry: object) -> str:
     name = str(getattr(entry, "name"))
-    club = str(getattr(entry, "club"))
+    club = str(getattr(entry, "club")) or "no current club"
     positions = "/".join(getattr(entry, "positions")) or "position unavailable"
     if action == "added":
         return f"✅ **Added to watchlist**\n**{name}** · {club} · {positions}"

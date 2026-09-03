@@ -44,6 +44,7 @@ from fantasy_advisor.automation import (
     web_briefing_prompt,
 )
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
+from fantasy_advisor.player_catalog import refresh_player_catalog
 from fantasy_advisor.watchlist import add_watchlist_player
 
 def test_config() -> AppConfig:
@@ -157,12 +158,12 @@ class AutomationTests(unittest.TestCase):
             root = Path(temporary)
             (root / "public").mkdir()
             core = {"schema_version": 1, "complete": True, "league_id": "1378147559444348928", "retrieved_at": "2026-08-25T00:00:00+00:00", "round": 2, "league": {"season": "2026"}, "state": {"display_week": 2}, "stats": [{"player_id": "10", "stats": {"gp": 2, "min": 180}}]}
-            index = {**core, "players": [{"player_id": "10", "name": "Watched Player", "club": "ARS", "positions": ["M"]}]}
+            catalog = {"10": {"player_id": "10", "full_name": "Watched Player", "team_abbr": "ARS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "A"}}
             (root / "public" / "sleeper_feed.json").write_text(json.dumps(core), encoding="utf-8")
-            (root / "public" / "sleeper_player_index.json").write_text(json.dumps(index), encoding="utf-8")
             config = test_config().__class__(**{**test_config().__dict__, "repo_root": root})
             self.assertIsNone(build_watchlist_live_packet(config))
-            add_watchlist_player(watchlist_file(config), index["players"][0])
+            refresh_player_catalog(root / "data" / "automation" / "player_catalog.sqlite3", catalog)
+            add_watchlist_player(watchlist_file(config), {"player_id": "10", "name": "Watched Player", "club": "ARS", "positions": ["M"]})
             with patch("fantasy_advisor.automation.urlopen", side_effect=OSError("offline")):
                 packet = build_watchlist_live_packet(config)
             self.assertIn("PERSONAL WATCHLIST LIVE SNAPSHOT", packet)
