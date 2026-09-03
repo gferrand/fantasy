@@ -152,6 +152,11 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("WATCHLIST_CONTEXT", prompt)
         self.assertIn("Never make, simulate, or imply a Sleeper transaction", prompt)
         self.assertIn("Priority", prompt)
+        self.assertIn("Sleeper-specific fantasy", prompt)
+        self.assertIn("fantasy Premier\nLeague analysts", prompt)
+        self.assertIn("No current fantasy analyst view found", prompt)
+        self.assertIn("generic stats\nsite as an expert opinion", prompt)
+        self.assertIn("Fantasy analyst view:", prompt)
 
     def test_web_briefing_prompt_keeps_league_data_outside_the_web_path(self):
         prompt = web_briefing_prompt("What happened to the Balogun Everton deal?", context_packet="MEMORY")
