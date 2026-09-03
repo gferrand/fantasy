@@ -9,7 +9,7 @@ import unittest
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from fantasy_advisor.automation import AppConfig, FANTASY_CODEX_MODEL, FANTASY_CODEX_REASONING_EFFORT, WebResult
+from fantasy_advisor.automation import AppConfig, AutomationError, FANTASY_CODEX_MODEL, FANTASY_CODEX_REASONING_EFFORT, WebResult
 from fantasy_advisor.gameweek import GameweekContext
 from fantasy_advisor.lineup_alerts import (
     due_fixtures,
@@ -36,6 +36,18 @@ class _Transport:
 
     def send_dm(self, user_id, text):
         self.messages.append((user_id, text))
+
+
+class _FailOnceTransport(_Transport):
+    def __init__(self):
+        super().__init__()
+        self.failures_remaining = 1
+
+    def send_dm(self, user_id, text):
+        if self.failures_remaining:
+            self.failures_remaining -= 1
+            raise AutomationError("simulated Discord outage")
+        super().send_dm(user_id, text)
 
 
 class LineupAlertTests(unittest.TestCase):
@@ -73,6 +85,15 @@ class LineupAlertTests(unittest.TestCase):
             ]}]},
         ]}
 
+    def _complete_schedule(self):
+        seed = self._schedule()["events"]
+        events = []
+        for index in range(380):
+            source = json.loads(json.dumps(seed[index % len(seed)]))
+            source["id"] = f"season-{index}"
+            events.append(source)
+        return {"events": events}
+
     def _config(self, root):
         return AppConfig(
             repo_root=root, task_registry_path=root / "tasks.toml", discord_bot_token="token",
@@ -100,7 +121,7 @@ class LineupAlertTests(unittest.TestCase):
 
             kwargs = {
                 "now": self.now,
-                "fixture_client": _FixtureClient(self._schedule()),
+                "schedule": self._schedule(),
                 "prepare_loader": lambda **_kwargs: self._context(),
                 "analyst": analyst,
                 "transport": transport,
@@ -136,10 +157,84 @@ class LineupAlertTests(unittest.TestCase):
             )
             self.assertEqual(transport.messages, [])
 
+    def test_research_failure_sends_factual_fallback_and_records_delivery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            transport = _Transport()
+            result = run_lineup_alerts(
+                config,
+                now=self.now,
+                schedule=self._schedule(),
+                prepare_loader=lambda **_kwargs: self._context(),
+                analyst=lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("simulated research outage")),
+                transport=transport,
+            )
+            self.assertEqual(result, 1)
+            self.assertEqual(len(transport.messages), 1)
+            self.assertIn("Live roster + fixture match detected", transport.messages[0][1])
+            self.assertEqual(
+                run_lineup_alerts(
+                    config,
+                    now=self.now,
+                    schedule=self._schedule(),
+                    prepare_loader=lambda **_kwargs: self._context(),
+                    analyst=lambda *_args, **_kwargs: self.fail("Delivered events must not be re-researched"),
+                    transport=transport,
+                ),
+                0,
+            )
+
+    def test_discord_failure_leaves_fixture_pending_for_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            transport = _FailOnceTransport()
+            with self.assertRaisesRegex(AutomationError, "Discord outage"):
+                run_lineup_alerts(
+                    config,
+                    now=self.now,
+                    schedule=self._schedule(),
+                    prepare_loader=lambda **_kwargs: self._context(),
+                    analyst=lambda *_args, **_kwargs: WebResult("test alert", None, 0),
+                    transport=transport,
+                )
+            self.assertEqual(
+                run_lineup_alerts(
+                    config,
+                    now=self.now,
+                    schedule=self._schedule(),
+                    prepare_loader=lambda **_kwargs: self._context(),
+                    analyst=lambda *_args, **_kwargs: WebResult("retry alert", None, 0),
+                    transport=transport,
+                ),
+                1,
+            )
+            self.assertEqual(transport.messages, [("123", "retry alert")])
+
+    def test_malformed_sent_state_is_quarantined_and_does_not_suppress_an_alert(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            state = config.repo_root / "data" / "automation" / "lineup_alerts.json"
+            state.parent.mkdir(parents=True)
+            state.write_text("not json", encoding="utf-8")
+            transport = _Transport()
+            self.assertEqual(
+                run_lineup_alerts(
+                    config,
+                    now=self.now,
+                    schedule=self._schedule(),
+                    prepare_loader=lambda **_kwargs: self._context(),
+                    analyst=lambda *_args, **_kwargs: WebResult("recovered alert", None, 0),
+                    transport=transport,
+                ),
+                1,
+            )
+            self.assertTrue(state.with_suffix(".json.corrupt").exists())
+            self.assertEqual(transport.messages, [("123", "recovered alert")])
+
     def test_local_season_schedule_is_reused_even_after_months(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = self._config(Path(temporary))
-            fixture_client = _FixtureClient(self._schedule())
+            fixture_client = _FixtureClient(self._complete_schedule())
             schedule = load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
             again = load_fixture_schedule(config, now=self.now + timedelta(days=100), fixture_client=fixture_client)
             windows = fixture_alert_windows(schedule, now=self.now, lead_minutes=90)
@@ -151,7 +246,18 @@ class LineupAlertTests(unittest.TestCase):
                 datetime(2027, 6, 15, tzinfo=timezone.utc),
             ))
             self.assertEqual(windows[0].alert_at, datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc))
-            self.assertEqual({window.event_id for window in windows[:2]}, {"fixture-hul", "fixture-liv"})
+            self.assertEqual({window.event_id for window in windows[:2]}, {"season-0", "season-1"})
+
+    def test_incomplete_local_schedule_is_replaced_before_it_can_be_used(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            cache = config.repo_root / "data" / "automation" / "lineup_fixtures.json"
+            cache.parent.mkdir(parents=True)
+            cache.write_text(json.dumps({"schedule": self._schedule()}), encoding="utf-8")
+            fixture_client = _FixtureClient({"events": self._schedule()["events"] * 127})
+            with self.assertRaisesRegex(AutomationError, "complete valid season"):
+                load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
+            self.assertEqual(len(fixture_client.calls), 1)
 
 
 if __name__ == "__main__":
