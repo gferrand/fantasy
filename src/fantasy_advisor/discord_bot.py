@@ -27,6 +27,7 @@ from .automation import (
     load_registry,
     run_interactive_task,
     run_gameweek_web_briefing,
+    run_trade_web_briefing,
     run_web_briefing,
     run_watchlist_web_briefing,
     run_scheduled_task,
@@ -57,6 +58,7 @@ from .discord_presentation import (
     watchlist_empty,
     watchlist_stats_card,
     working_card,
+    no_viable_trade_package,
     guardian_acknowledged,
     guardian_status,
 )
@@ -73,6 +75,8 @@ from .watchlist import (
 )
 from .watchlist_stats import load_current_watchlist_stats
 from .gameweek import load_gameweek_prepare_context, load_gameweek_recap_context
+from .lineup_alerts import load_persisted_fixture_schedule
+from .trade_proposals import load_trade_proposal_context
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -619,6 +623,49 @@ def build_client(config: AppConfig) -> discord.Client:
             )
 
     command_tree.add_command(watch_group)
+
+    trade_group = app_commands.Group(
+        name="trade",
+        description="Find a realistic, evidence-backed manual trade package",
+        allowed_installs=app_commands.AppInstallationType(user=True, guild=False),
+        allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
+    )
+
+    @trade_group.command(name="propose", description="Propose a realistic manual roster-improving trade")
+    async def trade_propose_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            async with run_lock:
+                fixture_schedule = await asyncio.to_thread(load_persisted_fixture_schedule, config)
+                context = await asyncio.to_thread(
+                    load_trade_proposal_context,
+                    manager_id=EXPECTED_MANAGER_ID,
+                    fixture_schedule=fixture_schedule,
+                )
+                candidates = context.payload.get("candidate_packages")
+                if not isinstance(candidates, list) or not candidates:
+                    await interaction.edit_original_response(content=no_viable_trade_package(context))
+                    return
+                result = await asyncio.to_thread(
+                    run_trade_web_briefing,
+                    config,
+                    live_context=context.as_json(),
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError) as exc:
+            LOGGER.exception("Could not build a trade proposal")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t build a trade proposal", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure building a trade proposal")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t build a trade proposal", "Please try again shortly.")
+            )
+
+    command_tree.add_command(trade_group)
 
     guardian_group = app_commands.Group(
         name="guardian",
