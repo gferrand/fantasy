@@ -128,7 +128,9 @@ class LineupAlertTests(unittest.TestCase):
             }
             self.assertEqual(run_lineup_alerts(config, **kwargs), 1)
             self.assertEqual(run_lineup_alerts(config, **kwargs), 0)
-            self.assertEqual(transport.messages, [("123", "⏰ **Lineup check**\nSTART Ryan Giles.")])
+            self.assertEqual(len(transport.messages), 1)
+            self.assertIn("START Ryan Giles.", transport.messages[0][1])
+            self.assertIn("/guardian done", transport.messages[0][1])
             self.assertEqual(analyst_calls[0]["fixtures"][0]["event_id"], "fixture-hul")
             self.assertEqual(len(analyst_calls[0]["fixtures"]), 2)
 
@@ -208,7 +210,8 @@ class LineupAlertTests(unittest.TestCase):
                 ),
                 1,
             )
-            self.assertEqual(transport.messages, [("123", "retry alert")])
+            self.assertEqual(len(transport.messages), 1)
+            self.assertIn("retry alert", transport.messages[0][1])
 
     def test_malformed_sent_state_is_quarantined_and_does_not_suppress_an_alert(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -229,7 +232,8 @@ class LineupAlertTests(unittest.TestCase):
                 1,
             )
             self.assertTrue(state.with_suffix(".json.corrupt").exists())
-            self.assertEqual(transport.messages, [("123", "recovered alert")])
+            self.assertEqual(len(transport.messages), 1)
+            self.assertIn("recovered alert", transport.messages[0][1])
 
     def test_local_season_schedule_is_reused_even_after_months(self):
         with tempfile.TemporaryDirectory() as temporary:

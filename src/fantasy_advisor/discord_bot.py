@@ -57,7 +57,10 @@ from .discord_presentation import (
     watchlist_empty,
     watchlist_stats_card,
     working_card,
+    guardian_acknowledged,
+    guardian_status,
 )
+from .deadline_guardian import acknowledge_active_events, active_events, parse_guardian_intent
 from .watchlist import (
     WatchlistError,
     WatchlistResolutionError,
@@ -617,6 +620,39 @@ def build_client(config: AppConfig) -> discord.Client:
 
     command_tree.add_command(watch_group)
 
+    guardian_group = app_commands.Group(
+        name="guardian",
+        description="Acknowledge or check private lineup alerts",
+        allowed_installs=app_commands.AppInstallationType(user=True, guild=False),
+        allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
+    )
+
+    @guardian_group.command(name="done", description="Acknowledge every current lineup alert")
+    async def guardian_done_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        try:
+            acknowledged = await asyncio.to_thread(acknowledge_active_events, config, now=discord.utils.utcnow())
+            await interaction.response.send_message(guardian_acknowledged(acknowledged))
+        except AutomationError as exc:
+            await interaction.response.send_message(
+                compact_interaction_error("Couldn’t update Deadline Guardian", exc), ephemeral=True
+            )
+
+    @guardian_group.command(name="status", description="Show your upcoming lineup-alert acknowledgement status")
+    async def guardian_status_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        try:
+            events = await asyncio.to_thread(active_events, config, now=discord.utils.utcnow())
+            await interaction.response.send_message(guardian_status(events))
+        except AutomationError as exc:
+            await interaction.response.send_message(
+                compact_interaction_error("Couldn’t read Deadline Guardian", exc), ephemeral=True
+            )
+
+    command_tree.add_command(guardian_group)
+
     gameweek_group = app_commands.Group(
         name="gameweek",
         description="Prepare the next gameweek or recap the last one",
@@ -761,6 +797,21 @@ def build_client(config: AppConfig) -> discord.Client:
         else:
             content = caption
         if not content:
+            return
+        guardian_intent = parse_guardian_intent(content)
+        if guardian_intent == "done":
+            try:
+                acknowledged = await asyncio.to_thread(acknowledge_active_events, config, now=discord.utils.utcnow())
+                await send_chunks(message.channel, guardian_acknowledged(acknowledged))
+            except AutomationError as exc:
+                await send_chunks(message.channel, error_card("I couldn’t update Deadline Guardian", str(exc)))
+            return
+        if guardian_intent == "status":
+            try:
+                events = await asyncio.to_thread(active_events, config, now=discord.utils.utcnow())
+                await send_chunks(message.channel, guardian_status(events))
+            except AutomationError as exc:
+                await send_chunks(message.channel, error_card("I couldn’t read Deadline Guardian", str(exc)))
             return
         watchlist_intent = parse_watchlist_intent(caption or content)
         if watchlist_intent is not None:

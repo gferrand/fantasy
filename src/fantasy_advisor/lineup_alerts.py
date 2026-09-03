@@ -314,6 +314,12 @@ def fallback_lineup_alert(context: GameweekContext, fixtures: Iterable[LineupFix
     return "\n".join(lines)
 
 
+def guardian_prompt(text: str) -> str:
+    """Make the manual acknowledgement route obvious without implying a Sleeper action."""
+
+    return text.rstrip() + "\n\n✅ Review your lineup manually, then reply `done` or use `/guardian done`."
+
+
 def run_lineup_alerts(
     config: AppConfig,
     *,
@@ -361,8 +367,64 @@ def run_lineup_alerts(
             # Research is valuable but must never suppress the time-sensitive
             # fixture alert when the roster and kickoff are already known.
             text = fallback_lineup_alert(context, fixtures)
-        sender.send_dm(config.discord_allowed_user_id or "", text)
+        sender.send_dm(config.discord_allowed_user_id or "", guardian_prompt(text))
         for fixture in fixtures:
             _mark_sent(state_path, fixture.event_id)
+        from .deadline_guardian import record_initial_alerts
+
+        record_initial_alerts(config, fixtures, now=current)
+        delivered += 1
+    return delivered
+
+
+def run_deadline_guardian(
+    config: AppConfig,
+    *,
+    now: datetime | None = None,
+    prepare_loader: Callable[..., GameweekContext] = load_gameweek_prepare_context,
+    analyst: Callable[..., WebResult] | None = None,
+    transport: Any | None = None,
+    schedule: object,
+) -> int:
+    """Escalate once near kickoff when the owner has not acknowledged an alert."""
+
+    from .automation import run_lineup_alert_web_briefing
+    from .deadline_guardian import final_reminder_events, mark_final_reminded
+    from .discord_transport import DiscordTransport
+
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    due = final_reminder_events(config, now=current, lead_minutes=config.deadline_guardian_final_lead_minutes)
+    if not due:
+        return 0
+    context = prepare_loader(manager_id=EXPECTED_MANAGER_ID)
+    by_id = {fixture.event_id: fixture for fixture in roster_fixtures(context, schedule)}
+    relevant = [by_id[event.event_id] for event in due if event.event_id in by_id]
+    # A player may have been dropped since the first alert. Mark that stale
+    # item complete rather than sending an irrelevant escalation.
+    stale_ids = [event.event_id for event in due if event.event_id not in by_id]
+    if stale_ids:
+        mark_final_reminded(config, stale_ids, now=current)
+    if not relevant:
+        return 0
+    config.require_discord()
+    sender = transport or DiscordTransport(config.discord_bot_token or "")
+    briefing = analyst or run_lineup_alert_web_briefing
+    groups: dict[datetime, list[LineupFixture]] = {}
+    for fixture in relevant:
+        groups.setdefault(fixture.kickoff, []).append(fixture)
+    delivered = 0
+    for fixtures in groups.values():
+        try:
+            result = briefing(config, live_context=lineup_alert_context(context, fixtures))
+            detail = result.text
+        except Exception:
+            detail = fallback_lineup_alert(context, fixtures)
+        message = (
+            "⚠️ **Final lineup check**\n"
+            "You have not acknowledged the earlier alert. Recheck manually before kickoff.\n\n"
+            + guardian_prompt(detail)
+        )
+        sender.send_dm(config.discord_allowed_user_id or "", message)
+        mark_final_reminded(config, (fixture.event_id for fixture in fixtures), now=current)
         delivered += 1
     return delivered
