@@ -3,6 +3,8 @@ import unittest
 from fantasy_advisor.discord_presentation import (
     advisor_header,
     error_card,
+    guardian_acknowledged,
+    guardian_status,
     help_menu,
     scheduled_header,
     task_menu,
@@ -44,6 +46,11 @@ class DiscordPresentationTests(unittest.TestCase):
 
     def test_error_card_keeps_action_and_detail_separate(self):
         self.assertEqual(error_card("Couldn’t load report", "Try again."), "⚠️ **Couldn’t load report**\nTry again.")
+
+    def test_guardian_cards_are_actionable(self):
+        fixture = type("Fixture", (), {"home": "Brentford", "away": "Arsenal", "acknowledged_at": None})()
+        self.assertIn("/guardian", guardian_acknowledged([fixture]))
+        self.assertIn("awaiting", guardian_status([fixture]))
 
     def test_watchlist_stats_card_is_compact_and_marks_missing_rows(self):
         player = WatchlistPlayer("1", "Bukayo Saka", "ARS", ("F", "M"), "2026-09-01T00:00:00+00:00")

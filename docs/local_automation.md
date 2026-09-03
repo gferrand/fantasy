@@ -91,6 +91,16 @@ event is recorded locally after successful delivery so it is never resent. Set
 time. The alert uses current fantasy analysis and team news, but always
 requires you to confirm any lineup decision manually in Sleeper.
 
+Deadline Guardian makes that confirmation durable. Each alert tells you to
+reply `done` or use `/guardian done`; either acknowledges every open relevant
+fixture and suppresses its final reminder. If you do not acknowledge, the
+scheduler makes one final live roster/news recheck 20 minutes before kickoff
+and sends a private reminder only if the player is still rostered. Use
+`/guardian status` to see open alerts. Set
+`DEADLINE_GUARDIAN_FINAL_LEAD_MINUTES` to change that final check; it must be
+smaller than `LINEUP_ALERT_LEAD_MINUTES`. The Guardian is reminder-only and
+never changes Sleeper.
+
 The Mac's system time zone should be `America/New_York` for the 10:00 PM and
 hourly launchd calendar entries. The task process also sets `TZ` to that zone
 for its reports.

@@ -8,7 +8,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .automation import AppConfig, AutomationError, TaskSpec, load_registry, run_scheduled_task
-from .lineup_alerts import fixture_alert_windows, load_fixture_schedule, run_lineup_alerts
+from .deadline_guardian import final_reminder_windows
+from .lineup_alerts import fixture_alert_windows, load_fixture_schedule, run_deadline_guardian, run_lineup_alerts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -104,9 +105,24 @@ def main() -> int:
                         LOGGER.info("Delivered %d lineup alert(s)", delivered)
             except AutomationError:
                 LOGGER.exception("Lineup alert check failed")
+        guardian_windows = ()
+        if fixture_schedule is not None:
+            try:
+                guardian_windows = final_reminder_windows(
+                    config,
+                    now=now,
+                    lead_minutes=config.deadline_guardian_final_lead_minutes,
+                )
+                if guardian_windows and guardian_windows[0] <= now:
+                    delivered = run_deadline_guardian(config, now=now, schedule=fixture_schedule)
+                    if delivered:
+                        LOGGER.info("Delivered %d Deadline Guardian final reminder(s)", delivered)
+            except AutomationError:
+                LOGGER.exception("Deadline Guardian final check failed")
         completed_minutes = {key for key in completed_minutes if key[1] == minute_key}
         next_alert = alert_windows[0].alert_at if alert_windows else None
-        time.sleep(_sleep_until(now, _next_task_time(registry.tasks, now), fixture_retry_at, next_alert))
+        next_guardian = guardian_windows[0] if guardian_windows else None
+        time.sleep(_sleep_until(now, _next_task_time(registry.tasks, now), fixture_retry_at, next_alert, next_guardian))
 
 
 if __name__ == "__main__":

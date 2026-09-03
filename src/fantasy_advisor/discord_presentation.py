@@ -53,6 +53,8 @@ def help_menu() -> str:
         "`/gameweek recap` — last completed gameweek and watchlist signals\n\n"
         "🧠 **Ask anything**\n`/ask` — research a player, fixture, or decision\n\n"
         "📬 **Reports**\n`/tasks` — see scheduled reports\n`/task <id>` — run one now\n\n"
+        "🛡️ **Deadline Guardian**\n`/guardian done` — acknowledge current lineup alerts\n"
+        "`/guardian status` — view open alerts\n\n"
         "👀 **Watchlist**\n`/watch add`, `/watch remove`, `/watch list`, `/watch stats`\n"
         "`/watch outlook` — current news and expert view\n"
         "`/watch recommend` — manual roster-fit ideas\n"
@@ -75,6 +77,28 @@ def player_catalog_updated(result: object) -> str:
 
 def watchlist_empty() -> str:
     return "👀 **Your watchlist is empty**\nAdd a player with `/watch add player`."
+
+
+def guardian_acknowledged(events: Iterable[object]) -> str:
+    items = list(events)
+    if not items:
+        return "✅ **Deadline Guardian**\nThere are no open lineup alerts to acknowledge."
+    fixtures = ", ".join(f"{getattr(item, 'home')} vs {getattr(item, 'away')}" for item in items)
+    return (
+        f"✅ **Lineup alert acknowledged**\n{fixtures}\n"
+        "No final reminder will be sent for these fixtures. Check `/guardian status` anytime."
+    )
+
+
+def guardian_status(events: Iterable[object]) -> str:
+    items = list(events)
+    if not items:
+        return "🛡️ **Deadline Guardian**\nNo upcoming lineup alerts are currently open."
+    lines = ["🛡️ **Deadline Guardian**"]
+    for item in items:
+        state = "acknowledged" if getattr(item, "acknowledged_at") else "awaiting your acknowledgement"
+        lines.append(f"• **{getattr(item, 'home')} vs {getattr(item, 'away')}** · {state}")
+    return "\n".join(lines)
 
 
 def watchlist_card(entries: Iterable[object]) -> str:

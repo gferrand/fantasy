@@ -101,6 +101,7 @@ class AppConfig:
     openai_web_model: str = FANTASY_WEB_MODEL
     openai_web_reasoning_effort: str = FANTASY_WEB_REASONING_EFFORT
     lineup_alert_lead_minutes: int = 90
+    deadline_guardian_final_lead_minutes: int = 20
 
     @classmethod
     def from_environment(
@@ -132,6 +133,15 @@ class AppConfig:
             raise AutomationError("LINEUP_ALERT_LEAD_MINUTES must be an integer") from exc
         if not 5 <= alert_lead <= 360:
             raise AutomationError("LINEUP_ALERT_LEAD_MINUTES must be between 5 and 360")
+        guardian_lead_text = os.environ.get("DEADLINE_GUARDIAN_FINAL_LEAD_MINUTES", "").strip()
+        try:
+            guardian_lead = int(guardian_lead_text) if guardian_lead_text else min(20, alert_lead - 1)
+        except ValueError as exc:
+            raise AutomationError("DEADLINE_GUARDIAN_FINAL_LEAD_MINUTES must be an integer") from exc
+        if not 1 <= guardian_lead < alert_lead:
+            raise AutomationError(
+                "DEADLINE_GUARDIAN_FINAL_LEAD_MINUTES must be at least 1 and less than LINEUP_ALERT_LEAD_MINUTES"
+            )
         return cls(
             repo_root=repo_root,
             task_registry_path=task_registry_path or repo_root / "automation" / "tasks.toml",
@@ -158,6 +168,7 @@ class AppConfig:
                 or FANTASY_WEB_REASONING_EFFORT
             ),
             lineup_alert_lead_minutes=alert_lead,
+            deadline_guardian_final_lead_minutes=guardian_lead,
             codex_bin=os.environ.get("CODEX_BIN", "codex").strip() or "codex",
             codex_model=FANTASY_CODEX_MODEL,
             codex_reasoning_effort=FANTASY_CODEX_REASONING_EFFORT,
