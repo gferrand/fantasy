@@ -11,8 +11,8 @@ from fantasy_advisor.discord_bot import build_client
 
 
 class DiscordBotTests(unittest.TestCase):
-    def test_private_player_catalog_update_command_is_registered(self):
-        config = AppConfig(
+    def _config(self):
+        return AppConfig(
             repo_root=ROOT,
             task_registry_path=ROOT / "automation" / "tasks.toml",
             discord_bot_token=None,
@@ -25,11 +25,21 @@ class DiscordBotTests(unittest.TestCase):
             codex_timeout_seconds=60,
             codex_ephemeral=False,
         )
-        client = build_client(config)
+
+    def test_private_player_catalog_update_command_is_registered(self):
+        client = build_client(self._config())
         command_tree = client._fantasy_command_tree  # type: ignore[attr-defined]
         group = command_tree.get_command("player_catalog")
         self.assertIsNotNone(group)
         self.assertEqual([command.name for command in group.commands], ["update"])
+        self.assertFalse(group.allowed_contexts.guild)
+        self.assertTrue(group.allowed_contexts.dm_channel)
+
+    def test_private_watch_stats_command_is_registered(self):
+        client = build_client(self._config())
+        group = client._fantasy_command_tree.get_command("watch")  # type: ignore[attr-defined]
+        self.assertIsNotNone(group)
+        self.assertEqual([command.name for command in group.commands], ["add", "remove", "list", "stats"])
         self.assertFalse(group.allowed_contexts.guild)
         self.assertTrue(group.allowed_contexts.dm_channel)
 

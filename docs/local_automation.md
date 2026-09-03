@@ -172,8 +172,11 @@ Sleeper EPL player catalog once and stores only identity metadata locally; it
 does not fetch player stats and it never refreshes automatically. Then use
 `/watch add player`, `/watch remove player`, and `/watch list` to manage the
 private player watchlist. Watchlist adds resolve only from that local catalog,
-so they do not make a Sleeper request. The 8:00 AM Eastern watchlist report is
-silent when that list is empty and does not use Discord conversation context.
+so they do not make a Sleeper request. `/watch stats` uses the saved Sleeper
+IDs to fetch one fresh current-season Sleeper stats snapshot for every watched
+player; it is read-only and does not update the catalog. The 8:00 AM Eastern
+watchlist report is silent when that list is empty and does not use Discord
+conversation context.
 
 The transfer monitor stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or
