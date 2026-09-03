@@ -53,6 +53,16 @@ def parse_watchlist_intent(message: str) -> tuple[str, str | None] | None:
         "who am i watching",
     }:
         return "list", None
+    # Treat direct requests for every entry as watchlist reads too. People
+    # naturally append qualifiers such as "all players on it" after naming
+    # the list, especially in a longer mobile DM.
+    if re.fullmatch(
+        r"(?:show|list)(?:\s+me)?\s+(?:(?:all\s+)?players?\s+on\s+)?"
+        r"(?:my\s+)?watchlist(?:\s+(?:all\s+)?players?\s+on\s+it)?",
+        normalized,
+        flags=re.IGNORECASE,
+    ):
+        return "list", None
     prefix = r"(?:please\s+)?(?:(?:can|could)\s+you\s+)?"
     for action, pattern in (
         ("remove", rf"^{prefix}(?:remove|delete|unwatch)\s+(.+?)\s+(?:from|off)\s+(?:my\s+)?watchlist$"),

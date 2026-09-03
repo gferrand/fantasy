@@ -22,6 +22,8 @@ class WatchlistTests(unittest.TestCase):
         self.assertEqual(parse_watchlist_intent("Add Matt O’Riley to my wachlist"), ("add", "Matt O’Riley"))
         self.assertEqual(parse_watchlist_intent("Please remove Rayan Ait-Nouri from my watchlist."), ("remove", "Rayan Ait-Nouri"))
         self.assertEqual(parse_watchlist_intent("What's on my watchlist?"), ("list", None))
+        self.assertEqual(parse_watchlist_intent("Show me my watchlist all players on it"), ("list", None))
+        self.assertEqual(parse_watchlist_intent("Show all players on my watchlist"), ("list", None))
         self.assertEqual(parse_watchlist_intent("Keep an eye on João Pedro for my watchlist"), ("add", "João Pedro"))
         self.assertEqual(
             parse_watchlist_intent("I’m holding Van de Ven. Add Ryan Giles to my watchlist."),
