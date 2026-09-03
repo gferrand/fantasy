@@ -26,6 +26,13 @@ from urllib.request import Request, urlopen
 
 from .context_store import SCHEDULED_REPORT, append_event, build_context_packet
 from .discord_presentation import scheduled_failure, scheduled_header
+from .player_catalog import (
+    PlayerCatalogError,
+    PlayerCatalogRefresh,
+    load_player_catalog,
+    refresh_player_catalog,
+)
+from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, SleeperClient, SleeperDataError
 from .watchlist import WatchlistPlayer, list_watchlist
 
 
@@ -34,7 +41,7 @@ DEFAULT_TASK_REGISTRY = ROOT / "automation" / "tasks.toml"
 PROMPT_BLOCK_RE = re.compile(r"```text\s*\n(?P<prompt>.*?)\n```", re.DOTALL)
 LIVE_COMPACT_FEED_URL = "https://gferrand.github.io/fantasy/sleeper_feed.json"
 LIVE_AVAILABILITY_FEED_URL = "https://gferrand.github.io/fantasy/sleeper_available_players.json"
-LIVE_PLAYER_INDEX_URL = "https://gferrand.github.io/fantasy/sleeper_player_index.json"
+SLEEPER_EPL_PLAYERS_URL = f"{API_BASE}/players/clubsoccer:epl"
 EXPECTED_LEAGUE_ID = "1378147559444348928"
 EXPECTED_MANAGER_ID = "1127171221277331456"
 MAX_COMPACT_FEED_BYTES = 200_000
@@ -510,41 +517,45 @@ def _load_live_compact_feed(config: AppConfig) -> tuple[dict[str, Any], str]:
     raise AutomationError("Could not load current Sleeper feed: " + "; ".join(failures))
 
 
-def load_current_epl_player_index(config: AppConfig) -> list[dict[str, Any]]:
-    """Load the small published index used by Discord watch commands."""
+def player_catalog_file(config: AppConfig) -> Path:
+    """Return the private persistent Sleeper identity catalog."""
 
-    failures: list[str] = []
-    sources = (
-        (LIVE_PLAYER_INDEX_URL, config.repo_root / "public" / "sleeper_player_index.json"),
-    )
-    for live_url, local_path in sources:
-        try:
-            request = Request(live_url, headers={"User-Agent": "FantasyAdvisor/1.0"})
-            with urlopen(request, timeout=20) as response:  # nosec B310: fixed public URL
-                payload = _decode_compact_feed(response.read(MAX_COMPACT_FEED_BYTES + 1))
-        except (OSError, URLError, ValueError, json.JSONDecodeError) as exc:
-            failures.append(f"live index: {exc}")
-            try:
-                payload = _decode_compact_feed(local_path.read_bytes())
-            except (OSError, ValueError, json.JSONDecodeError) as local_exc:
-                failures.append(f"local index: {local_exc}")
-                continue
-        players = payload.get("players")
-        if not isinstance(players, list) or not players:
-            failures.append("player index has no players")
+    return config.repo_root / "data" / "automation" / "player_catalog.sqlite3"
+
+
+def update_player_catalog(config: AppConfig) -> PlayerCatalogRefresh:
+    """Fetch Sleeper once and atomically refresh the private catalog."""
+
+    try:
+        payload = SleeperClient().get_json(SLEEPER_EPL_PLAYERS_URL)
+        return refresh_player_catalog(player_catalog_file(config), payload)
+    except (SleeperDataError, PlayerCatalogError) as exc:
+        raise AutomationError(f"Could not update the local player catalog: {exc}") from exc
+
+
+def load_local_player_catalog(config: AppConfig) -> list[dict[str, Any]]:
+    """Read the private player catalog without a network request."""
+
+    try:
+        return load_player_catalog(player_catalog_file(config))
+    except PlayerCatalogError as exc:
+        raise AutomationError(str(exc)) from exc
+
+
+def load_current_epl_player_index(config: AppConfig) -> list[dict[str, Any]]:
+    """Derive the current active EPL subset from the local identity catalog."""
+
+    result: list[dict[str, Any]] = []
+    for player in load_local_player_catalog(config):
+        club = str(player.get("club") or "").upper()
+        status = str(player.get("status") or "").upper()
+        competitions = {str(item).casefold() for item in (player.get("competitions") or [])}
+        if club not in ACTIVE_EPL_CLUBS or "epl" not in competitions:
             continue
-        valid = [
-            player for player in players
-            if isinstance(player, dict)
-            and str(player.get("player_id") or "").strip()
-            and str(player.get("name") or "").strip()
-            and str(player.get("club") or "").strip()
-        ]
-        if len(valid) != len(players):
-            failures.append("player index has malformed players")
+        if player.get("active") is False or (status and status not in {"A", "ACTIVE"}):
             continue
-        return valid
-    raise AutomationError("Current Premier League player index is unavailable: " + "; ".join(failures))
+        result.append(player)
+    return result
 
 
 def premier_league_evidence_window(payload: dict[str, Any]) -> str:

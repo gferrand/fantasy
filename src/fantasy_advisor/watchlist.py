@@ -8,8 +8,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 import re
 import sqlite3
-import unicodedata
 from typing import Any, Iterable
+
+from .player_catalog import normalize_player_text
 
 
 class WatchlistError(RuntimeError):
@@ -63,6 +64,18 @@ def parse_watchlist_intent(message: str) -> tuple[str, str | None] | None:
             player = text[match.start(1):match.end(1)].strip(" .,?!")
             if player:
                 return action, player
+    # A clear imperative clause after a completed thought is still explicit.
+    # Do not match tentative wording such as "Should I add ..." or a clause
+    # embedded in an unfinished sentence.
+    compound = re.search(
+        rf"(?:^|[.!?;]\s+){prefix}(?:add|watch)\s+(.+?)\s+(?:to|on)\s+(?:my\s+)?watchlist(?=$|[.!?;])",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    if compound:
+        player = text[compound.start(1):compound.end(1)].strip(" .,?!;")
+        if player:
+            return "add", player
     return None
 
 
@@ -98,17 +111,6 @@ def _connect(path: Path) -> sqlite3.Connection:
     )
     connection.commit()
     return connection
-
-
-def _normalize(text: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", text)
-    # Ignore display punctuation as well as accents: Sleeper may use a straight
-    # apostrophe while Discord/mobile input commonly uses a curly one.
-    return "".join(
-        character
-        for character in decomposed
-        if not unicodedata.combining(character) and character.isalnum()
-    ).casefold()
 
 
 def _watchlist_player(row: sqlite3.Row) -> WatchlistPlayer:
@@ -150,8 +152,8 @@ def add_watchlist_player(path: Path, player: dict[str, Any]) -> tuple[WatchlistP
     name = str(player.get("name") or "").strip()
     club = str(player.get("club") or "").strip().upper()
     positions = [str(position).strip() for position in (player.get("positions") or []) if str(position).strip()]
-    if not player_id or not name or not club:
-        raise WatchlistError("Resolved watchlist players need an ID, name, and current Premier League club")
+    if not player_id or not name:
+        raise WatchlistError("Resolved watchlist players need an ID and name")
     added_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     connection = _connect(path)
     try:
@@ -189,9 +191,9 @@ def remove_watchlist_player(path: Path, player_id: str) -> WatchlistPlayer | Non
 
 
 def matching_players(query: str, players: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return exact-first current-EPL player candidates for a Discord name."""
+    """Return exact-first Sleeper EPL catalog candidates for a Discord name."""
 
-    normalized = _normalize(query.strip())
+    normalized = normalize_player_text(query.strip())
     if not normalized:
         return []
     exact: list[dict[str, Any]] = []
@@ -199,10 +201,10 @@ def matching_players(query: str, players: Iterable[dict[str, Any]]) -> list[dict
     for player in players:
         name = str(player.get("name") or "").strip()
         club = str(player.get("club") or "").strip().upper()
-        if not name or not club:
+        if not name:
             continue
-        name_key = _normalize(name)
-        display_key = _normalize(f"{name} {club}")
+        name_key = normalize_player_text(name)
+        display_key = normalize_player_text(f"{name} {club}") if club else name_key
         if normalized in {name_key, display_key}:
             exact.append(player)
         elif normalized in name_key:
@@ -214,10 +216,10 @@ def matching_players(query: str, players: Iterable[dict[str, Any]]) -> list[dict
 def resolve_watchlist_player(query: str, players: Iterable[dict[str, Any]]) -> dict[str, Any]:
     candidates = matching_players(query, players)
     if not candidates:
-        raise WatchlistResolutionError(f"No current Premier League player matched {query!r}.")
+        raise WatchlistResolutionError(f"No Sleeper EPL player matched {query!r}.")
     if len(candidates) > 1:
         options = ", ".join(
-            f"{candidate['name']} ({candidate['club']})" for candidate in candidates[:8]
+            f"{candidate['name']} ({candidate['club'] or 'no current club'})" for candidate in candidates[:8]
         )
         raise WatchlistResolutionError(f"{query!r} is ambiguous. Use one of: {options}")
     return candidates[0]
@@ -234,7 +236,9 @@ def resolve_saved_watchlist_player(query: str, players: Iterable[WatchlistPlayer
     if not candidates:
         raise WatchlistResolutionError(f"No watched player matched {query!r}.")
     if len(candidates) > 1:
-        options = ", ".join(f"{candidate['name']} ({candidate['club']})" for candidate in candidates[:8])
+        options = ", ".join(
+            f"{candidate['name']} ({candidate['club'] or 'no current club'})" for candidate in candidates[:8]
+        )
         raise WatchlistResolutionError(f"{query!r} is ambiguous. Use one of: {options}")
     player_id = str(candidates[0]["player_id"])
     return next(player for player in players if player.player_id == player_id)

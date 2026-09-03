@@ -32,3 +32,12 @@ pretending that the public API can distinguish an immediate free agent from a
 pending waiver claim.
 
 Dynamic files should record their source and retrieval time. Do not use cached Sleeper EPL eligibility without applying the current-club whitelist and external transfer overrides in [`../league_context.md`](../league_context.md).
+
+## Private player catalog
+
+`automation/player_catalog.sqlite3` is an ignored, manually refreshed local
+mirror of Sleeper's `players/clubsoccer:epl` identity data. It holds player
+IDs, names, team/position metadata, active/status flags, and refresh time—no
+player statistics. Refresh it from the owner's Discord DM with
+`/player_catalog update`; `/watch add` resolves names from this local catalog
+and never requests the Sleeper player endpoint itself.

@@ -18,7 +18,7 @@ from .automation import (
     AppConfig,
     AutomationError,
     build_report_header,
-    load_current_epl_player_index,
+    load_local_player_catalog,
     load_advisor_context,
     persist_discord_channel_id,
     persist_discord_ready_state,
@@ -28,6 +28,7 @@ from .automation import (
     run_web_briefing,
     run_scheduled_task,
     split_discord_message,
+    update_player_catalog,
     watchlist_file,
 )
 from .attachment_intake import (
@@ -44,6 +45,7 @@ from .discord_presentation import (
     private_advisor_only,
     response_limit_notice,
     task_menu,
+    player_catalog_updated,
     waiver_header,
     web_briefing_header,
     watchlist_card,
@@ -304,8 +306,8 @@ def build_client(config: AppConfig) -> discord.Client:
                 if not player:
                     raise WatchlistError("Include a player name.")
                 if action == "add":
-                    index = await asyncio.to_thread(load_current_epl_player_index, config)
-                    resolved = resolve_watchlist_player(player, index)
+                    catalog = await asyncio.to_thread(load_local_player_catalog, config)
+                    resolved = resolve_watchlist_player(player, catalog)
                     saved, added = await asyncio.to_thread(add_watchlist_player, watchlist_file(config), resolved)
                     await send_chunks(
                         message.channel,
@@ -439,7 +441,7 @@ def build_client(config: AppConfig) -> discord.Client:
         allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
     )
 
-    async def ensure_watchlist_user(interaction: discord.Interaction) -> bool:
+    async def ensure_private_user(interaction: discord.Interaction) -> bool:
         if str(interaction.user.id) == config.discord_allowed_user_id:
             return True
         await interaction.response.send_message(
@@ -447,10 +449,10 @@ def build_client(config: AppConfig) -> discord.Client:
         )
         return False
 
-    @watch_group.command(name="add", description="Add a current Premier League player to your watchlist")
+    @watch_group.command(name="add", description="Add a Sleeper EPL player to your watchlist")
     @app_commands.describe(player="Player name, optionally followed by club")
     async def watch_add_command(interaction: discord.Interaction, player: str) -> None:
-        if not await ensure_watchlist_user(interaction):
+        if not await ensure_private_user(interaction):
             return
         if not player.strip():
             await interaction.response.send_message(
@@ -460,8 +462,8 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         await interaction.response.defer()
         try:
-            index = await asyncio.to_thread(load_current_epl_player_index, config)
-            resolved = resolve_watchlist_player(player, index)
+            catalog = await asyncio.to_thread(load_local_player_catalog, config)
+            resolved = resolve_watchlist_player(player, catalog)
             saved, added = await asyncio.to_thread(add_watchlist_player, watchlist_file(config), resolved)
             await interaction.edit_original_response(
                 content=watchlist_change("added" if added else "already_watching", saved)
@@ -472,7 +474,7 @@ def build_client(config: AppConfig) -> discord.Client:
     @watch_group.command(name="remove", description="Remove a player from your watchlist")
     @app_commands.describe(player="Watched player name, optionally followed by club")
     async def watch_remove_command(interaction: discord.Interaction, player: str) -> None:
-        if not await ensure_watchlist_user(interaction):
+        if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
         try:
@@ -485,9 +487,9 @@ def build_client(config: AppConfig) -> discord.Client:
         except (WatchlistError, WatchlistResolutionError) as exc:
             await interaction.edit_original_response(content=compact_interaction_error("Couldn’t update the watchlist", exc))
 
-    @watch_group.command(name="list", description="List your watched Premier League players")
+    @watch_group.command(name="list", description="List your watched Sleeper EPL players")
     async def watch_list_command(interaction: discord.Interaction) -> None:
-        if not await ensure_watchlist_user(interaction):
+        if not await ensure_private_user(interaction):
             return
         try:
             watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
@@ -500,6 +502,29 @@ def build_client(config: AppConfig) -> discord.Client:
             await interaction.response.send_message(compact_interaction_error("Couldn’t read the watchlist", exc), ephemeral=True)
 
     command_tree.add_command(watch_group)
+
+    player_catalog_group = app_commands.Group(
+        name="player_catalog",
+        description="Refresh the private Sleeper player catalog",
+        allowed_installs=app_commands.AppInstallationType(user=True, guild=False),
+        allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
+    )
+
+    @player_catalog_group.command(name="update", description="Refresh the local Sleeper EPL player catalog")
+    async def player_catalog_update_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        async with run_lock:
+            try:
+                refreshed = await asyncio.to_thread(update_player_catalog, config)
+                await interaction.edit_original_response(content=player_catalog_updated(refreshed))
+            except AutomationError as exc:
+                await interaction.edit_original_response(
+                    content=compact_interaction_error("Couldn’t update the player catalog", exc)
+                )
+
+    command_tree.add_command(player_catalog_group)
 
     @client.event
     async def on_ready() -> None:

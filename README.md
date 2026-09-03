@@ -8,6 +8,7 @@ The project is designed to research and explain roster news, injuries, fixtures,
 
 - [`league_context.md`](league_context.md) — canonical league constants, rules, validation policy, and current roster.
 - [`docs/architecture.md`](docs/architecture.md) — system boundaries and planned data flow.
+- [`docs/local_automation.md`](docs/local_automation.md) — local Discord advisor setup and private player catalog maintenance.
 - [`docs/scheduled_tasks.md`](docs/scheduled_tasks.md) — reusable prompts for ChatGPT Scheduled Tasks.
 - [`docs/nightly_recap_task.md`](docs/nightly_recap_task.md) — the daily 10:00 PM Eastern game-day recap task definition.
 - [`docs/transfer_monitor_task.md`](docs/transfer_monitor_task.md) — the hourly league-wide EPL transfer monitor definition.
