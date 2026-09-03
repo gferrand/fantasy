@@ -1,6 +1,6 @@
 # Project agent instructions
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-03.1" sha256="[redacted]" -->
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-03.1" sha256="838353a603e8a229a48dddbd998255a7f7f783e44a857bb09f60435620d53051" -->
 # Infrastructure Standards
 
 These standards apply to every project and every agent working on the Mac infrastructure.
