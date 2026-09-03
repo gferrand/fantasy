@@ -15,6 +15,7 @@ from fantasy_advisor.deadline_guardian import (
     final_reminder_events,
     final_reminder_windows,
     mark_final_reminded,
+    parse_guardian_intent,
     record_initial_alerts,
 )
 from fantasy_advisor.gameweek import GameweekContext
@@ -122,6 +123,12 @@ class DeadlineGuardianTests(unittest.TestCase):
             record_initial_alerts(config, [self._fixture()], now=self.now)
             mark_final_reminded(config, ["fixture-1"], now=self.now + timedelta(minutes=70))
             self.assertEqual(final_reminder_windows(config, now=self.now + timedelta(minutes=71), lead_minutes=20), ())
+
+    def test_only_clear_plain_text_forms_control_guardian(self):
+        self.assertEqual(parse_guardian_intent("done"), "done")
+        self.assertEqual(parse_guardian_intent("/guardian done"), "done")
+        self.assertEqual(parse_guardian_intent("/guardian status"), "status")
+        self.assertIsNone(parse_guardian_intent("Should I say done?"))
 
 
 if __name__ == "__main__":

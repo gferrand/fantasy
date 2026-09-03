@@ -26,6 +26,17 @@ def guardian_state_file(config: AppConfig) -> Path:
     return config.repo_root / "data" / "automation" / "deadline_guardian.json"
 
 
+def parse_guardian_intent(text: str) -> str | None:
+    """Recognize only unambiguous acknowledgement/status text in a private DM."""
+
+    normalized = " ".join(text.casefold().strip().split())
+    if normalized in {"done", "lineup done", "guardian done", "/guardian done", "acknowledged"}:
+        return "done"
+    if normalized in {"guardian status", "/guardian status"}:
+        return "status"
+    return None
+
+
 def _parse_time(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None

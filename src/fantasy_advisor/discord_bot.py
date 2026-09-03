@@ -60,7 +60,7 @@ from .discord_presentation import (
     guardian_acknowledged,
     guardian_status,
 )
-from .deadline_guardian import acknowledge_active_events, active_events
+from .deadline_guardian import acknowledge_active_events, active_events, parse_guardian_intent
 from .watchlist import (
     WatchlistError,
     WatchlistResolutionError,
@@ -798,12 +798,20 @@ def build_client(config: AppConfig) -> discord.Client:
             content = caption
         if not content:
             return
-        if content.casefold() in {"done", "lineup done", "guardian done", "acknowledged"}:
+        guardian_intent = parse_guardian_intent(content)
+        if guardian_intent == "done":
             try:
                 acknowledged = await asyncio.to_thread(acknowledge_active_events, config, now=discord.utils.utcnow())
                 await send_chunks(message.channel, guardian_acknowledged(acknowledged))
             except AutomationError as exc:
                 await send_chunks(message.channel, error_card("I couldn’t update Deadline Guardian", str(exc)))
+            return
+        if guardian_intent == "status":
+            try:
+                events = await asyncio.to_thread(active_events, config, now=discord.utils.utcnow())
+                await send_chunks(message.channel, guardian_status(events))
+            except AutomationError as exc:
+                await send_chunks(message.channel, error_card("I couldn’t read Deadline Guardian", str(exc)))
             return
         watchlist_intent = parse_watchlist_intent(caption or content)
         if watchlist_intent is not None:
