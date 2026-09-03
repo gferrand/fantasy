@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
@@ -111,12 +111,37 @@ class LineupAlertTests(unittest.TestCase):
             self.assertEqual(analyst_calls[0]["fixtures"][0]["event_id"], "fixture-hul")
             self.assertEqual(len(analyst_calls[0]["fixtures"]), 2)
 
-    def test_published_schedule_is_cached_and_yields_exact_alert_times(self):
+    def test_future_fixture_does_not_alert_after_player_is_dropped(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            transport = _Transport()
+            dropped_context = GameweekContext(
+                "prepare", "2026", 10, "later",
+                {
+                    "gameweek": 10,
+                    "your_team": {"current_starters": [], "players": []},
+                    "starting_slots": ["F", "D"],
+                },
+            )
+            self.assertEqual(
+                run_lineup_alerts(
+                    config,
+                    now=self.now,
+                    schedule=self._schedule(),
+                    prepare_loader=lambda **_kwargs: dropped_context,
+                    analyst=lambda *_args, **_kwargs: self.fail("No analysis should run without a rostered player"),
+                    transport=transport,
+                ),
+                0,
+            )
+            self.assertEqual(transport.messages, [])
+
+    def test_local_season_schedule_is_reused_even_after_months(self):
         with tempfile.TemporaryDirectory() as temporary:
             config = self._config(Path(temporary))
             fixture_client = _FixtureClient(self._schedule())
             schedule = load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
-            again = load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
+            again = load_fixture_schedule(config, now=self.now + timedelta(days=100), fixture_client=fixture_client)
             windows = fixture_alert_windows(schedule, now=self.now, lead_minutes=90)
             self.assertIs(schedule, schedule)
             self.assertEqual(again, schedule)

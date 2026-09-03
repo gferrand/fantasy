@@ -15,7 +15,6 @@ from .gameweek import GameweekContext, load_gameweek_prepare_context
 
 
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard"
-FIXTURE_CACHE_HOURS = 24
 CLUB_ABBRS = {
     "Arsenal": "ARS", "Aston Villa": "AVL", "AFC Bournemouth": "BOU", "Bournemouth": "BOU",
     "Brentford": "BRE", "Brighton & Hove Albion": "BHA", "Brighton": "BHA", "Chelsea": "CHE",
@@ -86,21 +85,15 @@ def load_fixture_schedule(
     now: datetime,
     fixture_client: EplFixtureClient | None = None,
 ) -> object:
-    """Cache the complete published season and refresh it at most once daily."""
+    """Return the locally persisted published season, downloading it only if absent."""
 
     cache_path = lineup_fixture_cache_file(config)
     current = now.astimezone(timezone.utc)
     if cache_path.exists():
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
-            retrieved_at = _parse_kickoff(cached.get("retrieved_at")) if isinstance(cached, Mapping) else None
             schedule = cached.get("schedule") if isinstance(cached, Mapping) else None
-            if (
-                retrieved_at is not None
-                and current - retrieved_at < timedelta(hours=FIXTURE_CACHE_HOURS)
-                and isinstance(schedule, Mapping)
-                and isinstance(schedule.get("events"), list)
-            ):
+            if isinstance(schedule, Mapping) and isinstance(schedule.get("events"), list):
                 return schedule
         except (OSError, json.JSONDecodeError):
             # A partial cache must never block a fresh public schedule fetch.
