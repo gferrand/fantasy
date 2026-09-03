@@ -15,6 +15,7 @@ from fantasy_advisor.lineup_alerts import (
     due_fixtures,
     fixture_alert_windows,
     load_fixture_schedule,
+    load_persisted_fixture_schedule,
     roster_fixtures,
     run_lineup_alerts,
 )
@@ -108,6 +109,18 @@ class LineupAlertTests(unittest.TestCase):
         self.assertEqual(fixtures[0].players[0]["name"], "Ryan Giles")
         self.assertEqual(due_fixtures(fixtures, now=self.now, lead_minutes=90, sent=set()), fixtures)
         self.assertEqual(len(due_fixtures(fixtures, now=self.now, lead_minutes=90, sent={"fixture-hul"})), 1)
+
+    def test_persisted_fixture_schedule_never_refreshes_or_accepts_partial_cache(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            path = config.repo_root / "data" / "automation" / "lineup_fixtures.json"
+            path.parent.mkdir(parents=True)
+            complete = self._complete_schedule()
+            path.write_text(json.dumps({"retrieved_at": "now", "schedule": complete}), encoding="utf-8")
+            self.assertEqual(load_persisted_fixture_schedule(config), complete)
+            path.write_text(json.dumps({"schedule": self._schedule()}), encoding="utf-8")
+            with self.assertRaisesRegex(AutomationError, "incomplete or invalid"):
+                load_persisted_fixture_schedule(config)
 
     def test_alert_is_private_and_sent_once_after_success(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -54,6 +54,14 @@ class DiscordBotTests(unittest.TestCase):
         self.assertFalse(group.allowed_contexts.guild)
         self.assertTrue(group.allowed_contexts.dm_channel)
 
+    def test_private_trade_proposal_command_is_registered(self):
+        client = build_client(self._config())
+        group = client._fantasy_command_tree.get_command("trade")  # type: ignore[attr-defined]
+        self.assertIsNotNone(group)
+        self.assertEqual([command.name for command in group.commands], ["propose"])
+        self.assertFalse(group.allowed_contexts.guild)
+        self.assertTrue(group.allowed_contexts.dm_channel)
+
     def test_private_deadline_guardian_commands_are_registered(self):
         client = build_client(self._config())
         group = client._fantasy_command_tree.get_command("guardian")  # type: ignore[attr-defined]

@@ -59,6 +59,8 @@ def help_menu() -> str:
         "`/watch outlook` — current news and expert view\n"
         "`/watch recommend` — manual roster-fit ideas\n"
         "Refresh player references: `/player_catalog update`\n"
+        "\n🤝 **Trades**\n"
+        "`/trade propose` — one evidence-backed, manual trade package\n"
         "You can also message me normally when Discord supports bot DMs."
     )
 
@@ -77,6 +79,20 @@ def player_catalog_updated(result: object) -> str:
 
 def watchlist_empty() -> str:
     return "👀 **Your watchlist is empty**\nAdd a player with `/watch add player`."
+
+
+def no_viable_trade_package(context: object) -> str:
+    """Explain why no honest, mutual trade package was returned."""
+
+    season = str(getattr(context, "season", "current"))
+    gameweek = getattr(context, "gameweek", "?")
+    return (
+        f"🛑 **No trade proposal today · GW{gameweek}**\n"
+        "I checked current league rosters, custom scoring, and the local fixture run, but no two- or "
+        "three-player package improved your forward outlook while also improving the other manager's current lineup. "
+        "I won’t force a lopsided offer.\n"
+        f"*Sleeper EPL · {season} regular season · read-only*"
+    )
 
 
 def guardian_acknowledged(events: Iterable[object]) -> str:

@@ -112,6 +112,29 @@ def load_fixture_schedule(
     return schedule
 
 
+def load_persisted_fixture_schedule(config: AppConfig) -> object:
+    """Read the complete local season schedule without any network refresh.
+
+    Forecasting uses the same deliberately static schedule as the lineup-alert
+    service. A trade request must not quietly replace it with a new download or
+    make a fixture prediction from a partial cache.
+    """
+
+    cache_path = lineup_fixture_cache_file(config)
+    try:
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise AutomationError(
+            "The local Premier League fixture schedule is not initialized; restore the downloaded season calendar first."
+        ) from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AutomationError("The local Premier League fixture schedule is unreadable") from exc
+    schedule = cached.get("schedule") if isinstance(cached, Mapping) else None
+    if not _is_complete_fixture_schedule(schedule):
+        raise AutomationError("The local Premier League fixture schedule is incomplete or invalid")
+    return schedule
+
+
 def _load_sent(path: Path) -> set[str]:
     if not path.exists():
         return set()
