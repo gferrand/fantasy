@@ -112,3 +112,28 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 - The central guard queues cleanup only for tabs it can prove were agent-created and automatically closes only eligible tabs after 24 hours with no activity; it leaves active, pinned, audible, captured, and protected tabs alone.
 - Treat 20 open project tabs as a performance target: clean up at completion; no hard cap and no automatic closure based only on count.
 - Preserve existing signed-in Chrome sessions and never inspect or export session data.
+
+## Chrome saved-password sign-in recovery
+
+- For any service that requires sign-in, first use its normal sign-in flow and
+  Chrome's supported saved-credential UI. If the service shows a saved-account
+  chooser, click the visible account that matches the owner and service.
+- If the service instead shows a standard login form, click only its visible
+  username, email, or phone-number field as though you were about to type; do
+  not type in that field or the Password field. Chrome presents its
+  saved-password picker outside the webpage.
+- When the service/account context is unambiguous or the owner specifically
+  instructs it, select the first Chrome-suggested credential through Chrome's
+  visible UI, then use the service's normal sign-in action only if it has not
+  already advanced. Do not read the suggested credential or inspect either
+  form value.
+- Verify successful sign-in only from non-sensitive page state: the intended
+  authenticated page, dashboard, or service-specific destination appears.
+  Never inspect, copy, type, export, persist, or otherwise expose the username
+  or password. If the picker is unavailable or rejected, or the service
+  requires MFA, CAPTCHA, a warning, or account approval, record that exact
+  verification gap and stop the login attempt.
+- **Discord example:** in a dedicated Discord web tab, the chooser account is
+  the visible saved owner username; the ordinary form's identifier control is
+  named **Email or Phone Number**; successful sign-in advances to Discord or
+  the Developer Portal.
