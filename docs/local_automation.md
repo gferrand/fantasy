@@ -78,14 +78,16 @@ The token is a secret. Keep `.env` local and never commit it. The bot will not
 respond to server messages or DMs from anyone whose numeric ID does not match
 `DISCORD_ALLOWED_USER_ID`.
 
-The scheduler checks the Premier League fixture board every minute. It sends a
-private, read-only lineup check 90 minutes before a kickoff involving one or
-more current Los Blancos players. Simultaneous kickoffs are combined into one
-message; each fixture event is recorded locally after successful delivery so
-it is never resent. Set `LINEUP_ALERT_LEAD_MINUTES` to a value from 5 through
-360 to change the lead time. The alert uses current fantasy analysis and team
-news, but always requires you to confirm any lineup decision manually in
-Sleeper.
+The scheduler downloads the complete published Premier League season calendar
+and refreshes that local cache once daily to catch reschedules. It calculates
+the exact next alert time and sleeps until then rather than checking fixtures
+every minute. It sends a private, read-only lineup check 90 minutes before a
+kickoff involving one or more current Los Blancos players. Simultaneous
+kickoffs are combined into one message; each fixture event is recorded locally
+after successful delivery so it is never resent. Set
+`LINEUP_ALERT_LEAD_MINUTES` to a value from 5 through 360 to change the lead
+time. The alert uses current fantasy analysis and team news, but always
+requires you to confirm any lineup decision manually in Sleeper.
 
 The Mac's system time zone should be `America/New_York` for the 10:00 PM and
 hourly launchd calendar entries. The task process also sets `TZ` to that zone
