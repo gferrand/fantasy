@@ -15,6 +15,7 @@ from .gameweek import GameweekContext, load_gameweek_prepare_context
 
 
 ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard"
+FIXTURE_CACHE_HOURS = 24
 CLUB_ABBRS = {
     "Arsenal": "ARS", "Aston Villa": "AVL", "AFC Bournemouth": "BOU", "Bournemouth": "BOU",
     "Brentford": "BRE", "Brighton & Hove Albion": "BHA", "Brighton": "BHA", "Chelsea": "CHE",
@@ -34,11 +35,20 @@ class LineupFixture:
     players: tuple[dict[str, Any], ...]
 
 
+@dataclass(frozen=True)
+class FixtureAlertWindow:
+    """One scheduled pre-kickoff check for a published EPL fixture."""
+
+    event_id: str
+    kickoff: datetime
+    alert_at: datetime
+
+
 class EplFixtureClient:
     """Small read-only client for the public EPL scoreboard schedule."""
 
     def get_schedule(self, start: datetime, end: datetime) -> object:
-        query = urlencode({"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": "100"})
+        query = urlencode({"dates": f"{start:%Y%m%d}-{end:%Y%m%d}", "limit": "1000"})
         # ESPN's public scoreboard currently accepts its lightweight API clients
         # but rejects browser-style and product-branded User-Agent strings.
         request = Request(f"{ESPN_SCOREBOARD_URL}?{query}", headers={"User-Agent": "curl/8.7.1"})
@@ -51,6 +61,62 @@ class EplFixtureClient:
 
 def lineup_alert_state_file(config: AppConfig) -> Path:
     return config.repo_root / "data" / "automation" / "lineup_alerts.json"
+
+
+def lineup_fixture_cache_file(config: AppConfig) -> Path:
+    """Return the private persisted copy of the published fixture board."""
+
+    return config.repo_root / "data" / "automation" / "lineup_fixtures.json"
+
+
+def fixture_season_window(now: datetime) -> tuple[datetime, datetime]:
+    """Return the complete published EPL season window containing ``now``."""
+
+    current = now.astimezone(timezone.utc)
+    season_start_year = current.year if current.month >= 7 else current.year - 1
+    return (
+        datetime(season_start_year, 8, 1, tzinfo=timezone.utc),
+        datetime(season_start_year + 1, 6, 15, tzinfo=timezone.utc),
+    )
+
+
+def load_fixture_schedule(
+    config: AppConfig,
+    *,
+    now: datetime,
+    fixture_client: EplFixtureClient | None = None,
+) -> object:
+    """Cache the complete published season and refresh it at most once daily."""
+
+    cache_path = lineup_fixture_cache_file(config)
+    current = now.astimezone(timezone.utc)
+    if cache_path.exists():
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            retrieved_at = _parse_kickoff(cached.get("retrieved_at")) if isinstance(cached, Mapping) else None
+            schedule = cached.get("schedule") if isinstance(cached, Mapping) else None
+            if (
+                retrieved_at is not None
+                and current - retrieved_at < timedelta(hours=FIXTURE_CACHE_HOURS)
+                and isinstance(schedule, Mapping)
+                and isinstance(schedule.get("events"), list)
+            ):
+                return schedule
+        except (OSError, json.JSONDecodeError):
+            # A partial cache must never block a fresh public schedule fetch.
+            pass
+    season_start, season_end = fixture_season_window(current)
+    schedule = (fixture_client or EplFixtureClient()).get_schedule(season_start, season_end)
+    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("events"), list):
+        raise AutomationError("Premier League fixture schedule did not return an events array")
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps({"retrieved_at": current.isoformat(), "schedule": schedule}, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(cache_path)
+    return schedule
 
 
 def _load_sent(path: Path) -> set[str]:
@@ -134,6 +200,32 @@ def due_fixtures(
     )
 
 
+def fixture_alert_windows(
+    schedule: object,
+    *,
+    now: datetime,
+    lead_minutes: int,
+    checked_event_ids: set[str] | None = None,
+) -> tuple[FixtureAlertWindow, ...]:
+    """Calculate the exact future checks from the already-downloaded schedule."""
+
+    if not isinstance(schedule, Mapping) or not isinstance(schedule.get("events"), list):
+        raise AutomationError("Premier League fixture schedule did not return an events array")
+    current = now.astimezone(timezone.utc)
+    checked = checked_event_ids or set()
+    lead = timedelta(minutes=lead_minutes)
+    windows = []
+    for event in schedule["events"]:
+        if not isinstance(event, Mapping):
+            continue
+        event_id = str(event.get("id") or "").strip()
+        kickoff = _parse_kickoff(event.get("date"))
+        if not event_id or event_id in checked or kickoff is None or kickoff <= current:
+            continue
+        windows.append(FixtureAlertWindow(event_id, kickoff, max(kickoff - lead, current)))
+    return tuple(sorted(windows, key=lambda window: (window.alert_at, window.event_id)))
+
+
 def lineup_alert_context(context: GameweekContext, fixtures: Iterable[LineupFixture]) -> str:
     """Serialize one kickoff window, which can contain several simultaneous matches."""
 
@@ -170,6 +262,7 @@ def run_lineup_alerts(
     prepare_loader: Callable[..., GameweekContext] = load_gameweek_prepare_context,
     analyst: Callable[..., WebResult] | None = None,
     transport: Any | None = None,
+    schedule: object | None = None,
 ) -> int:
     """Send each fixture's private check once, inside its pre-kickoff window."""
 
@@ -179,10 +272,14 @@ def run_lineup_alerts(
     current = now or datetime.now(timezone.utc)
     current = current.astimezone(timezone.utc)
     context = prepare_loader(manager_id=EXPECTED_MANAGER_ID)
-    schedule = (fixture_client or EplFixtureClient()).get_schedule(current, current + timedelta(days=3))
+    fixture_schedule = schedule if schedule is not None else load_fixture_schedule(
+        config,
+        now=current,
+        fixture_client=fixture_client,
+    )
     state_path = lineup_alert_state_file(config)
     pending = due_fixtures(
-        roster_fixtures(context, schedule),
+        roster_fixtures(context, fixture_schedule),
         now=current,
         lead_minutes=config.lineup_alert_lead_minutes,
         sent=_load_sent(state_path),

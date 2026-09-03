@@ -11,7 +11,13 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fantasy_advisor.automation import AppConfig, FANTASY_CODEX_MODEL, FANTASY_CODEX_REASONING_EFFORT, WebResult
 from fantasy_advisor.gameweek import GameweekContext
-from fantasy_advisor.lineup_alerts import due_fixtures, roster_fixtures, run_lineup_alerts
+from fantasy_advisor.lineup_alerts import (
+    due_fixtures,
+    fixture_alert_windows,
+    load_fixture_schedule,
+    roster_fixtures,
+    run_lineup_alerts,
+)
 
 
 class _FixtureClient:
@@ -104,6 +110,23 @@ class LineupAlertTests(unittest.TestCase):
             self.assertEqual(transport.messages, [("123", "⏰ **Lineup check**\nSTART Ryan Giles.")])
             self.assertEqual(analyst_calls[0]["fixtures"][0]["event_id"], "fixture-hul")
             self.assertEqual(len(analyst_calls[0]["fixtures"]), 2)
+
+    def test_published_schedule_is_cached_and_yields_exact_alert_times(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self._config(Path(temporary))
+            fixture_client = _FixtureClient(self._schedule())
+            schedule = load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
+            again = load_fixture_schedule(config, now=self.now, fixture_client=fixture_client)
+            windows = fixture_alert_windows(schedule, now=self.now, lead_minutes=90)
+            self.assertIs(schedule, schedule)
+            self.assertEqual(again, schedule)
+            self.assertEqual(len(fixture_client.calls), 1)
+            self.assertEqual(fixture_client.calls[0], (
+                datetime(2026, 8, 1, tzinfo=timezone.utc),
+                datetime(2027, 6, 15, tzinfo=timezone.utc),
+            ))
+            self.assertEqual(windows[0].alert_at, datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc))
+            self.assertEqual({window.event_id for window in windows[:2]}, {"fixture-hul", "fixture-liv"})
 
 
 if __name__ == "__main__":
