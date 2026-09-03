@@ -46,6 +46,14 @@ class DiscordBotTests(unittest.TestCase):
         self.assertFalse(group.allowed_contexts.guild)
         self.assertTrue(group.allowed_contexts.dm_channel)
 
+    def test_private_gameweek_commands_are_registered(self):
+        client = build_client(self._config())
+        group = client._fantasy_command_tree.get_command("gameweek")  # type: ignore[attr-defined]
+        self.assertIsNotNone(group)
+        self.assertEqual([command.name for command in group.commands], ["prepare", "recap"])
+        self.assertFalse(group.allowed_contexts.guild)
+        self.assertTrue(group.allowed_contexts.dm_channel)
+
 
 if __name__ == "__main__":
     unittest.main()

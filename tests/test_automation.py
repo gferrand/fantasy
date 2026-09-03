@@ -44,6 +44,7 @@ from fantasy_advisor.automation import (
     thread_id_from_events,
     web_briefing_prompt,
     watchlist_web_briefing_prompt,
+    gameweek_web_briefing_prompt,
 )
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
 from fantasy_advisor.player_catalog import refresh_player_catalog
@@ -156,6 +157,16 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("fantasy Premier\nLeague analysts", prompt)
         self.assertIn("No current fantasy analyst view found", prompt)
         self.assertIn("generic stats\nsite as an expert opinion", prompt)
+
+    def test_gameweek_prompt_requires_expert_sources_and_h2h_limit(self):
+        prompt = gameweek_web_briefing_prompt(
+            report_kind="prepare",
+            live_context='{"gameweek":3,"h2h_opponent":{"available":false}}',
+        )
+        self.assertIn("Sleeper-specific", prompt)
+        self.assertIn("Fantasy Premier League analysts", prompt)
+        self.assertIn("does not expose the H2H matchup", prompt)
+        self.assertIn("Ideal XI", prompt)
         self.assertIn("Fantasy analyst view:", prompt)
 
     def test_web_briefing_prompt_keeps_league_data_outside_the_web_path(self):

@@ -26,6 +26,7 @@ from .automation import (
     persist_advisor_context_event,
     load_registry,
     run_interactive_task,
+    run_gameweek_web_briefing,
     run_web_briefing,
     run_watchlist_web_briefing,
     run_scheduled_task,
@@ -68,6 +69,7 @@ from .watchlist import (
     resolve_watchlist_player,
 )
 from .watchlist_stats import load_current_watchlist_stats
+from .gameweek import load_gameweek_prepare_context, load_gameweek_recap_context
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -614,6 +616,73 @@ def build_client(config: AppConfig) -> discord.Client:
             )
 
     command_tree.add_command(watch_group)
+
+    gameweek_group = app_commands.Group(
+        name="gameweek",
+        description="Prepare the next gameweek or recap the last one",
+        allowed_installs=app_commands.AppInstallationType(user=True, guild=False),
+        allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
+    )
+
+    @gameweek_group.command(name="prepare", description="Analyze your next gameweek lineup and key opponents")
+    async def gameweek_prepare_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            async with run_lock:
+                context = await asyncio.to_thread(
+                    load_gameweek_prepare_context,
+                    manager_id=EXPECTED_MANAGER_ID,
+                )
+                result = await asyncio.to_thread(
+                    run_gameweek_web_briefing,
+                    config,
+                    report_kind="prepare",
+                    live_context=context.as_json(),
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError) as exc:
+            LOGGER.exception("Could not prepare gameweek report")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t prepare the gameweek", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure preparing gameweek report")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t prepare the gameweek", "Please try again shortly.")
+            )
+
+    @gameweek_group.command(name="recap", description="Recap your latest completed gameweek and league standouts")
+    async def gameweek_recap_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            async with run_lock:
+                context = await asyncio.to_thread(
+                    load_gameweek_recap_context,
+                    manager_id=EXPECTED_MANAGER_ID,
+                )
+                result = await asyncio.to_thread(
+                    run_gameweek_web_briefing,
+                    config,
+                    report_kind="recap",
+                    live_context=context.as_json(),
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError) as exc:
+            LOGGER.exception("Could not recap gameweek report")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t recap the gameweek", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure recapping gameweek report")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t recap the gameweek", "Please try again shortly.")
+            )
+
+    command_tree.add_command(gameweek_group)
 
     player_catalog_group = app_commands.Group(
         name="player_catalog",
