@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .automation import AppConfig, AutomationError, TaskSpec, load_registry, run_scheduled_task
-from .lineup_alerts import FIXTURE_CACHE_HOURS, fixture_alert_windows, load_fixture_schedule, run_lineup_alerts
+from .lineup_alerts import fixture_alert_windows, load_fixture_schedule, run_lineup_alerts
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def _next_task_time(tasks: tuple[TaskSpec, ...], now: datetime) -> datetime:
 
 
 def _sleep_until(now: datetime, *targets: datetime | None) -> float:
-    """Sleep exactly to the next known report, fixture check, or cache refresh."""
+    """Sleep exactly to the next known report, fixture check, or retry."""
 
     future = [target for target in targets if target is not None and target > now]
     if not future:
@@ -57,7 +57,7 @@ def main() -> int:
     zone = ZoneInfo(registry.timezone)
     completed_minutes: set[tuple[str, str]] = set()
     fixture_schedule = None
-    fixture_refresh_at: datetime | None = None
+    fixture_retry_at: datetime | None = None
     checked_fixture_ids: set[str] = set()
     LOGGER.info("Fantasy container scheduler started for %s", registry.timezone)
     while True:
@@ -74,15 +74,15 @@ def main() -> int:
                 LOGGER.info("Completed scheduled task %s", task.id)
             except AutomationError:
                 LOGGER.exception("Scheduled task %s failed", task.id)
-        if fixture_schedule is None or fixture_refresh_at is None or now >= fixture_refresh_at:
+        if fixture_schedule is None and (fixture_retry_at is None or now >= fixture_retry_at):
             try:
                 fixture_schedule = load_fixture_schedule(config, now=now)
-                fixture_refresh_at = now + timedelta(hours=FIXTURE_CACHE_HOURS)
                 checked_fixture_ids = set()
-                LOGGER.info("Loaded fixture schedule; next refresh at %s", fixture_refresh_at.isoformat())
+                fixture_retry_at = None
+                LOGGER.info("Loaded local season fixture schedule")
             except AutomationError:
-                LOGGER.exception("Fixture schedule refresh failed")
-                fixture_refresh_at = now + timedelta(minutes=15)
+                LOGGER.exception("Local season fixture schedule load failed")
+                fixture_retry_at = now + timedelta(minutes=15)
         alert_windows = ()
         if fixture_schedule is not None:
             try:
@@ -106,7 +106,7 @@ def main() -> int:
                 LOGGER.exception("Lineup alert check failed")
         completed_minutes = {key for key in completed_minutes if key[1] == minute_key}
         next_alert = alert_windows[0].alert_at if alert_windows else None
-        time.sleep(_sleep_until(now, _next_task_time(registry.tasks, now), fixture_refresh_at, next_alert))
+        time.sleep(_sleep_until(now, _next_task_time(registry.tasks, now), fixture_retry_at, next_alert))
 
 
 if __name__ == "__main__":

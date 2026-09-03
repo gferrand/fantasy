@@ -79,12 +79,14 @@ respond to server messages or DMs from anyone whose numeric ID does not match
 `DISCORD_ALLOWED_USER_ID`.
 
 The scheduler downloads the complete published Premier League season calendar
-and refreshes that local cache once daily to catch reschedules. It calculates
-the exact next alert time and sleeps until then rather than checking fixtures
-every minute. It sends a private, read-only lineup check 90 minutes before a
-kickoff involving one or more current Los Blancos players. Simultaneous
-kickoffs are combined into one message; each fixture event is recorded locally
-after successful delivery so it is never resent. Set
+once and then uses that private local copy for the season; it does not refresh
+the calendar for reschedules. It calculates the exact next alert time and
+sleeps until then rather than checking fixtures every minute. At each published
+fixture alert window, it reads the current Los Blancos roster and sends a
+private, read-only lineup check only when one or more currently rostered
+players are involved. So a player dropped before a later club fixture produces
+no alert. Simultaneous kickoffs are combined into one message; each fixture
+event is recorded locally after successful delivery so it is never resent. Set
 `LINEUP_ALERT_LEAD_MINUTES` to a value from 5 through 360 to change the lead
 time. The alert uses current fantasy analysis and team news, but always
 requires you to confirm any lineup decision manually in Sleeper.
