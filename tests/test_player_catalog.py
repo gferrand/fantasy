@@ -25,7 +25,7 @@ from fantasy_advisor.player_catalog import (
 )
 
 
-def test_config(root: Path) -> AppConfig:
+def catalog_test_config(root: Path) -> AppConfig:
     return AppConfig(
         repo_root=root,
         task_registry_path=root / "automation" / "tasks.toml",
@@ -94,7 +94,7 @@ class PlayerCatalogTests(unittest.TestCase):
 
     def test_automation_update_fetches_once_and_local_reads_do_not_use_the_network(self):
         with tempfile.TemporaryDirectory() as temporary:
-            config = test_config(Path(temporary))
+            config = catalog_test_config(Path(temporary))
             with patch("fantasy_advisor.automation.SleeperClient.get_json", return_value=SAMPLE_PLAYERS) as fetch:
                 result = update_player_catalog(config)
             self.assertEqual(result.player_count, 2)
