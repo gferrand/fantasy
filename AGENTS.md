@@ -105,9 +105,10 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 ## Shared Chrome policy
 
 - Policy marker: `infrastructure-chrome-workspace-policy:v1`.
-- Before browser work, run `infra-opt workspace preflight --project fantasy`. If it returns nonzero, stop: on rejection, never create or use a tab.
-- Create tabs only through `infra-opt workspace create --project fantasy --purpose SAFE_PURPOSE`. General, Control, and generic tab creation are forbidden.
-- When complete, close only the recorded tab through `infra-opt workspace close --project fantasy --tab-id TAB_ID`; never close untracked tabs.
+- Before browser work, run `infra-opt workspace preflight --project fantasy` exactly once. If this first preflight returns nonzero, run `infra-opt workspace focus --project fantasy` exactly once, then rerun `infra-opt workspace preflight --project fantasy` exactly once. Browser work is allowed only if that second preflight succeeds; otherwise stop.
+- Do not loop, retry, inspect content, or take any browser action during this recovery sequence.
+- Create tabs only through `infra-opt workspace create --project fantasy --purpose SAFE_PURPOSE`. General, Control, generic Chrome, and direct tab or window creation or switching are forbidden.
+- Use only CLI-created, recorded tabs. When complete, close only the recorded tab through `infra-opt workspace close --project fantasy --tab-id TAB_ID`; never close untracked tabs.
 - Use only this project's registered Chrome window; never create a Chrome profile, tab group, or routine browser restart.
 - Do not share, lease, or reuse another agent's tabs. For every new project tab, use only the project-scoped workspace create command to open a purpose-tagged tab in this project's Guard-managed window.
 - Give each new tab a short, non-sensitive purpose. Never store URLs, titles, page content, cookies, credentials, prompts, or tokens in the purpose.

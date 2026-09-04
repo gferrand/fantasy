@@ -55,6 +55,20 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("Los Blancos", context)
         self.assertIn("1127171221277331456", context)
 
+    def test_chrome_workspace_recovery_protocol_is_bounded(self):
+        instructions = (ROOT / "AGENTS.md").read_text()
+        preflight = "infra-opt workspace preflight --project fantasy"
+        focus = "infra-opt workspace focus --project fantasy"
+
+        self.assertEqual(instructions.count(preflight), 2)
+        self.assertEqual(instructions.count(focus), 1)
+        self.assertIn("exactly once", instructions)
+        self.assertIn("Browser work is allowed only if that second preflight succeeds", instructions)
+        self.assertIn("Do not loop, retry, inspect content", instructions)
+        self.assertIn("General, Control, generic Chrome, and direct tab or window creation or switching are forbidden", instructions)
+        self.assertIn("Use only CLI-created, recorded tabs", instructions)
+        self.assertIn("close only the recorded tab", instructions)
+
 
     def test_context_contains_current_club_safety_rules(self):
         context = (ROOT / "league_context.md").read_text()
