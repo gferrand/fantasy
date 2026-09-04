@@ -105,11 +105,11 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 ## Shared Chrome policy
 
 - Policy marker: `infrastructure-chrome-workspace-policy:v1`.
-- Before browser work, run `infra-opt workspace current`; do not use the window if it reports `general_manual_window`, `ready false`, an unverified window, or a different project.
-- Create tabs only through `infra-opt workspace create --project PROJECT_ID --purpose SAFE_PURPOSE`; never use generic Chrome creation APIs or General / Control.
-- When complete, close only the recorded tab through `infra-opt workspace close --project PROJECT_ID --tab-id TAB_ID`; never close untracked tabs.
+- Before browser work, run `infra-opt workspace preflight --project fantasy`. If it returns nonzero, stop: on rejection, never create or use a tab.
+- Create tabs only through `infra-opt workspace create --project fantasy --purpose SAFE_PURPOSE`. General, Control, and generic tab creation are forbidden.
+- When complete, close only the recorded tab through `infra-opt workspace close --project fantasy --tab-id TAB_ID`; never close untracked tabs.
 - Use only this project's registered Chrome window; never create a Chrome profile, tab group, or routine browser restart.
-- Do not share, lease, or reuse another agent's tabs. For every new project tab, use only the shared Chrome workspace command to open a purpose-tagged tab in this project's Guard-managed window.
+- Do not share, lease, or reuse another agent's tabs. For every new project tab, use only the project-scoped workspace create command to open a purpose-tagged tab in this project's Guard-managed window.
 - Give each new tab a short, non-sensitive purpose. Never store URLs, titles, page content, cookies, credentials, prompts, or tokens in the purpose.
 - Close every project-created tab when work and verification finish. Never inspect, move, or close owner, user, unclassified, or another agent's tabs.
 - The central guard queues cleanup only for tabs it can prove were agent-created and automatically closes only eligible tabs after 24 hours with no activity; it leaves active, pinned, audible, captured, and protected tabs alone.
