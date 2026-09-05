@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).parents[1]
@@ -14,9 +14,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from fantasy_advisor.automation import (
     AppConfig,
     AutomationError,
-    BrowserWorkspaceBlocked,
+    BrowserTab,
+    BrowserTabUnavailable,
     advisor_context_file,
     CodexResult,
+    CodexRunError,
     CodexRunner,
     FANTASY_CODEX_MODEL,
     FANTASY_CODEX_REASONING_EFFORT,
@@ -619,29 +621,125 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("--ephemeral", command)
 
-    def test_browser_job_uses_exact_project_broker_and_full_stdin_request(self):
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=json.dumps({"status": "completed", "result": "ok"}), stderr=""
+    def test_browser_job_allocates_exact_owned_tab_runs_codex_and_closes_it(self):
+        created = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "created", "tab_id": 42}), stderr=""
         )
-        with patch("fantasy_advisor.automation.subprocess.run", return_value=completed) as run:
+        closed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "closed", "tab_id": 42}), stderr=""
+        )
+        process = MagicMock(pid=123, returncode=0)
+        process.communicate.return_value = (
+            '{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}',
+            "",
+        )
+        process.poll.return_value = 0
+        with (
+            patch("fantasy_advisor.automation.subprocess.run", side_effect=[created, closed]) as run,
+            patch("fantasy_advisor.automation.subprocess.Popen", return_value=process) as popen,
+            patch.object(CodexRunner, "_browser_agent_id", return_value="fantasy-test-task"),
+        ):
             result = CodexRunner(test_config()).run("Return the complete answer.", label="test")
         self.assertEqual(result.text, "ok")
-        self.assertEqual(run.call_args.args[0], ["infra-opt", "workspace", "browser", "--project", "fantasy"])
-        self.assertEqual(run.call_args.kwargs["input"], "Return the complete answer.")
-        self.assertTrue(run.call_args.kwargs["text"])
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            [
+                "infra-opt", "workspace", "create", "--project", "fantasy",
+                "--agent-id", "fantasy-test-task", "--purpose", "Fantasy test task",
+            ],
+        )
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            [
+                "infra-opt", "workspace", "close", "--project", "fantasy",
+                "--agent-id", "fantasy-test-task", "--tab-id", "42",
+            ],
+        )
+        submitted_prompt = process.communicate.call_args.kwargs["input"]
+        self.assertIn("Chrome tab ID 42", submitted_prompt)
+        self.assertIn("agent ID fantasy-test-task", submitted_prompt)
+        self.assertIn("Return the complete answer.", submitted_prompt)
+        self.assertIn("codex", popen.call_args.args[0])
 
-    def test_browser_workspace_block_is_retryable_and_never_falls_back(self):
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=2,
-            stdout=json.dumps({"status": "blocked", "reason": "workspace_unverified"}),
-            stderr="",
+    def test_browser_tab_allocation_failure_is_retryable_and_never_starts_codex(self):
+        unavailable = subprocess.CompletedProcess(
+            args=[], returncode=2, stdout="", stderr="shared_chrome_window_unavailable"
         )
         runner = CodexRunner(test_config())
-        with patch("fantasy_advisor.automation.subprocess.run", return_value=completed) as run:
-            with self.assertRaisesRegex(BrowserWorkspaceBlocked, "retryable: workspace_unverified"):
+        with (
+            patch("fantasy_advisor.automation.subprocess.run", return_value=unavailable) as run,
+            patch("fantasy_advisor.automation.subprocess.Popen") as popen,
+        ):
+            with self.assertRaisesRegex(BrowserTabUnavailable, "allocation failed") as raised:
                 runner.run("Research current news.", label="test")
+        self.assertTrue(raised.exception.retryable)
         self.assertEqual(run.call_count, 1)
-        self.assertEqual(run.call_args.args[0], runner.browser_command())
+        self.assertEqual(run.call_args.args[0][2], "create")
+        popen.assert_not_called()
+
+    def test_browser_job_closes_exact_owned_tab_when_codex_fails(self):
+        created = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "created", "tab_id": 42}), stderr=""
+        )
+        closed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "closed", "tab_id": 42}), stderr=""
+        )
+        process = MagicMock(pid=123, returncode=1)
+        process.communicate.return_value = ("", "codex failed")
+        process.poll.return_value = 1
+        with (
+            patch("fantasy_advisor.automation.subprocess.run", side_effect=[created, closed]) as run,
+            patch("fantasy_advisor.automation.subprocess.Popen", return_value=process),
+            patch.object(CodexRunner, "_browser_agent_id", return_value="fantasy-test-task"),
+        ):
+            with self.assertRaisesRegex(CodexRunError, "failed with exit code 1"):
+                CodexRunner(test_config()).run("Research current news.", label="test")
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].args[0][2], "close")
+        self.assertEqual(run.call_args_list[1].args[0][-1], "42")
+
+    def test_browser_tab_touch_uses_matching_project_agent_and_tab(self):
+        touched = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "touched", "tab_id": 42}), stderr=""
+        )
+        runner = CodexRunner(test_config())
+        with patch("fantasy_advisor.automation.subprocess.run", return_value=touched) as run:
+            runner._touch_browser_tab(BrowserTab(agent_id="fantasy-long-task", tab_id=42))
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "infra-opt", "workspace", "touch", "--project", "fantasy",
+                "--agent-id", "fantasy-long-task", "--tab-id", "42",
+            ],
+        )
+
+    def test_long_browser_job_touches_exact_owned_tab_before_idle_limit(self):
+        process = MagicMock()
+        process.communicate.side_effect = [
+            subprocess.TimeoutExpired(cmd="codex", timeout=1),
+            ("events", "diagnostics"),
+        ]
+        runner = CodexRunner(test_config())
+        tab = BrowserTab(agent_id="fantasy-long-task", tab_id=42)
+        with (
+            patch("fantasy_advisor.automation.BROWSER_TOUCH_INTERVAL_SECONDS", 1),
+            patch(
+                "fantasy_advisor.automation.time.monotonic",
+                side_effect=[0, 0, 0, 1.1, 1.1, 1.1],
+            ),
+            patch.object(runner, "_touch_browser_tab") as touch,
+        ):
+            result = runner._communicate_with_tab_heartbeat(
+                process,
+                "prompt",
+                label="test",
+                timeout=10,
+                browser_tab=tab,
+            )
+        self.assertEqual(result, ("events", "diagnostics"))
+        touch.assert_called_once_with(tab)
+        self.assertEqual(process.communicate.call_args_list[0].kwargs["input"], "prompt")
+        self.assertIsNone(process.communicate.call_args_list[1].kwargs["input"])
 
     def test_codex_event_parsing(self):
         events = "\n".join(

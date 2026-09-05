@@ -55,24 +55,27 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("Los Blancos", context)
         self.assertIn("1127171221277331456", context)
 
-    def test_chrome_workspace_recovery_protocol_is_bounded(self):
+    def test_shared_chrome_tab_protocol_is_task_owned(self):
         instructions = (ROOT / "AGENTS.md").read_text()
-        preflight = "infra-opt workspace preflight --project fantasy"
-        focus = "infra-opt workspace focus --project fantasy"
-
-        self.assertEqual(instructions.count(preflight), 2)
-        self.assertEqual(instructions.count(focus), 1)
-        self.assertIn("exactly once", instructions)
-        self.assertIn("Browser work is allowed only if that second preflight succeeds", instructions)
-        self.assertIn("Do not loop, retry, inspect content", instructions)
-        self.assertIn("General, Control, generic Chrome, and direct tab or window creation or switching are forbidden", instructions)
-        self.assertIn("Use only CLI-created, recorded tabs", instructions)
-        self.assertIn("close only the recorded tab", instructions)
-        self.assertIn("infra-opt workspace browser --project fantasy", instructions)
-        self.assertIn("complete request supplied on standard input", instructions)
-        self.assertIn("metadata-only `codex exec` search", instructions)
-        self.assertIn("clean retryable blocked result", instructions)
-        self.assertIn("do not add a website allowlist", instructions)
+        self.assertIn('version="2026-09-05.1"', instructions)
+        self.assertIn(
+            'sha256="34691655f3cc8dcdfe455e7b48e2dae7d91f9e0ec3efc976bb8e10a19b293c99"',
+            instructions,
+        )
+        self.assertIn("Infrastructure's single shared normal window", instructions)
+        self.assertIn(
+            "infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE",
+            instructions,
+        )
+        self.assertIn(
+            "infra-opt workspace touch --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            instructions,
+        )
+        self.assertIn(
+            "infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            instructions,
+        )
+        self.assertIn("close it in a guaranteed cleanup path", instructions)
 
 
     def test_context_contains_current_club_safety_rules(self):

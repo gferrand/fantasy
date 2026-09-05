@@ -1,6 +1,6 @@
 # Project agent instructions
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-03.1" sha256="838353a603e8a229a48dddbd998255a7f7f783e44a857bb09f60435620d53051" -->
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.1" sha256="34691655f3cc8dcdfe455e7b48e2dae7d91f9e0ec3efc976bb8e10a19b293c99" -->
 # Infrastructure Standards
 
 These standards apply to every project and every agent working on the Mac infrastructure.
@@ -66,6 +66,13 @@ These standards apply to every project and every agent working on the Mac infras
 - Documentation should stay current when architecture, setup, deployment, integrations, or operating behavior changes.
 - Another capable agent should be able to understand, operate, and rebuild the project from its repository and documentation.
 
+## Shared Chrome
+
+- Use the existing signed-in Chrome profile and Infrastructure's single shared normal window.
+- Every browser task creates its own tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`, touches it during work lasting an hour, and closes it after verification.
+- Never reuse another task's tab, create a Chrome profile or tab group, inspect session data, or routinely restart Chrome.
+- The hourly Infrastructure sweep closes every non-anchor tab after 60 minutes without browser activity or an explicit touch.
+
 ## Governance
 
 The Infrastructure Agent is the standards authority.
@@ -104,26 +111,20 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 
 ## Discord web smoke-test procedure
 
-- Discord web is verified as available in the managed Fantasy Chrome workspace when the owner DM for Fantasy EPL Advisor is visible and authenticated.
+- Discord web is verified as available when the owner DM for Fantasy EPL Advisor is visible and authenticated in the task-owned Fantasy tab in the shared Chrome window.
 - For a narrowly scoped owner-DM smoke test, write the prompt in the Discord composer and submit it by sequentially entering a newline (`\n`) in that composer. The ordinary keyboard Enter dispatch is not reliable through the current automation layer.
-- Verify both the posted owner message and the advisor's visible reply, then close only the recorded project tab through the workspace CLI.
+- Verify both the posted owner message and the advisor's visible reply, then close only the exact task-owned tab with the matching project, agent ID, and tab ID.
 
-## Shared Chrome policy
+## Shared Chrome tab policy
 
-- Policy marker: `infrastructure-chrome-workspace-policy:v1`.
-- Before browser work, run `infra-opt workspace preflight --project fantasy` exactly once. If this first preflight returns nonzero, run `infra-opt workspace focus --project fantasy` exactly once, then rerun `infra-opt workspace preflight --project fantasy` exactly once. Browser work is allowed only if that second preflight succeeds; otherwise stop.
-- Do not loop, retry, inspect content, or take any browser action during this recovery sequence.
-- Every browser-capable Fantasy job must invoke exactly `infra-opt workspace browser --project fantasy`, with the complete request supplied on standard input. This broker is the only browser route: never fall back to generic or shared host executors, Nettie, `infra-opt workspace current`, a General/manual window, another project, or metadata-only `codex exec` search.
-- The broker may use any website required by an authorized Fantasy request after it proves the managed Fantasy workspace; do not add a website allowlist. If that proof fails, return only a clean retryable blocked result and take no browser action.
-- Create tabs only through `infra-opt workspace create --project fantasy --purpose SAFE_PURPOSE`. General, Control, generic Chrome, and direct tab or window creation or switching are forbidden.
-- Use only CLI-created, recorded tabs. When complete, close only the recorded tab through `infra-opt workspace close --project fantasy --tab-id TAB_ID`; never close untracked tabs.
-- Use only this project's registered Chrome window; never create a Chrome profile, tab group, or routine browser restart.
-- Do not share, lease, or reuse another agent's tabs. For every new project tab, use only the project-scoped workspace create command to open a purpose-tagged tab in this project's Guard-managed window.
-- Give each new tab a short, non-sensitive purpose. Never store URLs, titles, page content, cookies, credentials, prompts, or tokens in the purpose.
-- Close every project-created tab when work and verification finish. Never inspect, move, or close owner, user, unclassified, or another agent's tabs.
-- The central guard queues cleanup only for tabs it can prove were agent-created and automatically closes only eligible tabs after 24 hours with no activity; it leaves active, pinned, audible, captured, and protected tabs alone.
-- Treat 20 open project tabs as a performance target: clean up at completion; no hard cap and no automatic closure based only on count.
-- Preserve existing signed-in Chrome sessions and never inspect or export session data.
+- Chrome uses Infrastructure's single shared normal window in the existing signed-in profile. Never create a Chrome profile, tab group, extra window, or routine browser restart.
+- Before any browser interaction, synchronously run `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE` and wait for its confirmed tab ID. Work only in that exact task-owned tab.
+- Give each task a unique, non-sensitive agent ID and a short, non-sensitive purpose. Never put URLs, titles, page content, cookies, credentials, prompts, or tokens in either value.
+- If a task can remain open for an hour, refresh ownership before 60 minutes of inactivity with `infra-opt workspace touch --project fantasy --agent-id TASK_ID --tab-id TAB_ID`.
+- After work and verification, synchronously close the exact owned tab with `infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID`, even when the task fails.
+- Never reuse, inspect, move, touch, or close an owner, manual, unclassified, or another task's tab. Preserve existing signed-in Chrome sessions and never inspect or export session data.
+- Browser-capable automation must allocate the tab before launching its Codex task, pass the exact tab and ownership metadata to that task, and close it in a guaranteed cleanup path. If allocation fails, take no browser action and return a retryable failure.
+- The hourly Infrastructure sweep closes every non-anchor tab after 60 minutes without browser activity or an explicit touch.
 
 ## Chrome saved-password sign-in recovery
 
