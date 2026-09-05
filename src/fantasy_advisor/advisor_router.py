@@ -26,11 +26,12 @@ class RouteDecision:
 # the owner asks us to apply them to their team or league.
 _LEAGUE_STATE_PATTERN = re.compile(
     r"\b(?:sleeper|waivers?|free\s+agents?|available\s+players?|pickup|pick\s+up|"
-    r"drop|swap|replace|roster|squad|my\s+team|my\s+players?|los\s+blancos|"
+    r"drop|swap|replace|trade(?:s|d|ing)?|roster|squad|my\s+team|my\s+players?|los\s+blancos|"
     r"team\s+fit|fit\s+for\s+my|fantasy\s+points?|league\s+settings?|scoring|"
     r"gameweek|my\s+lineup|set\s+(?:my\s+)?lineup|captain|add\s+option|watchlist)\b",
     re.IGNORECASE,
 )
+_CODEX_REQUEST_PATTERN = re.compile(r"\bcodex\b", re.IGNORECASE)
 _NEWS_PATTERN = re.compile(
     r"\b(?:what\s+happened|news|deal|transfer|rumou?r|latest|report(?:ed)?|"
     r"announc(?:e|ed|ement)|club\s+statement|confirmed?)\b",
@@ -50,6 +51,8 @@ def route_interactive_request(
         return RouteDecision(AdvisorRoute.CODEX, "dedicated waiver analysis requires league data")
     if has_attachment:
         return RouteDecision(AdvisorRoute.CODEX, "attachment analysis stays on the local advisory path")
+    if _CODEX_REQUEST_PATTERN.search(question):
+        return RouteDecision(AdvisorRoute.CODEX, "owner explicitly requested the Codex league-analysis path")
     if _LEAGUE_STATE_PATTERN.search(question):
         return RouteDecision(AdvisorRoute.CODEX, "request depends on Sleeper, roster, or fantasy-league state")
     if _NEWS_PATTERN.search(question):

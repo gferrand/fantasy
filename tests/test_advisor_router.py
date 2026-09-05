@@ -14,6 +14,16 @@ class AdvisorRouterTests(unittest.TestCase):
         self.assertEqual(decision.route, AdvisorRoute.CODEX)
         self.assertIn("Sleeper", decision.reason)
 
+    def test_trade_questions_use_codex_with_league_data(self):
+        decision = route_interactive_request("Which midfielder can I trade Ajayi for?")
+        self.assertEqual(decision.route, AdvisorRoute.CODEX)
+        self.assertIn("Sleeper", decision.reason)
+
+    def test_explicit_codex_request_overrides_the_lightweight_web_path(self):
+        decision = route_interactive_request("Yes, please use a Codex task to get the data.")
+        self.assertEqual(decision.route, AdvisorRoute.CODEX)
+        self.assertIn("explicitly requested", decision.reason)
+
     def test_waivers_and_dedicated_waiver_command_stay_on_codex(self):
         self.assertEqual(
             route_interactive_request("Who are the best free agents on waivers?").route,
