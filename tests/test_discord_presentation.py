@@ -106,6 +106,29 @@ class DiscordPresentationTests(unittest.TestCase):
         self.assertNotIn("🟢", card)
         self.assertNotIn("🔴", card)
 
+    def test_watchlist_stats_card_sorts_players_by_total_points_descending(self):
+        low = WatchlistPlayer("1", "Low Scorer", "ARS", ("M",), "now")
+        missing = WatchlistPlayer("2", "Missing Scorer", "CHE", ("F",), "now")
+        high = WatchlistPlayer("3", "High Scorer", "LIV", ("F",), "now")
+        tied = WatchlistPlayer("4", "Tied Scorer", "MCI", ("D",), "now")
+        report = WatchlistStatsReport(
+            "2026",
+            3,
+            "now",
+            (
+                WatchlistStat(low, 4.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True),
+                WatchlistStat(missing, None, None, None, None, None, None, None, None, None, None, False),
+                WatchlistStat(high, 12.0, 2.0, 2.0, 180.0, None, None, None, None, None, None, True),
+                WatchlistStat(tied, 4.0, 2.0, 1.0, 100.0, None, None, None, None, None, None, True),
+            ),
+        )
+
+        card = watchlist_stats_card(report)
+
+        self.assertLess(card.index("High Scorer"), card.index("Low Scorer"))
+        self.assertLess(card.index("Low Scorer"), card.index("Tied Scorer"))
+        self.assertLess(card.index("Tied Scorer"), card.index("Missing Scorer"))
+
     def test_watchlist_stats_card_marks_player_specific_missing_history(self):
         player = WatchlistPlayer("1", "New Player", "ARS", ("F",), "now")
         report = WatchlistStatsReport(
