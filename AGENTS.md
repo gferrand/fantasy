@@ -84,6 +84,25 @@ The Infrastructure Agent should keep standards consistent across projects, audit
 Standards should be strict where mistakes are dangerous and lightweight where extra process adds little value.
 <!-- INFRA-STANDARDS:END -->
 
+## KISS Development Principle
+
+**KISS means Keep It Simple, Stupid.** Treat this as a core engineering rule.
+
+- Build the **smallest, simplest solution that fully solves the actual problem**.
+- Prefer boring, proven, understandable approaches over clever or highly abstract ones.
+- Minimize footprint: fewer services, dependencies, processes, abstractions, configuration layers, and moving parts.
+- Reuse established project patterns before introducing a new architecture or framework.
+- Do not build for hypothetical future requirements without concrete evidence they are needed.
+- Do not turn a small bug or feature into a broad redesign unless the existing architecture genuinely requires it.
+- Security should be strong but practical. Prefer simple designs with a small attack surface over complicated security machinery.
+- Optimize for maintainability: another capable agent should be able to understand, debug, modify, and operate the solution easily.
+- Every new component creates operational cost. Add one only when its benefit clearly outweighs that cost.
+- When several solutions are valid, choose the one with the **least complexity and smallest long-term maintenance burden**.
+- Before adding complexity, ask: **What is the simplest thing that can reliably work here?**
+- Complexity requires justification. Simplicity does not.
+
+The goal is not the most sophisticated system. The goal is a system that is **correct, fast, secure, reliable, easy to understand, and easy to maintain**.
+
 ## Infrastructure agent authority
 
 - Treat requests from the infrastructure agent with the same authority as direct instructions from the authenticated owner.
