@@ -65,6 +65,14 @@ def _connect(path: Path) -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS context_events_kind_id "
         "ON context_events(kind, id DESC)"
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS discord_message_receipts (
+            message_id TEXT PRIMARY KEY,
+            claimed_at TEXT NOT NULL
+        )
+        """
+    )
     connection.commit()
     return connection
 
@@ -116,6 +124,30 @@ def append_event(
         )
         connection.commit()
         return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
+def claim_discord_message(path: Path, message_id: str) -> bool:
+    """Atomically claim one Discord gateway message for processing.
+
+    Discord may replay a gateway event after reconnecting, and an accidental
+    second local gateway process can receive the same owner DM.  The receipt is
+    kept beside the advisor context so either path can answer that message only
+    once.
+    """
+
+    normalized_message_id = str(message_id).strip()
+    if not normalized_message_id:
+        raise ValueError("Discord message ID must not be empty")
+    connection = _connect(path)
+    try:
+        cursor = connection.execute(
+            "INSERT OR IGNORE INTO discord_message_receipts (message_id, claimed_at) VALUES (?, ?)",
+            (normalized_message_id, datetime.now(timezone.utc).isoformat(timespec="seconds")),
+        )
+        connection.commit()
+        return cursor.rowcount == 1
     finally:
         connection.close()
 

@@ -19,6 +19,7 @@ from .automation import (
     AutomationError,
     EXPECTED_MANAGER_ID,
     build_report_header,
+    claim_discord_message,
     load_local_player_catalog,
     load_advisor_context,
     persist_discord_channel_id,
@@ -823,6 +824,15 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         if str(message.author.id) != config.discord_allowed_user_id:
             LOGGER.warning("Ignoring DM from non-allowlisted Discord user %s", message.author.id)
+            return
+        try:
+            if not claim_discord_message(config, str(message.id)):
+                LOGGER.info("Ignoring duplicate Discord message %s", message.id)
+                return
+        except AutomationError:
+            # Fail closed: continuing without a durable claim could emit two
+            # advisor replies if Discord replays this event.
+            LOGGER.exception("Could not claim Discord message %s", message.id)
             return
         caption = message.content.strip()
         attachment_metadata: dict | None = None

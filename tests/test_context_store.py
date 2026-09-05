@@ -13,11 +13,27 @@ from fantasy_advisor.context_store import (
     DISCORD_USER_MESSAGE,
     SCHEDULED_REPORT,
     append_event,
+    claim_discord_message,
     build_context_packet,
 )
 
 
 class ContextStoreTests(unittest.TestCase):
+    def test_claim_discord_message_is_idempotent_and_persistent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "context.sqlite3"
+
+            self.assertTrue(claim_discord_message(database, "discord-message-123"))
+            self.assertFalse(claim_discord_message(database, "discord-message-123"))
+            self.assertTrue(claim_discord_message(database, "discord-message-456"))
+
+    def test_claim_discord_message_rejects_empty_ids(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "context.sqlite3"
+
+            with self.assertRaisesRegex(ValueError, "must not be empty"):
+                claim_discord_message(database, "  ")
+
     def test_packet_combines_recent_discord_turns_and_scheduled_reports(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "advisor_context.sqlite3"

@@ -24,7 +24,12 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from .context_store import SCHEDULED_REPORT, append_event, build_context_packet
+from .context_store import (
+    SCHEDULED_REPORT,
+    append_event,
+    build_context_packet,
+    claim_discord_message as claim_context_discord_message,
+)
 from .discord_presentation import scheduled_failure, scheduled_header
 from .player_catalog import (
     PlayerCatalogError,
@@ -1513,6 +1518,15 @@ def persist_advisor_context_event(
         )
     except Exception as exc:
         raise AutomationError(f"Could not persist advisor context: {exc}") from exc
+
+
+def claim_discord_message(config: AppConfig, message_id: str) -> bool:
+    """Claim one gateway event before any Discord reply is sent."""
+
+    try:
+        return claim_context_discord_message(advisor_context_file(config), message_id)
+    except Exception as exc:
+        raise AutomationError(f"Could not claim Discord message: {exc}") from exc
 
 
 def outbox_directory(config: AppConfig) -> Path:

@@ -102,6 +102,12 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 - Keep each test scoped to the owner-controlled DM, use non-sensitive content, avoid roster transactions and other external commitments, and clean up any temporary local test data. Visible test messages may remain in the owner DM unless the owner specifically asks to remove them.
 - If an external platform imposes a genuinely non-bypassable confirmation and no supported test transport can satisfy it, report that exact platform limitation. Never say that the owner has not authorized the test.
 
+## Discord web smoke-test procedure
+
+- Discord web is verified as available in the managed Fantasy Chrome workspace when the owner DM for Fantasy EPL Advisor is visible and authenticated.
+- For a narrowly scoped owner-DM smoke test, write the prompt in the Discord composer and submit it by sequentially entering a newline (`\n`) in that composer. The ordinary keyboard Enter dispatch is not reliable through the current automation layer.
+- Verify both the posted owner message and the advisor's visible reply, then close only the recorded project tab through the workspace CLI.
+
 ## Shared Chrome policy
 
 - Policy marker: `infrastructure-chrome-workspace-policy:v1`.
