@@ -24,9 +24,19 @@ from .trade_proposals import (
 
 
 ROTATION_HORIZON = 4
-MIN_PROJECTED_LINEUP_GAIN = 2.0
+MIN_PROJECTED_LINEUP_GAIN = 5.0
+MIN_INCOMING_MINUTES = 90.0
+MIN_INCOMING_STARTS = 1.0
+MIN_EXPECTED_MINUTES = 60.0
+MAX_TARGET_FIXTURE_DIFFICULTY = 3.0
+MIN_FIXTURE_ADVANTAGE = 0.15
 DIFFICULT_FIXTURE_THRESHOLD = 3.1
-EXCLUDED_NAMES = {"Mohamed Salah", "Leandro Trossard"}
+KNOWN_NON_EPL_TRANSFERS = {
+    "Mohamed Salah": "Trabzonspor",
+    "Leandro Trossard": "Beşiktaş",
+    "Guglielmo Vicario": "Juventus (loan for 2026/27)",
+}
+EXCLUDED_NAMES = set(KNOWN_NON_EPL_TRANSFERS)
 MEDICAL_HOLD_STATUSES = INACTIVE_INJURY_STATUSES | {"GTD", "QUESTIONABLE", "Q"}
 
 
@@ -63,6 +73,49 @@ def _exit_plan(player: Mapping[str, Any], extended: Mapping[str, Any]) -> str:
         if jump >= 0.75 and float(upcoming["difficulty"]) >= 3.4:
             return f"Reassess after {previous['opponent']}, before {upcoming['opponent']}."
     return "Reassess after the four-fixture window."
+
+
+def _is_reliable_incoming(player: Mapping[str, Any]) -> bool:
+    """Require a real current role and a favorable four-fixture window."""
+
+    return (
+        float(player.get("minutes") or 0.0) >= MIN_INCOMING_MINUTES
+        and float(player.get("starts") or 0.0) >= MIN_INCOMING_STARTS
+        and float(player.get("forecast_expected_minutes_per_fixture") or 0.0)
+        >= MIN_EXPECTED_MINUTES
+        and float(player.get("forecast_fixture_difficulty") or 5.0)
+        <= MAX_TARGET_FIXTURE_DIFFICULTY
+    )
+
+
+def _has_fixture_advantage(
+    incoming: Iterable[Mapping[str, Any]], outgoing: Iterable[Mapping[str, Any]]
+) -> bool:
+    incoming_rows = list(incoming)
+    outgoing_rows = list(outgoing)
+    if not incoming_rows or not outgoing_rows:
+        return False
+    incoming_difficulty = sum(
+        float(player.get("forecast_fixture_difficulty") or 5.0) for player in incoming_rows
+    ) / len(incoming_rows)
+    outgoing_difficulty = sum(
+        float(player.get("forecast_fixture_difficulty") or 3.0) for player in outgoing_rows
+    ) / len(outgoing_rows)
+    return incoming_difficulty <= outgoing_difficulty - MIN_FIXTURE_ADVANTAGE
+
+
+def _filter_rotation_trades(trades: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only material trades with reliable targets and easier fixtures."""
+
+    return [
+        trade
+        for trade in trades
+        if _projected_gain(trade) >= MIN_PROJECTED_LINEUP_GAIN
+        and all(_is_reliable_incoming(player) for player in trade.get("you_receive") or [])
+        and _has_fixture_advantage(
+            trade.get("you_receive") or [], trade.get("you_send") or []
+        )
+    ]
 
 
 def _protected_players(
@@ -113,9 +166,13 @@ def _available_options(
             continue
         if int(add.get("forecast_horizon_fixtures") or 0) < ROTATION_HORIZON:
             continue
+        if not _is_reliable_incoming(add):
+            continue
         for drop in owner_players:
             drop_id = str(drop.get("player_id"))
             if drop_id in protected:
+                continue
+            if not _has_fixture_advantage([add], [drop]):
                 continue
             after_players = [player for player in owner_players if str(player.get("player_id")) != drop_id]
             after_players.append(add)
@@ -132,7 +189,8 @@ def _available_options(
                     "add": {key: add.get(key) for key in (
                         "player_id", "name", "club", "positions", "injury_status", "minutes",
                         "starts", "custom_points_per_90", "projected_horizon_points",
-                        "forecast_fixture_difficulty", "forecast_next_fixtures",
+                        "forecast_expected_minutes_per_fixture", "forecast_fixture_difficulty",
+                        "forecast_next_fixtures",
                     )},
                     "drop": {key: drop.get(key) for key in (
                         "player_id", "name", "club", "positions", "minutes",
@@ -250,6 +308,7 @@ def load_rotation_context(
         protected_player_ids=protected,
         limit=5,
     )
+    trades = _filter_rotation_trades(trades)
     for trade in trades:
         trade["kind"] = "trade"
         for player in trade["you_receive"]:
@@ -273,6 +332,7 @@ def load_rotation_context(
             "Protected players are the union of the best current XI, best projected four-fixture XI, "
             "and medical holds. They are excluded from all outgoing rotation moves."
         ),
+        "known_non_epl_transfers": KNOWN_NON_EPL_TRANSFERS,
         "protected_players": protected_rows,
         "difficult_core_holds": difficult_holds,
         "rotation_eligible_players": [
@@ -287,6 +347,14 @@ def load_rotation_context(
             "read_only": True,
             "max_moves": 5,
             "minimum_projected_lineup_gain": MIN_PROJECTED_LINEUP_GAIN,
+            "incoming_role_gate": (
+                f"At least {MIN_INCOMING_STARTS:.0f} start, {MIN_INCOMING_MINUTES:.0f} current minutes, "
+                f"and {MIN_EXPECTED_MINUTES:.0f} expected minutes per fixture."
+            ),
+            "fixture_gate": (
+                f"Incoming difficulty at most {MAX_TARGET_FIXTURE_DIFFICULTY:.1f} and at least "
+                f"{MIN_FIXTURE_ADVANTAGE:.2f} easier than the outgoing player/package."
+            ),
             "availability": "Sleeper public data cannot distinguish an immediate Add from waivers.",
             "transactions": "No Sleeper add, waiver, drop, or trade was made or simulated.",
         },

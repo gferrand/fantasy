@@ -1479,10 +1479,21 @@ or drop candidates. Do not override this rule with outside opinion.
 Research only the players in `recommended_moves` and material difficult core
 holds. Use current {context.get('season')}/{str(int(context.get('season', 0)) + 1)[-2:]}
 Premier League evidence to verify club, role, minutes trend, injury status, and
-likely availability. Prefer current fantasy-football analysts, then official
-club/league sources and reputable reporting for factual corroboration. Use
-direct links. If a finalist cannot be verified for the active Premier League
-season, clearly downgrade or reject it; never substitute another player.
+likely availability. For every incoming player, first search their name with
+`transfer`, `current club`, and the active season. Current official club squad,
+official transfer, or official Premier League registration evidence is required
+before the move may appear. Then verify the current role with the newest dated
+evidence. An older squad, shirt-number, pre-season, injury-return, or role story
+must never override a newer transfer or current-season squad source.
+
+`known_non_epl_transfers` is binding negative evidence. Those players are not
+current Premier League players and must not be described as current teammates,
+starters, competition, or role blockers. If sources conflict, current official
+transfer and current official squad evidence wins. Reject the entire move when
+current EPL club or current role cannot be verified. Do not print rejected moves
+as `do not advance` candidates: omit them. Never substitute another player.
+An honest no-move/hold report is a successful result and is preferable to a
+marginal, stale, speculative, or weakly sourced recommendation.
 
 Write a concise phone-first report with no Markdown table or code block. Use:
 
