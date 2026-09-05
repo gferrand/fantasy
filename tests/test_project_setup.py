@@ -56,7 +56,7 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("Los Blancos", context)
         self.assertIn("1127171221277331456", context)
 
-    def test_shared_chrome_instructions_are_only_create_and_close(self):
+    def test_shared_chrome_instructions_and_discord_login_are_current(self):
         instructions = (ROOT / "AGENTS.md").read_text()
         self.assertIn('version="2026-09-05.2"', instructions)
         self.assertIn(
@@ -74,7 +74,11 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertEqual(instructions.count("infra-opt workspace"), 2)
         self.assertNotIn("workspace touch", instructions)
         project_rules = instructions.split("<!-- INFRA-STANDARDS:END -->", 1)[1]
-        self.assertNotIn("Chrome", project_rules)
+        self.assertNotIn("infra-opt workspace", project_rules)
+        self.assertIn("## Discord saved-password login procedure", project_rules)
+        self.assertIn("focus only the first field", project_rules)
+        self.assertIn("Select the first saved credential option", project_rules)
+        self.assertIn("Do not inspect, read, copy, reveal, export", project_rules)
 
 
     def test_context_contains_current_club_safety_rules(self):
