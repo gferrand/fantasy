@@ -59,6 +59,9 @@ FANTASY_CODEX_MODEL = "gpt-5.6-luna"
 FANTASY_CODEX_REASONING_EFFORT = "medium"
 FANTASY_WEB_MODEL = "gpt-5.6-terra"
 FANTASY_WEB_REASONING_EFFORT = "low"
+BROWSER_PROJECT = "fantasy"
+BROWSER_COMMAND_TIMEOUT_SECONDS = 50
+BROWSER_TOUCH_INTERVAL_SECONDS = 45 * 60
 
 
 class AutomationError(RuntimeError):
@@ -211,6 +214,12 @@ class CodexResult:
 
 
 @dataclass(frozen=True)
+class BrowserTab:
+    agent_id: str
+    tab_id: int
+
+
+@dataclass(frozen=True)
 class WebResult:
     text: str
     response_id: str | None
@@ -221,12 +230,8 @@ class CodexRunError(AutomationError):
     """Raised when a Codex task exits unsuccessfully or emits no final text."""
 
 
-class BrowserWorkspaceBlocked(CodexRunError):
-    """A verified Fantasy browser workspace is not currently available.
-
-    Callers may retry this failure later.  It deliberately has no local,
-    shared-executor, General-window, or metadata-only Codex fallback.
-    """
+class BrowserTabUnavailable(CodexRunError):
+    """Infrastructure could not allocate a task-owned Fantasy browser tab."""
 
     retryable = True
 
@@ -284,12 +289,53 @@ class CodexRunner:
             raise CodexRunError(f"Codex timeout for {label!r} must be positive")
         started = time.monotonic()
         if browser_capable:
-            return self._run_in_fantasy_browser_workspace(
-                prompt,
-                label=label,
-                timeout=timeout,
-                started=started,
-            )
+            tab = self._create_browser_tab(label)
+            failure: BaseException | None = None
+            result: CodexResult | None = None
+            try:
+                result = self._run_local_codex(
+                    self._browser_task_prompt(prompt, tab),
+                    label=label,
+                    timeout=timeout,
+                    started=started,
+                    ephemeral=ephemeral,
+                    browser_tab=tab,
+                )
+            except BaseException as exc:
+                failure = exc
+            try:
+                self._close_browser_tab(tab)
+            except AutomationError as cleanup_error:
+                if failure is not None:
+                    raise CodexRunError(
+                        f"Codex task {label!r} failed and its browser tab could not be closed: "
+                        f"{cleanup_error}"
+                    ) from failure
+                raise
+            if failure is not None:
+                raise failure
+            if result is None:  # pragma: no cover - defensive invariant
+                raise CodexRunError(f"Codex task {label!r} did not produce a result")
+            return result
+        return self._run_local_codex(
+            prompt,
+            label=label,
+            timeout=timeout,
+            started=started,
+            ephemeral=ephemeral,
+            browser_tab=None,
+        )
+
+    def _run_local_codex(
+        self,
+        prompt: str,
+        *,
+        label: str,
+        timeout: int,
+        started: float,
+        ephemeral: bool | None,
+        browser_tab: BrowserTab | None,
+    ) -> CodexResult:
         with tempfile.TemporaryDirectory(prefix="fantasy-codex-") as temporary:
             temporary_path = Path(temporary)
             output_file = temporary_path / "last-message.txt"
@@ -305,21 +351,17 @@ class CodexRunner:
                     start_new_session=True,
                 )
                 try:
-                    events, diagnostics = process.communicate(input=prompt, timeout=timeout)
-                except subprocess.TimeoutExpired as exc:
-                    # Codex can give its code-mode host a separate process
-                    # group. Capture descendants before terminating the parent
-                    # so a timeout cannot leave that helper behind.
-                    descendant_pids = descendant_process_ids(process.pid)
-                    terminate_process_tree(process.pid, descendant_pids, signal.SIGTERM)
-                    try:
-                        events, diagnostics = process.communicate(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        terminate_process_tree(process.pid, descendant_pids, signal.SIGKILL)
-                        events, diagnostics = process.communicate()
-                    raise CodexRunError(
-                        f"Codex task {label!r} exceeded {timeout}s"
-                    ) from exc
+                    events, diagnostics = self._communicate_with_tab_heartbeat(
+                        process,
+                        prompt,
+                        label=label,
+                        timeout=timeout,
+                        browser_tab=browser_tab,
+                    )
+                except AutomationError:
+                    if process.poll() is None:
+                        self._terminate_process(process)
+                    raise
             except FileNotFoundError as exc:
                 raise CodexRunError(
                     f"Codex executable not found: {self.config.codex_bin}"
@@ -344,50 +386,167 @@ class CodexRunner:
             )
 
     @staticmethod
-    def browser_command() -> list[str]:
-        """The only browser-capable executor for Fantasy requests."""
-        return ["infra-opt", "workspace", "browser", "--project", "fantasy"]
+    def _browser_agent_id(label: str) -> str:
+        safe_label = re.sub(r"[^a-z0-9]+", "-", label.casefold()).strip("-")[:32] or "task"
+        return f"fantasy-{safe_label}-{os.getpid()}-{time.monotonic_ns()}"
 
-    def _run_in_fantasy_browser_workspace(
-        self, prompt: str, *, label: str, timeout: int, started: float
-    ) -> CodexResult:
-        """Dispatch the complete request to Infrastructure's verified broker.
+    @staticmethod
+    def _browser_create_command(agent_id: str, purpose: str) -> list[str]:
+        return [
+            "infra-opt",
+            "workspace",
+            "create",
+            "--project",
+            BROWSER_PROJECT,
+            "--agent-id",
+            agent_id,
+            "--purpose",
+            purpose,
+        ]
 
-        The broker owns workspace preflight and returns a blocked status if it
-        cannot prove the Fantasy window.  Do not add a fallback here: doing so
-        would permit a browser request to escape project isolation.
-        """
+    @staticmethod
+    def _browser_touch_command(tab: BrowserTab) -> list[str]:
+        return [
+            "infra-opt",
+            "workspace",
+            "touch",
+            "--project",
+            BROWSER_PROJECT,
+            "--agent-id",
+            tab.agent_id,
+            "--tab-id",
+            str(tab.tab_id),
+        ]
+
+    @staticmethod
+    def _browser_close_command(tab: BrowserTab) -> list[str]:
+        return [
+            "infra-opt",
+            "workspace",
+            "close",
+            "--project",
+            BROWSER_PROJECT,
+            "--agent-id",
+            tab.agent_id,
+            "--tab-id",
+            str(tab.tab_id),
+        ]
+
+    def _workspace_action(self, command: list[str], *, action: str) -> dict[str, Any]:
         try:
             completed = subprocess.run(
-                self.browser_command(),
-                input=prompt,
+                command,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 cwd=self.config.repo_root,
-                timeout=timeout,
+                timeout=BROWSER_COMMAND_TIMEOUT_SECONDS,
                 check=False,
             )
         except FileNotFoundError as exc:
-            raise CodexRunError("infra-opt workspace browser is not installed") from exc
+            raise BrowserTabUnavailable("infra-opt is not installed") from exc
         except subprocess.TimeoutExpired as exc:
-            raise CodexRunError(f"Browser task {label!r} exceeded {timeout}s") from exc
+            raise BrowserTabUnavailable(f"Browser tab {action} timed out") from exc
+        if completed.returncode != 0:
+            detail = completed.stderr.strip()[-1000:] or "no command result"
+            raise BrowserTabUnavailable(f"Browser tab {action} failed: {detail}")
         try:
             body = json.loads(completed.stdout)
         except json.JSONDecodeError as exc:
-            detail = completed.stderr.strip()[-1000:] or "no broker result"
-            raise CodexRunError(f"Browser broker could not complete {label!r}: {detail}") from exc
-        if body.get("status") == "blocked":
-            reason = str(body.get("reason") or "workspace_unverified")
-            raise BrowserWorkspaceBlocked(
-                f"Browser workspace blocked for {label!r}; retryable: {reason}"
-            )
-        if body.get("status") != "completed":
-            raise CodexRunError(f"Browser broker failed {label!r}")
-        text = str(body.get("result") or "").strip()
-        if not text:
-            raise CodexRunError(f"Browser broker completed {label!r} without a final message")
-        return CodexResult(text=text, thread_id=None, elapsed_seconds=round(time.monotonic() - started, 2))
+            raise BrowserTabUnavailable(f"Browser tab {action} returned invalid JSON") from exc
+        if not isinstance(body, dict):
+            raise BrowserTabUnavailable(f"Browser tab {action} returned an invalid result")
+        return body
+
+    def _create_browser_tab(self, label: str) -> BrowserTab:
+        agent_id = self._browser_agent_id(label)
+        purpose = f"Fantasy {re.sub(r'[^A-Za-z0-9 ._-]+', ' ', label).strip() or 'advisor'} task"[:120]
+        body = self._workspace_action(
+            self._browser_create_command(agent_id, purpose),
+            action="allocation",
+        )
+        try:
+            tab_id = int(body.get("tab_id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise BrowserTabUnavailable("Browser tab allocation returned an invalid tab ID") from exc
+        if body.get("status") != "created" or tab_id <= 0:
+            raise BrowserTabUnavailable("Browser tab allocation was not confirmed")
+        return BrowserTab(agent_id=agent_id, tab_id=tab_id)
+
+    def _touch_browser_tab(self, tab: BrowserTab) -> None:
+        body = self._workspace_action(self._browser_touch_command(tab), action="touch")
+        try:
+            confirmed_tab_id = int(body.get("tab_id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise BrowserTabUnavailable("Browser tab touch returned an invalid tab ID") from exc
+        if body.get("status") != "touched" or confirmed_tab_id != tab.tab_id:
+            raise BrowserTabUnavailable("Browser tab touch was not confirmed")
+
+    def _close_browser_tab(self, tab: BrowserTab) -> None:
+        body = self._workspace_action(self._browser_close_command(tab), action="cleanup")
+        try:
+            confirmed_tab_id = int(body.get("tab_id") or 0)
+        except (TypeError, ValueError) as exc:
+            raise BrowserTabUnavailable("Browser tab cleanup returned an invalid tab ID") from exc
+        if body.get("status") != "closed" or confirmed_tab_id != tab.tab_id:
+            raise BrowserTabUnavailable("Browser tab cleanup was not confirmed")
+
+    @staticmethod
+    def _browser_task_prompt(prompt: str, tab: BrowserTab) -> str:
+        return f"""Browser ownership for this task:
+- Use Chrome tab ID {tab.tab_id}, owned by project fantasy and agent ID {tab.agent_id}.
+- Attach directly to that existing Chrome tab on the first browser-control call.
+- Do not create, reuse, switch to, move, touch, or close any other tab or window.
+- The caller owns lifecycle cleanup for this exact tab after the task finishes.
+
+{prompt}"""
+
+    def _communicate_with_tab_heartbeat(
+        self,
+        process: subprocess.Popen[str],
+        prompt: str,
+        *,
+        label: str,
+        timeout: int,
+        browser_tab: BrowserTab | None,
+    ) -> tuple[str, str]:
+        deadline = time.monotonic() + timeout
+        next_touch = (
+            time.monotonic() + BROWSER_TOUCH_INTERVAL_SECONDS if browser_tab is not None else None
+        )
+        pending_input: str | None = prompt
+        while True:
+            now = time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                self._terminate_process(process)
+                raise CodexRunError(f"Codex task {label!r} exceeded {timeout}s")
+            wait_seconds = remaining
+            if next_touch is not None:
+                wait_seconds = min(wait_seconds, max(0.1, next_touch - now))
+            try:
+                return process.communicate(input=pending_input, timeout=wait_seconds)
+            except subprocess.TimeoutExpired as exc:
+                pending_input = None
+                now = time.monotonic()
+                if now >= deadline:
+                    self._terminate_process(process)
+                    raise CodexRunError(f"Codex task {label!r} exceeded {timeout}s") from exc
+                if browser_tab is not None and next_touch is not None and now >= next_touch:
+                    self._touch_browser_tab(browser_tab)
+                    next_touch = time.monotonic() + BROWSER_TOUCH_INTERVAL_SECONDS
+
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen[str]) -> tuple[str, str]:
+        # Codex can give its code-mode host a separate process group. Capture
+        # descendants before terminating the parent so no helper is orphaned.
+        descendant_pids = descendant_process_ids(process.pid)
+        terminate_process_tree(process.pid, descendant_pids, signal.SIGTERM)
+        try:
+            return process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            terminate_process_tree(process.pid, descendant_pids, signal.SIGKILL)
+            return process.communicate()
 
 
 def load_env_file(path: Path) -> None:

@@ -66,14 +66,19 @@ ordered chunks, avoiding both truncation and file attachments.
 
 ### 5. Conversation layer
 
-Browser-capable recurring and Discord-request analysis streams its complete
-request on standard input to `infra-opt workspace browser --project fantasy`.
-The Infrastructure broker may proceed only after it proves the managed Fantasy
-window. A failed proof is a clean retryable blocked result: no generic/shared
-executor, Nettie, `infra-opt workspace current`, General/manual window, other
-project, or metadata-only `codex exec` search fallback is allowed. Once the
-window is verified, the request may use its required websites without a website
-allowlist. It records and closes only its own project tabs at completion.
+Browser-capable recurring and Discord-request analysis first synchronously
+allocates one recorded tab with `infra-opt workspace create --project fantasy
+--agent-id TASK_ID --purpose SAFE_PURPOSE`. The runner passes the confirmed tab
+ID and agent ID to the local `codex exec` task, which may use only that exact tab
+in Infrastructure's single shared normal Chrome window. Allocation failure is
+retryable and prevents the Codex process from starting.
+
+For a long-running task, the runner refreshes the exact ownership record with
+`infra-opt workspace touch --project fantasy --agent-id TASK_ID --tab-id TAB_ID`
+before one hour of inactivity. It closes that same tab in a guaranteed cleanup
+path with `infra-opt workspace close --project fantasy --agent-id TASK_ID
+--tab-id TAB_ID`, including after a failure or timeout. It never operates on an
+owner, manual, unclassified, or another task's tab.
 
 Legitimate non-browser local execution remains available for work that does not
 need browser capability. Stable league context is embedded in task packets so
