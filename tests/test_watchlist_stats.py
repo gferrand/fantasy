@@ -103,6 +103,80 @@ class WatchlistStatsTests(unittest.TestCase):
             + [f"{STATS_BASE}/clubsoccer:epl/2026/{week}?season_type=regular" for week in range(1, 7)],
         )
 
+    def test_previous_season_points_per_minute_compares_at_display_precision(self):
+        state_url = f"{API_BASE}/state/clubsoccer:epl"
+        stats_url = f"{STATS_BASE}/clubsoccer:epl/2026?season_type=regular"
+        previous_url = f"{STATS_BASE}/clubsoccer:epl/2025?season_type=regular"
+        client = _SleeperClient(
+            {
+                state_url: {"season": "2026", "display_week": 3},
+                stats_url: [
+                    {"player_id": "up", "stats": {"pts_std": 12, "gp": 1, "min": 90}},
+                    {"player_id": "down", "stats": {"pts_std": 4.5, "gp": 1, "min": 90}},
+                    {"player_id": "flat", "stats": {"pts_std": 9.36, "gp": 1, "min": 90}},
+                    {"player_id": "new", "stats": {"pts_std": 8, "gp": 1, "min": 90}},
+                    {"player_id": "zero", "stats": {"pts_std": 6, "gp": 1, "min": 90}},
+                ],
+                previous_url: [
+                    {"player_id": "up", "stats": {"pts_std": 9, "min": 90}},
+                    {"player_id": "down", "stats": {"pts_std": 9, "min": 90}},
+                    {"player_id": "flat", "stats": {"pts_std": 8.64, "min": 90}},
+                    {"player_id": "missing", "stats": {"pts_std": 7.2, "min": 90}},
+                    {"player_id": "zero", "stats": {"pts_std": 9, "min": 0}},
+                ],
+            }
+        )
+        watched = tuple(
+            WatchlistPlayer(player_id, player_id.title(), "ARS", ("M",), "now")
+            for player_id in ("up", "down", "flat", "new", "missing", "zero")
+        )
+
+        report = load_current_watchlist_stats(
+            watched, client=client, include_previous_season=True
+        )
+
+        self.assertEqual(client.urls, [state_url, stats_url, previous_url])
+        self.assertEqual(report.previous_season, "2025")
+        self.assertIsNone(report.previous_season_unavailable_reason)
+        by_id = {entry.player.player_id: entry for entry in report.entries}
+        self.assertEqual(by_id["up"].previous_season_points_per_minute, 0.1)
+        self.assertEqual(by_id["up"].points_per_minute_season_trend, "up")
+        self.assertEqual(by_id["down"].points_per_minute_season_trend, "down")
+        self.assertEqual(by_id["flat"].points_per_minute_season_trend, "flat")
+        self.assertIsNone(by_id["new"].previous_season_points_per_minute)
+        self.assertIsNone(by_id["zero"].previous_season_points_per_minute)
+        self.assertFalse(by_id["missing"].found)
+        self.assertEqual(by_id["missing"].previous_season_points_per_minute, 0.08)
+        self.assertIsNone(by_id["missing"].points_per_minute_season_trend)
+
+    def test_previous_season_failure_or_malformed_payload_preserves_current_stats(self):
+        state_url = f"{API_BASE}/state/clubsoccer:epl"
+        stats_url = f"{STATS_BASE}/clubsoccer:epl/2026?season_type=regular"
+        previous_url = f"{STATS_BASE}/clubsoccer:epl/2025?season_type=regular"
+        current_rows = [{"player_id": "1", "stats": {"pts_std": 9, "gp": 1, "min": 90}}]
+
+        for historical_response in (SleeperDataError("offline"), {}):
+            with self.subTest(historical_response=historical_response):
+                client = _SleeperClient(
+                    {
+                        state_url: {"season": "2026", "display_week": 3},
+                        stats_url: current_rows,
+                        previous_url: historical_response,
+                    }
+                )
+
+                report = load_current_watchlist_stats(
+                    (WatchlistPlayer("1", "Player", "ARS", ("M",), "now"),),
+                    client=client,
+                    include_previous_season=True,
+                )
+
+                self.assertEqual(report.entries[0].points_per_minute, 0.1)
+                self.assertEqual(report.previous_season, "2025")
+                self.assertIn(
+                    "temporarily unavailable", report.previous_season_unavailable_reason
+                )
+
     def test_early_season_does_not_fetch_incomplete_trend_window(self):
         state_url = f"{API_BASE}/state/clubsoccer:epl"
         stats_url = f"{STATS_BASE}/clubsoccer:epl/2026?season_type=regular"

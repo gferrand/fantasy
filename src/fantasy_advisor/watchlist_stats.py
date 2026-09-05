@@ -36,6 +36,8 @@ class WatchlistStat:
     points_per_minute_trend: TrendDirection | None = None
     points_per_game_trend: TrendDirection | None = None
     minutes_per_game_trend: TrendDirection | None = None
+    previous_season_points_per_minute: float | None = None
+    points_per_minute_season_trend: TrendDirection | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,8 @@ class WatchlistStatsReport:
     entries: tuple[WatchlistStat, ...]
     trend_weeks: tuple[tuple[int, ...], tuple[int, ...]] | None = None
     trend_unavailable_reason: str | None = None
+    previous_season: str | None = None
+    previous_season_unavailable_reason: str | None = None
 
 
 def _number(mapping: Mapping[str, Any], key: str) -> float | None:
@@ -122,6 +126,15 @@ def _window_ratio(
     return _ratio(numerator, denominator)
 
 
+def _season_points_per_minute(row: object) -> float | None:
+    if not isinstance(row, Mapping):
+        return None
+    stats = row.get("stats")
+    if not isinstance(stats, Mapping):
+        return None
+    return _ratio(_number(stats, "pts_std"), _number(stats, "min"))
+
+
 def _trend(
     previous: float | None,
     recent: float | None,
@@ -143,11 +156,27 @@ def _player_stat(
     player: WatchlistPlayer,
     row: object,
     *,
+    previous_season_row: object = None,
     previous_rows: Iterable[object] = (),
     recent_rows: Iterable[object] = (),
 ) -> WatchlistStat:
+    previous_season_points_per_minute = _season_points_per_minute(previous_season_row)
     if not isinstance(row, Mapping):
-        return WatchlistStat(player, None, None, None, None, None, None, None, None, None, None, False)
+        return WatchlistStat(
+            player,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            False,
+            previous_season_points_per_minute=previous_season_points_per_minute,
+        )
     stats = row.get("stats")
     stats = stats if isinstance(stats, Mapping) else {}
     metadata = row.get("player")
@@ -156,6 +185,7 @@ def _player_stat(
     points = _number(stats, "pts_std")
     games = _number(stats, "gp")
     minutes = _number(stats, "min")
+    points_per_minute = _ratio(points, minutes)
     previous_rows = tuple(previous_rows)
     recent_rows = tuple(recent_rows)
     previous_points_per_minute = _window_ratio(
@@ -189,7 +219,7 @@ def _player_stat(
         injury_status=injury_status,
         updated_at=_timestamp(row.get("updated_at") or row.get("last_modified")),
         found=True,
-        points_per_minute=_ratio(points, minutes),
+        points_per_minute=points_per_minute,
         points_per_game=_ratio(points, games),
         minutes_per_game=_ratio(minutes, games),
         points_per_minute_trend=_trend(
@@ -197,6 +227,10 @@ def _player_stat(
         ),
         points_per_game_trend=_trend(previous_points_per_game, recent_points_per_game, precision=1),
         minutes_per_game_trend=_trend(previous_minutes_per_game, recent_minutes_per_game, precision=1),
+        previous_season_points_per_minute=previous_season_points_per_minute,
+        points_per_minute_season_trend=_trend(
+            previous_season_points_per_minute, points_per_minute, precision=2
+        ),
     )
 
 
@@ -206,6 +240,7 @@ def load_current_watchlist_stats(
     client: SleeperClient | None = None,
     retrieved_at: str | None = None,
     include_trends: bool = False,
+    include_previous_season: bool = False,
 ) -> WatchlistStatsReport:
     """Fetch the current Sleeper season once and return stats for saved IDs.
 
@@ -222,6 +257,22 @@ def load_current_watchlist_stats(
     trend_weeks: tuple[tuple[int, ...], tuple[int, ...]] | None = None
     weekly_rows: dict[int, object] | None = None
     trend_unavailable_reason: str | None = None
+    previous_season: str | None = None
+    previous_season_rows: list[object] | None = None
+    previous_season_unavailable_reason: str | None = None
+    if include_previous_season:
+        previous_season = str(int(season) - 1)
+        try:
+            fetched_previous_season_rows = sleeper.get_json(
+                f"{STATS_BASE}/clubsoccer:epl/{previous_season}?season_type=regular"
+            )
+            if not isinstance(fetched_previous_season_rows, list):
+                raise SleeperDataError("Sleeper previous-season EPL stats did not return an array")
+            previous_season_rows = fetched_previous_season_rows
+        except SleeperDataError:
+            previous_season_unavailable_reason = (
+                "Sleeper last-season Pts/min comparison is temporarily unavailable."
+            )
     if include_trends:
         last_completed_week = (display_week - 1) if display_week is not None else 0
         if last_completed_week < TREND_WINDOW_SIZE * 2:
@@ -257,6 +308,9 @@ def load_current_watchlist_stats(
         weekly_rows=weekly_rows,
         trend_weeks=trend_weeks,
         trend_unavailable_reason=trend_unavailable_reason,
+        previous_season=previous_season,
+        previous_season_rows=previous_season_rows,
+        previous_season_unavailable_reason=previous_season_unavailable_reason,
     )
 
 
@@ -269,6 +323,9 @@ def build_watchlist_stats_report(
     weekly_rows: Mapping[int, object] | None = None,
     trend_weeks: tuple[tuple[int, ...], tuple[int, ...]] | None = None,
     trend_unavailable_reason: str | None = None,
+    previous_season: str | None = None,
+    previous_season_rows: object = None,
+    previous_season_unavailable_reason: str | None = None,
 ) -> WatchlistStatsReport:
     """Build a watchlist report from already-fetched current Sleeper payloads."""
 
@@ -277,6 +334,9 @@ def build_watchlist_stats_report(
     if not isinstance(rows, list):
         raise SleeperDataError("Sleeper current EPL stats did not return an array")
     by_id = _rows_by_player(rows)
+    previous_season_by_id = (
+        _rows_by_player(previous_season_rows) if isinstance(previous_season_rows, list) else {}
+    )
     previous_rows: tuple[object, ...] = ()
     recent_rows: tuple[object, ...] = ()
     if trend_weeks is not None and weekly_rows is not None:
@@ -292,6 +352,7 @@ def build_watchlist_stats_report(
             _player_stat(
                 player,
                 by_id.get(player.player_id),
+                previous_season_row=previous_season_by_id.get(player.player_id),
                 previous_rows=previous_rows,
                 recent_rows=recent_rows,
             )
@@ -299,4 +360,6 @@ def build_watchlist_stats_report(
         ),
         trend_weeks=trend_weeks,
         trend_unavailable_reason=trend_unavailable_reason,
+        previous_season=previous_season,
+        previous_season_unavailable_reason=previous_season_unavailable_reason,
     )

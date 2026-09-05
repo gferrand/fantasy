@@ -129,6 +129,70 @@ class DiscordPresentationTests(unittest.TestCase):
         self.assertLess(card.index("Low Scorer"), card.index("Tied Scorer"))
         self.assertLess(card.index("Tied Scorer"), card.index("Missing Scorer"))
 
+    def test_watchlist_stats_card_shows_previous_season_performance(self):
+        up = WatchlistPlayer("1", "Up Player", "ARS", ("M",), "now")
+        down = WatchlistPlayer("2", "Down Player", "CHE", ("F",), "now")
+        flat = WatchlistPlayer("3", "Flat Player", "LIV", ("D",), "now")
+        new = WatchlistPlayer("4", "New Player", "HUL", ("M",), "now")
+        missing = WatchlistPlayer("5", "Missing Player", "CRY", ("F",), "now")
+        report = WatchlistStatsReport(
+            "2026",
+            3,
+            "now",
+            (
+                WatchlistStat(
+                    up, 12.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True,
+                    previous_season_points_per_minute=0.1,
+                    points_per_minute_season_trend="up",
+                ),
+                WatchlistStat(
+                    down, 5.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True,
+                    previous_season_points_per_minute=0.1,
+                    points_per_minute_season_trend="down",
+                ),
+                WatchlistStat(
+                    flat, 9.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True,
+                    previous_season_points_per_minute=0.1,
+                    points_per_minute_season_trend="flat",
+                ),
+                WatchlistStat(new, 8.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True),
+                WatchlistStat(
+                    missing, None, None, None, None, None, None, None, None, None, None, False,
+                    previous_season_points_per_minute=0.08,
+                ),
+            ),
+            previous_season="2025",
+        )
+
+        card = watchlist_stats_card(report)
+
+        self.assertIn("Last season (2025) Pts/min 0.10 · This season 🟢⬆️ overperforming", card)
+        self.assertIn("Last season (2025) Pts/min 0.10 · This season 🔴⬇️ underperforming", card)
+        self.assertIn("Last season (2025) Pts/min 0.10 · This season ➖ in line", card)
+        self.assertIn("Last season (2025) Pts/min — · no EPL minutes", card)
+        self.assertIn(
+            "Last season (2025) Pts/min 0.08 · This season comparison unavailable",
+            card,
+        )
+
+    def test_watchlist_stats_card_reports_previous_season_fetch_failure_once(self):
+        player = WatchlistPlayer("1", "Player", "ARS", ("M",), "now")
+        report = WatchlistStatsReport(
+            "2026",
+            3,
+            "now",
+            (WatchlistStat(player, 9.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True),),
+            previous_season="2025",
+            previous_season_unavailable_reason=(
+                "Sleeper last-season Pts/min comparison is temporarily unavailable."
+            ),
+        )
+
+        card = watchlist_stats_card(report)
+
+        self.assertEqual(card.count("last-season Pts/min comparison is temporarily unavailable"), 1)
+        self.assertNotIn("Last season (2025) Pts/min", card)
+
     def test_watchlist_stats_card_marks_player_specific_missing_history(self):
         player = WatchlistPlayer("1", "New Player", "ARS", ("F",), "now")
         report = WatchlistStatsReport(
