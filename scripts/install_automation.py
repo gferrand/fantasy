@@ -25,6 +25,48 @@ RUNTIME_ROOT = Path.home() / "Library" / "Application Support" / "FantasyAdvisor
 AGENT_PREFIX = "com.ginoferrand.fantasy"
 
 
+def running_fantasy_discord_containers() -> tuple[str, ...]:
+    """Return running Compose Discord services that can race this listener."""
+
+    if shutil.which("docker") is None:
+        return ()
+    result = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.service=discord",
+            "--format",
+            '{{.Names}}\t{{.Label "com.docker.compose.project"}}',
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        return ()
+    matches: list[str] = []
+    for line in result.stdout.splitlines():
+        name, _, project = line.partition("\t")
+        if "fantasy" in name.lower() or "fantasy" in project.lower():
+            matches.append(name)
+    return tuple(matches)
+
+
+def seed_runtime_automation_data(source_data: Path, runtime_data: Path) -> bool:
+    """Seed mutable local state once without overwriting an existing runtime."""
+
+    source = source_data / "automation"
+    destination = runtime_data / "automation"
+    if destination.exists():
+        return False
+    if source.exists():
+        shutil.copytree(source, destination, symlinks=True)
+        return True
+    destination.mkdir(parents=True, exist_ok=True)
+    return False
+
+
 def task_registry(repo_root: Path) -> tuple[Any, ...]:
     sys.path.insert(0, str(repo_root / "src"))
     from fantasy_advisor.automation import load_registry
@@ -144,6 +186,7 @@ def sync_runtime(repo_root: Path = ROOT, *, runtime_root: Path = RUNTIME_ROOT) -
     source_data = repo_root / "data"
     runtime_data = runtime_root / "data"
     runtime_data.mkdir(parents=True, exist_ok=True)
+    seed_runtime_automation_data(source_data, runtime_data)
     for entry in source_data.iterdir():
         if entry.name == "automation":
             continue
@@ -240,6 +283,13 @@ def main(argv: list[str] | None = None) -> int:
         config = AppConfig.from_environment(repo_root=ROOT)
         config.require_discord()
         config.require_scheduled_discord()
+        duplicate_containers = running_fantasy_discord_containers()
+        if duplicate_containers:
+            names = ", ".join(duplicate_containers)
+            raise RuntimeError(
+                "Refusing to start a second Fantasy Discord listener while these Docker "
+                f"containers are running: {names}. Stop the duplicate listener first."
+            )
         runtime_root = sync_runtime(ROOT)
         definitions = agent_definitions(
             python=runtime_root / ".venv" / "bin" / "python",
