@@ -23,6 +23,8 @@ The nightly recap task is active in ChatGPT Scheduled Tasks at 10:00 PM Eastern.
 The private Discord advisor includes `/injury opportunities`, which scans every
 active Sleeper EPL player marked Out or GTD/Questionable and reports current,
 source-backed recovery outlooks plus roster-aware playing-time beneficiaries.
+Long reports are delivered as a sequence of Discord messages, never as an
+attachment.
 
 GitHub Actions is configured to refresh a validated compact Sleeper feed hourly and publish it through GitHub Pages. The Scheduled Task should consume that feed rather than parse Sleeper's large raw API responses directly.
 

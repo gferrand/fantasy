@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import io
 import logging
 import os
 from pathlib import Path
@@ -164,28 +163,21 @@ def build_client(config: AppConfig) -> discord.Client:
             await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
 
     async def edit_injury_interaction(interaction: discord.Interaction, text: str) -> None:
-        """Deliver a complete injury report even beyond the user-install message budget."""
+        """Deliver the complete injury report as DM messages without attachments."""
 
         chunks = split_discord_message(text, limit=1900)
-        if len(chunks) <= 5:
-            await edit_interaction_with_chunks(interaction, text)
-            return
         await interaction.edit_original_response(
-            content=(
-                "🩺 **Injury opportunities report ready**\n"
-                "The complete report is attached because it exceeds Discord’s command-response limit."
-            ),
+            content=chunks[0],
             allowed_mentions=discord.AllowedMentions.none(),
         )
-        report_file = discord.File(
-            io.BytesIO(text.encode("utf-8")),
-            filename="injury-opportunities.md",
-        )
-        await interaction.followup.send(
-            "Complete Sleeper injury board and playing-time opportunities:",
-            file=report_file,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        # User-installed interactions have a small follow-up webhook budget.
+        # This command is DM-only, so send the remaining chunks through the DM
+        # channel to preserve the complete inventory without an attachment.
+        for chunk in chunks[1:]:
+            await interaction.channel.send(
+                chunk,
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
 
     def remember_dm_channel(channel: discord.abc.Messageable) -> None:
         channel_id = getattr(channel, "id", None)
