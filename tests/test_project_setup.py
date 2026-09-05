@@ -89,6 +89,8 @@ class ProjectSetupTests(unittest.TestCase):
         )
         self.assertIn("Mohamed Salah", context)
         self.assertIn("Leandro Trossard", context)
+        self.assertIn("Guglielmo Vicario", context)
+        self.assertIn("Juventus", context)
         self.assertIn("Xavi Simons", context)
 
 

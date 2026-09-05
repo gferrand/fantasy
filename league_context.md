@@ -173,6 +173,7 @@ Known transfer overrides:
 | --- | --- |
 | Mohamed Salah | Exclude: transferred from Liverpool to Trabzonspor |
 | Leandro Trossard | Exclude: transferred from Arsenal to Beşiktaş |
+| Guglielmo Vicario | Exclude: loaned from Tottenham to Juventus for 2026/27 |
 
 Sleeper's `competitions` field can be stale. Never recommend a player solely because Sleeper labels them EPL-eligible.
 
