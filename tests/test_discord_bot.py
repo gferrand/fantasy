@@ -58,9 +58,10 @@ class DiscordBotTests(unittest.TestCase):
 
 
 class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
-    async def test_long_injury_report_is_delivered_as_complete_attachment(self):
+    async def test_long_injury_report_is_delivered_as_complete_messages(self):
         client = build_client(_test_config())
         command = client._fantasy_command_tree.get_command("injury").get_command("opportunities")  # type: ignore[attr-defined]
+        channel = type("Channel", (), {"send": AsyncMock()})()
         interaction = type(
             "Interaction",
             (),
@@ -69,6 +70,7 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 "response": type("Response", (), {"defer": AsyncMock()})(),
                 "edit_original_response": AsyncMock(),
                 "followup": type("Followup", (), {"send": AsyncMock()})(),
+                "channel": channel,
             },
         )()
         fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
@@ -81,10 +83,42 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
             await command.callback(interaction)
 
         interaction.edit_original_response.assert_awaited_once()
-        interaction.followup.send.assert_awaited_once()
-        attachment = interaction.followup.send.await_args.kwargs["file"]
-        self.assertEqual(attachment.filename, "injury-opportunities.md")
-        self.assertEqual(attachment.fp.read().decode("utf-8"), long_report)
+        interaction.followup.send.assert_not_awaited()
+        self.assertGreater(channel.send.await_count, 0)
+        delivered = [interaction.edit_original_response.await_args.kwargs["content"]]
+        delivered.extend(call.args[0] for call in channel.send.await_args_list)
+        self.assertEqual("\n\n".join(delivered), long_report)
+        self.assertTrue(all(len(message) <= 1900 for message in delivered))
+        for call in channel.send.await_args_list:
+            self.assertNotIn("file", call.kwargs)
+
+    async def test_short_injury_report_uses_only_the_original_response(self):
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("injury").get_command("opportunities")  # type: ignore[attr-defined]
+        channel = type("Channel", (), {"send": AsyncMock()})()
+        interaction = type(
+            "Interaction",
+            (),
+            {
+                "user": type("User", (), {"id": 123})(),
+                "response": type("Response", (), {"defer": AsyncMock()})(),
+                "edit_original_response": AsyncMock(),
+                "followup": type("Followup", (), {"send": AsyncMock()})(),
+                "channel": channel,
+            },
+        )()
+        fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
+        report = "🩺 **Injury opportunities**\nNo current injuries."
+        with (
+            patch("fantasy_advisor.discord_bot.load_injury_opportunities_context", return_value=fake_context),
+            patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
+            patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=report),
+        ):
+            await command.callback(interaction)
+
+        self.assertEqual(interaction.edit_original_response.await_args.kwargs["content"], report)
+        channel.send.assert_not_awaited()
+        interaction.followup.send.assert_not_awaited()
 
 
 if __name__ == "__main__":

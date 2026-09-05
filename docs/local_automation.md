@@ -244,6 +244,8 @@ ranks up to eight credible playing-time beneficiaries with unrostered league
 options first. Suspensions are excluded. If current injury research is
 unavailable, the command still returns Sleeper's complete status inventory and
 labels details and timetables unknown; it does not infer a recovery window.
+The complete report is split across ordinary Discord DM messages when needed;
+the command does not send report attachments.
 
 The transfer monitor stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or

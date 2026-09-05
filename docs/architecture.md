@@ -61,6 +61,8 @@ current-source injury details, supported return windows, and up to eight
 ID-resolved beneficiaries. Missing research degrades to an explicit unknown
 rather than a generic recovery estimate. Unrostered beneficiaries are shown
 first, but Sleeper remains authoritative for whether an Add action is available.
+Reports longer than one Discord message are delivered through the DM channel in
+ordered chunks, avoiding both truncation and file attachments.
 
 ### 5. Conversation layer
 
