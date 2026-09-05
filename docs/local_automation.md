@@ -142,6 +142,16 @@ After the token and user ID are set, install the agents:
 .venv/bin/python scripts/install_automation.py --install
 ```
 
+Run exactly one persistent Discord listener. The installer refuses to start
+the launchd listener while a Fantasy Discord Compose service is running,
+because two clients using the same bot token race to acknowledge each slash
+command and can return different deployed versions. Stop the older Docker
+Discord service before switching to launchd.
+
+On the first launchd install, existing `data/automation` state (including the
+watchlist) seeds the protected runtime copy. Later installs preserve the
+runtime's mutable state instead of replacing it with checkout data.
+
 This writes only these four explicit user LaunchAgents and loads them:
 
 - `com.ginoferrand.fantasy.discord` — persistent DM listener
