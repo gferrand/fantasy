@@ -10,11 +10,10 @@ sys.path.insert(0, str(ROOT / "src"))
 from fantasy_advisor.automation import rotation_web_briefing_prompt
 from fantasy_advisor.rotation import (
     DIFFICULT_FIXTURE_THRESHOLD,
-    _available_options,
-    _filter_rotation_trades,
-    _is_reliable_incoming,
-    _mix_moves,
+    _has_reliable_role,
     _protected_players,
+    _rank_drop_candidates,
+    _rank_targets,
 )
 
 
@@ -58,97 +57,76 @@ class RotationTests(unittest.TestCase):
         self.assertIn("best projected four-fixture XI", reasons["future"])
         self.assertEqual(reasons["injured"], ["medical hold"])
 
-    def test_available_swap_never_drops_protected_player_and_requires_lineup_gain(self):
-        roster = [
-            player("core", "Core Forward", "F", 50, 20),
-            player("fringe", "Fringe Forward", "F", 2, 1),
-        ]
-        target = player("target", "Fixture Target", "F", 12, 30, difficulty=2.0)
-        options = _available_options(
-            roster,
-            [target],
-            ("F",),
-            {"core"},
-            {"target": target},
-        )
-
-        self.assertEqual(len(options), 1)
-        self.assertEqual(options[0]["drop"]["player_id"], "fringe")
-        self.assertEqual(options[0]["projected_lineup_gain"], 10.0)
-
-        weak = player("weak", "Weak Target", "F", 5, 21)
-        self.assertEqual(
-            _available_options(roster, [weak], ("F",), {"core"}, {"weak": weak}),
-            [],
-        )
-
-    def test_top_five_mix_reserves_both_acquisition_paths(self):
-        available = [
-            {"kind": "available", "projected_lineup_gain": gain}
-            for gain in (10, 9, 8, 7)
-        ]
-        trades = [
-            {"kind": "trade", "math": {"your_projected_lineup_gain": gain}}
-            for gain in (6, 5, 4)
-        ]
-
-        mixed = _mix_moves(available, trades)
-
-        self.assertEqual(len(mixed), 5)
-        self.assertEqual([item["kind"] for item in mixed].count("trade"), 2)
-        self.assertEqual([item["kind"] for item in mixed].count("available"), 3)
-
-    def test_available_target_needs_role_evidence_and_easier_fixtures(self):
-        roster = [
-            player("core", "Core Forward", "F", 50, 20),
-            player("fringe", "Fringe Forward", "F", 2, 1, difficulty=3.4),
-        ]
+    def test_targets_are_ranked_independently_without_forced_drops(self):
+        easy = player("easy", "Easy Target", "GK", 12, 30, difficulty=2.0)
+        hard = player("hard", "Hard Target", "F", 20, 40, difficulty=3.2)
         thin_sample = player("thin", "Thin Sample", "F", 20, 40, difficulty=2.0)
         thin_sample.update(minutes=45, starts=0, forecast_expected_minutes_per_fixture=45)
-        hard_run = player("hard", "Hard Run", "F", 20, 40, difficulty=3.2)
-        not_easier = player("same", "Same Fixtures", "F", 20, 40, difficulty=3.3)
 
-        self.assertFalse(_is_reliable_incoming(thin_sample))
-        self.assertEqual(
-            _available_options(
-                roster,
-                [thin_sample, hard_run, not_easier],
-                ("F",),
-                {"core"},
-                {row["player_id"]: row for row in [thin_sample, hard_run, not_easier]},
-            ),
-            [],
+        targets = _rank_targets(
+            [hard, thin_sample, easy],
+            extended_by_id={row["player_id"]: row for row in [easy, hard, thin_sample]},
         )
 
-    def test_rotation_trade_requires_material_gain_role_and_fixture_edge(self):
-        receive = player("in", "Incoming", "F", 20, 35, difficulty=2.5)
-        send = player("out", "Outgoing", "F", 20, 20, difficulty=3.2)
-        viable = {
-            "kind": "trade",
-            "you_receive": [receive],
-            "you_send": [send],
-            "math": {"your_projected_lineup_gain": 8},
-        }
-        weak = {**viable, "math": {"your_projected_lineup_gain": 2}}
-        stale_role = {**viable, "you_receive": [{**receive, "starts": 0}]}
+        self.assertFalse(_has_reliable_role(thin_sample))
+        self.assertEqual([target["player_id"] for target in targets], ["easy", "hard"])
+        self.assertNotIn("drop", targets[0])
+        self.assertEqual(targets[0]["fixture_quality"], "favorable")
 
-        self.assertEqual(_filter_rotation_trades([viable, weak, stale_role]), [viable])
+    def test_trade_targets_include_current_owner_but_no_offer(self):
+        target = player("target", "Trade Target", "M", 15, 25, difficulty=2.5)
+        targets = _rank_targets(
+            [target],
+            extended_by_id={"target": target},
+            owners={"target": "Other Manager"},
+        )
+
+        self.assertEqual(targets[0]["current_fantasy_team"], "Other Manager")
+        self.assertNotIn("you_send", targets[0])
+
+    def test_target_list_preserves_positional_choice(self):
+        defenders = [
+            player(f"d{index}", f"Defender {index}", "D", 20, 50 - index, difficulty=2.0)
+            for index in range(6)
+        ]
+        keeper = player("gk", "Goalkeeper Option", "GK", 10, 10, difficulty=2.5)
+        rows = defenders + [keeper]
+
+        targets = _rank_targets(
+            rows,
+            extended_by_id={row["player_id"]: row for row in rows},
+            limit=5,
+        )
+
+        self.assertIn("gk", [target["player_id"] for target in targets])
+
+    def test_drop_candidates_exclude_core_and_rank_weakest_first(self):
+        core = player("core", "Core", "F", 50, 50)
+        weak = player("weak", "Weak", "M", 2, 3, difficulty=3.5)
+        stronger = player("stronger", "Stronger", "D", 10, 12, difficulty=2.5)
+
+        drops = _rank_drop_candidates([core, stronger, weak], {"core"})
+
+        self.assertEqual([item["player_id"] for item in drops], ["weak", "stronger"])
 
     def test_rotation_prompt_makes_core_and_read_only_rules_binding(self):
         context = json.dumps({
             "season": "2026",
             "gameweek": 4,
             "protected_players": [{"player_id": "core"}],
-            "recommended_moves": [],
+            "pickup_targets": [],
+            "trade_targets": [],
+            "drop_candidates": [],
         })
         prompt = rotation_web_briefing_prompt(live_context=context)
 
         self.assertIn("AUTOMATIC CORE PROTECTION IS BINDING", prompt)
         self.assertIn("next four fixtures", prompt)
-        self.assertIn("five total supplied moves", prompt)
+        self.assertIn("Never attach or imply a drop", prompt)
         self.assertIn("Never make, simulate", prompt)
-        self.assertIn("AVAILABLE / WAIVERS", prompt)
+        self.assertIn("PICKUP OPTIONS", prompt)
         self.assertIn("TRADE TARGETS", prompt)
+        self.assertIn("POSSIBLE DROPS / SHOP LIST", prompt)
         self.assertIn("known_non_epl_transfers", prompt)
         self.assertIn("must not be described as current teammates", prompt)
         self.assertIn("omit them", prompt)
