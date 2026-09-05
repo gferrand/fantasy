@@ -8,7 +8,9 @@ Use `/rotation` in the private Fantasy Advisor DM for a protected-core,
 four-fixture Moneyball menu with independent pickup targets, trade targets, and
 non-core drop/shop candidates. It does not force one player into a paired move,
 never puts an automatically protected player on the drop/shop list, and leaves
-every action manual in Sleeper.
+every action manual in Sleeper. Trade options exclude the current-production
+top quartile so the list stays focused on plausible buy-low and fixture-value
+players rather than elite, expensive cornerstones.
 
 ## Project map
 

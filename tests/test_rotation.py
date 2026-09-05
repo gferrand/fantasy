@@ -14,6 +14,7 @@ from fantasy_advisor.rotation import (
     _protected_players,
     _rank_drop_candidates,
     _rank_targets,
+    _rank_trade_targets,
 )
 
 
@@ -84,6 +85,24 @@ class RotationTests(unittest.TestCase):
         self.assertEqual(targets[0]["current_fantasy_team"], "Other Manager")
         self.assertNotIn("you_send", targets[0])
 
+    def test_trade_targets_exclude_top_quartile_premium_producers(self):
+        players = [
+            player("bruno", "Bruno Fernandes", "M", 75, 65, difficulty=2.5),
+            player("steady", "Steady Starter", "D", 30, 42, difficulty=2.5),
+            player("buy-low", "Buy Low", "M", 18, 45, difficulty=2.0),
+            player("streamer", "Fixture Streamer", "F", 12, 36, difficulty=2.0),
+        ]
+        targets, cutoff = _rank_trade_targets(
+            players,
+            extended_by_id={row["player_id"]: row for row in players},
+            owners={row["player_id"]: "Other Manager" for row in players},
+        )
+
+        target_ids = [target["player_id"] for target in targets]
+        self.assertNotIn("bruno", target_ids)
+        self.assertIn("buy-low", target_ids)
+        self.assertLess(cutoff, 75)
+
     def test_target_list_preserves_positional_choice(self):
         defenders = [
             player(f"d{index}", f"Defender {index}", "D", 20, 50 - index, difficulty=2.0)
@@ -126,6 +145,8 @@ class RotationTests(unittest.TestCase):
         self.assertIn("Never make, simulate", prompt)
         self.assertIn("PICKUP OPTIONS", prompt)
         self.assertIn("TRADE TARGETS", prompt)
+        self.assertIn("Never present", prompt)
+        self.assertIn("premium star", prompt)
         self.assertIn("POSSIBLE DROPS / SHOP LIST", prompt)
         self.assertIn("known_non_epl_transfers", prompt)
         self.assertIn("must not be described as current teammates", prompt)
