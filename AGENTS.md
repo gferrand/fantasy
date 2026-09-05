@@ -1,6 +1,6 @@
 # Project agent instructions
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.1" sha256="34691655f3cc8dcdfe455e7b48e2dae7d91f9e0ec3efc976bb8e10a19b293c99" -->
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.2" sha256="285edf0cfd3db9c45ba8344f0aa3dfcfa9eab89d7ab852d8cc3ac34b205abb56" -->
 # Infrastructure Standards
 
 These standards apply to every project and every agent working on the Mac infrastructure.
@@ -68,10 +68,8 @@ These standards apply to every project and every agent working on the Mac infras
 
 ## Shared Chrome
 
-- Use the existing signed-in Chrome profile and Infrastructure's single shared normal window.
-- Every browser task creates its own tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`, touches it during work lasting an hour, and closes it after verification.
-- Never reuse another task's tab, create a Chrome profile or tab group, inspect session data, or routinely restart Chrome.
-- The hourly Infrastructure sweep closes every non-anchor tab after 60 minutes without browser activity or an explicit touch.
+- At the start of browser work, create a task tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`.
+- When the task is finished, close that tab with `infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID`.
 
 ## Governance
 
