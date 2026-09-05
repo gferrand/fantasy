@@ -165,6 +165,12 @@ def watchlist_stats_card(report: object) -> str:
     week = getattr(report, "week")
     retrieved_at = str(getattr(report, "retrieved_at"))
     entries = list(getattr(report, "entries"))
+    entries.sort(
+        key=lambda entry: (
+            getattr(entry, "points", None) is None,
+            -(getattr(entry, "points", None) or 0),
+        )
+    )
     window = f"Sleeper EPL · {season} regular season"
     if week is not None:
         window += f" · GW{week}"
