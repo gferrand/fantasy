@@ -9,34 +9,24 @@ launchd
   ├─ 22:00 nightly recap   │
   └─ :17 every hour        │
                            v
-        allocate one task-owned Fantasy Chrome tab
+              create a Fantasy task tab
                            |
                            v
              local `codex exec` task
-              (exact tab ID in prompt)
                            |
                            v
-          close the exact task-owned tab
+                 close the task tab
                            |
                            v
                  GF Control Room #fantasy
 ```
 
-Every browser-capable scheduled or Discord Codex job synchronously allocates one
-tab with `infra-opt workspace create --project fantasy --agent-id TASK_ID
---purpose SAFE_PURPOSE`. The runner waits for the confirmed tab ID, passes that
-exact ownership metadata and the complete request to local `codex exec`, and
-allows browser control only in that tab. If allocation fails, the Codex process
-does not start and the failure is retryable.
-
-The runner refreshes the tab with `infra-opt workspace touch --project fantasy
---agent-id TASK_ID --tab-id TAB_ID` when a run remains active long enough to
-approach the one-hour inactivity limit. After success, failure, or timeout, it
-synchronously invokes `infra-opt workspace close --project fantasy --agent-id
-TASK_ID --tab-id TAB_ID` for the exact owned tab. It never inspects, reuses,
-moves, touches, or closes an owner, manual, unclassified, or another task's tab.
-The tab lives in Infrastructure's single shared normal Chrome window and uses
-the existing signed-in profile.
+Every browser-capable scheduled or Discord Codex job starts by creating a tab
+with `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose
+SAFE_PURPOSE`. The runner then supplies the complete, unmodified request to
+local `codex exec`. When the task finishes, the runner closes the created tab
+with `infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id
+TAB_ID`. The same close cleanup runs after success, failure, or timeout.
 
 Private Discord
 questions are routed by the data they need: public current-events and transfer

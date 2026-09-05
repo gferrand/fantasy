@@ -55,27 +55,25 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("Los Blancos", context)
         self.assertIn("1127171221277331456", context)
 
-    def test_shared_chrome_tab_protocol_is_task_owned(self):
+    def test_shared_chrome_instructions_are_only_create_and_close(self):
         instructions = (ROOT / "AGENTS.md").read_text()
-        self.assertIn('version="2026-09-05.1"', instructions)
+        self.assertIn('version="2026-09-05.2"', instructions)
         self.assertIn(
-            'sha256="34691655f3cc8dcdfe455e7b48e2dae7d91f9e0ec3efc976bb8e10a19b293c99"',
-            instructions,
-        )
-        self.assertIn("Infrastructure's single shared normal window", instructions)
-        self.assertIn(
-            "infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE",
+            'sha256="285edf0cfd3db9c45ba8344f0aa3dfcfa9eab89d7ab852d8cc3ac34b205abb56"',
             instructions,
         )
         self.assertIn(
-            "infra-opt workspace touch --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            "infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE",
             instructions,
         )
         self.assertIn(
-            "infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            "infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID",
             instructions,
         )
-        self.assertIn("close it in a guaranteed cleanup path", instructions)
+        self.assertEqual(instructions.count("infra-opt workspace"), 2)
+        self.assertNotIn("workspace touch", instructions)
+        project_rules = instructions.split("<!-- INFRA-STANDARDS:END -->", 1)[1]
+        self.assertNotIn("Chrome", project_rules)
 
 
     def test_context_contains_current_club_safety_rules(self):
