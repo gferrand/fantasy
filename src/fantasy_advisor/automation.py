@@ -1476,8 +1476,9 @@ AUTOMATIC CORE PROTECTION IS BINDING. Every `protected_players` ID is excluded
 from drops and outgoing trades. Difficult protected players are holds, not sell
 or drop candidates. Do not override this rule with outside opinion.
 
-Research only the players in `recommended_moves` and material difficult core
-holds. Use current {context.get('season')}/{str(int(context.get('season', 0)) + 1)[-2:]}
+Research the players in `pickup_targets`, `trade_targets`, `drop_candidates`,
+and material difficult core holds. Use current
+{context.get('season')}/{str(int(context.get('season', 0)) + 1)[-2:]}
 Premier League evidence to verify club, role, minutes trend, injury status, and
 likely availability. For every incoming player, first search their name with
 `transfer`, `current club`, and the active season. Current official club squad,
@@ -1489,9 +1490,9 @@ must never override a newer transfer or current-season squad source.
 `known_non_epl_transfers` is binding negative evidence. Those players are not
 current Premier League players and must not be described as current teammates,
 starters, competition, or role blockers. If sources conflict, current official
-transfer and current official squad evidence wins. Reject the entire move when
-current EPL club or current role cannot be verified. Do not print rejected moves
-as `do not advance` candidates: omit them. Never substitute another player.
+transfer and current official squad evidence wins. Reject the target when its
+current EPL club or role cannot be verified. Do not print rejected targets as
+`do not advance` candidates: omit them. Never substitute another player.
 An honest no-move/hold report is a successful result and is preferable to a
 marginal, stale, speculative, or weakly sourced recommendation.
 
@@ -1501,13 +1502,17 @@ Write a concise phone-first report with no Markdown table or code block. Use:
    next four fixtures and custom Sleeper scoring are used.
 2. `🧱 **CORE HOLDS**` for only protected players with difficult fixtures. Say
    why each remains protected. If none, say so in one line.
-3. `📉 **ROTATION-ELIGIBLE**` naming only outgoing players present in supplied
-   moves and the fixture/role reason they are expendable.
-4. `🆓 **AVAILABLE / WAIVERS**` first, then `🤝 **TRADE TARGETS**`. Present no
-   more than the five total supplied moves. For each give the exact add/receive,
-   drop/send, next fixtures, projected four-fixture lineup gain, role caveat,
-   and supplied exit plan. Preserve supplied trade partner and package exactly.
-5. `⚠️ **MANUAL CHECK**` stating that unrostered status does not distinguish an
+3. `🆓 **PICKUP OPTIONS**` listing verified `pickup_targets` independently. For
+   each give next fixtures, projected four-fixture points, current role, fixture
+   quality, risk, and supplied exit plan. Never attach or imply a drop.
+4. `🤝 **TRADE TARGETS**` listing verified `trade_targets` independently with
+   current fantasy team, next fixtures, projection, role, and acquisition case.
+   Do not invent an offer or outgoing package.
+5. `📉 **POSSIBLE DROPS / SHOP LIST**` listing only supplied `drop_candidates`
+   and why each non-core roster spot is expendable. Never pair one automatically
+   with a pickup or trade target. Say explicitly that the manager chooses the
+   combination after checking roster construction.
+6. `⚠️ **MANUAL CHECK**` stating that unrostered status does not distinguish an
    immediate Add from waivers and no transaction occurred.
 
 If no move survives current verification, return an honest hold report. The
