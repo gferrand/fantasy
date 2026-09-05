@@ -158,6 +158,25 @@ def _average_value(value: object, precision: int) -> str:
     return f"{float(value):.{precision}f}"
 
 
+def _season_performance(direction: object) -> str:
+    return {
+        "up": "🟢⬆️ overperforming",
+        "down": "🔴⬇️ underperforming",
+        "flat": "➖ in line",
+    }.get(str(direction), "comparison unavailable")
+
+
+def _previous_season_points_per_minute_line(entry: object, season: str) -> str:
+    previous = getattr(entry, "previous_season_points_per_minute", None)
+    if previous is None:
+        return f"  Last season ({season}) Pts/min — · no EPL minutes"
+    direction = getattr(entry, "points_per_minute_season_trend", None)
+    return (
+        f"  Last season ({season}) Pts/min {_average_value(previous, 2)} · "
+        f"This season {_season_performance(direction)}"
+    )
+
+
 def watchlist_stats_card(report: object) -> str:
     """Render the just-fetched current Sleeper totals for every watched player."""
 
@@ -177,6 +196,10 @@ def watchlist_stats_card(report: object) -> str:
     lines = [f"📊 **Watchlist stats · {len(entries)} players**", f"*{window} · fetched {retrieved_at}*"]
     trend_weeks = getattr(report, "trend_weeks", None)
     trend_unavailable_reason = getattr(report, "trend_unavailable_reason", None)
+    previous_season = getattr(report, "previous_season", None)
+    previous_season_unavailable_reason = getattr(
+        report, "previous_season_unavailable_reason", None
+    )
     if trend_weeks is not None:
         previous_weeks, recent_weeks = trend_weeks
         lines.append(
@@ -184,6 +207,8 @@ def watchlist_stats_card(report: object) -> str:
         )
     elif trend_unavailable_reason:
         lines.append(f"*{trend_unavailable_reason}*")
+    if previous_season_unavailable_reason:
+        lines.append(f"*{previous_season_unavailable_reason}*")
     for entry in entries:
         player = getattr(entry, "player")
         club = str(getattr(player, "club")) or "no current club"
@@ -191,6 +216,8 @@ def watchlist_stats_card(report: object) -> str:
         lines.extend(("", f"• **{getattr(player, 'name')}** · {club} · {positions}"))
         if not getattr(entry, "found"):
             lines.append("  No current regular-season Sleeper stats returned.")
+            if previous_season is not None and not previous_season_unavailable_reason:
+                lines.append(_previous_season_points_per_minute_line(entry, previous_season))
             continue
         summary = []
         for label, field in (("Pts", "points"), ("GP", "games"), ("GS", "starts"), ("Min", "minutes")):
@@ -220,6 +247,8 @@ def watchlist_stats_card(report: object) -> str:
                 f"{label} {value}{_trend_indicator(direction)}" for label, value, direction in averages
             )
         )
+        if previous_season is not None and not previous_season_unavailable_reason:
+            lines.append(_previous_season_points_per_minute_line(entry, previous_season))
         if trend_weeks is not None:
             unavailable = [label for label, _, direction in averages if direction is None]
             if unavailable:
