@@ -1,6 +1,6 @@
 # Project agent instructions
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.2" sha256="285edf0cfd3db9c45ba8344f0aa3dfcfa9eab89d7ab852d8cc3ac34b205abb56" -->
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.3" sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca" -->
 # Infrastructure Standards
 
 These standards apply to every project and every agent working on the Mac infrastructure.
@@ -70,6 +70,10 @@ These standards apply to every project and every agent working on the Mac infras
 
 - At the start of browser work, create a task tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`.
 - When the task is finished, close that tab with `infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID`.
+- If any workspace command fails, reports a stale or unavailable heartbeat, or times out, stop browser work and send the Infrastructure Agent one alert containing only the project, task ID, failed command, safe error code, and UTC timestamp. Do not include URLs, page content, credentials, or browser history.
+- Do not retry repeatedly, reload the extension, restart Chrome, create an unmanaged tab, or troubleshoot the allocator. Wait for Infrastructure to reply that the allocator is healthy, then retry the original command once.
+- The Infrastructure Agent owns allocator recovery. On the first alert, it immediately verifies the failure from live metadata, reconciles any partially created tab, applies the smallest safe repair when the failure is real, and runs an Infrastructure-owned create/touch/close smoke test. It sends one conclusive reply: either `Chrome allocator healthy — retry now` or a concrete blocker and next action.
+- Duplicate reports for the same failure are one incident. Keep coordination to the initial alert and Infrastructure's conclusive reply unless a genuinely new blocker requires one clarification.
 
 ## Governance
 
