@@ -20,6 +20,10 @@ The project is designed to research and explain roster news, injuries, fixtures,
 
 The nightly recap task is active in ChatGPT Scheduled Tasks at 10:00 PM Eastern. It recaps Los Blancos activity, completed league trades, waiver-auction targets, and immediate free-agent options, while preparing for the next seven days with source-triangulated starter outlooks and a custom-scoring lineup recommendation. The project itself remains read-only and does not mutate Sleeper state.
 
+The private Discord advisor includes `/injury opportunities`, which scans every
+active Sleeper EPL player marked Out or GTD/Questionable and reports current,
+source-backed recovery outlooks plus roster-aware playing-time beneficiaries.
+
 GitHub Actions is configured to refresh a validated compact Sleeper feed hourly and publish it through GitHub Pages. The Scheduled Task should consume that feed rather than parse Sleeper's large raw API responses directly.
 
 ## Design rule

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import io
 import logging
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ from .automation import (
     load_registry,
     run_interactive_task,
     run_gameweek_web_briefing,
+    run_injury_web_briefing,
     run_trade_web_briefing,
     run_web_briefing,
     run_watchlist_web_briefing,
@@ -77,6 +79,10 @@ from .watchlist import (
 from .watchlist_stats import load_current_watchlist_stats
 from .gameweek import load_gameweek_prepare_context, load_gameweek_recap_context
 from .lineup_alerts import load_persisted_fixture_schedule
+from .injury_opportunities import (
+    load_injury_opportunities_context,
+    render_injury_opportunities,
+)
 from .trade_proposals import load_trade_proposal_context
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
@@ -156,6 +162,30 @@ def build_client(config: AppConfig) -> discord.Client:
         )
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
+
+    async def edit_injury_interaction(interaction: discord.Interaction, text: str) -> None:
+        """Deliver a complete injury report even beyond the user-install message budget."""
+
+        chunks = split_discord_message(text, limit=1900)
+        if len(chunks) <= 5:
+            await edit_interaction_with_chunks(interaction, text)
+            return
+        await interaction.edit_original_response(
+            content=(
+                "🩺 **Injury opportunities report ready**\n"
+                "The complete report is attached because it exceeds Discord’s command-response limit."
+            ),
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+        report_file = discord.File(
+            io.BytesIO(text.encode("utf-8")),
+            filename="injury-opportunities.md",
+        )
+        await interaction.followup.send(
+            "Complete Sleeper injury board and playing-time opportunities:",
+            file=report_file,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
 
     def remember_dm_channel(channel: discord.abc.Messageable) -> None:
         channel_id = getattr(channel, "id", None)
@@ -630,6 +660,51 @@ def build_client(config: AppConfig) -> discord.Client:
             )
 
     command_tree.add_command(watch_group)
+
+    injury_group = app_commands.Group(
+        name="injury",
+        description="Review Sleeper injury flags and playing-time opportunities",
+        allowed_installs=app_commands.AppInstallationType(user=True, guild=False),
+        allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
+    )
+
+    @injury_group.command(name="opportunities", description="Find EPL injuries and likely playing-time beneficiaries")
+    async def injury_opportunities_command(interaction: discord.Interaction) -> None:
+        if not await ensure_private_user(interaction):
+            return
+        await interaction.response.defer()
+        try:
+            async with run_lock:
+                context = await asyncio.to_thread(load_injury_opportunities_context)
+                research = None
+                research_error = None
+                try:
+                    research = await asyncio.to_thread(
+                        run_injury_web_briefing,
+                        config,
+                        live_context=context.as_json(),
+                    )
+                except AutomationError as exc:
+                    LOGGER.exception("Current injury research was unavailable; returning Sleeper inventory")
+                    research_error = str(exc)
+                report = render_injury_opportunities(
+                    context,
+                    research,
+                    research_error=research_error,
+                )
+            await edit_injury_interaction(interaction, report)
+        except SleeperDataError as exc:
+            LOGGER.exception("Could not load the current Sleeper injury board")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t load injury opportunities", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure loading injury opportunities")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t load injury opportunities", "Please try again shortly.")
+            )
+
+    command_tree.add_command(injury_group)
 
     trade_group = app_commands.Group(
         name="trade",

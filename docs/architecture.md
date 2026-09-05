@@ -45,6 +45,7 @@ Conflicting or stale evidence must be surfaced in the report rather than silentl
 Planned read-only analyses include:
 
 - Roster news and injury monitoring
+- A complete on-demand Sleeper injury board with current-source return outlooks and roster-aware playing-time beneficiaries
 - Fixture difficulty and next-opponent previews
 - Start/bench recommendations based on league-specific scoring
 - Waiver-wire rankings
@@ -52,6 +53,14 @@ Planned read-only analyses include:
 - Weekly playoff and roster strategy
 
 Every recommendation should explain the evidence, uncertainty, relevant scoring categories, and the action for the manager to consider.
+
+The private `/injury opportunities` path fetches the complete active Sleeper
+EPL catalog, league ownership, and current stats. Sleeper supplies the Out and
+GTD/Questionable inventory; a bounded structured web pass supplies only
+current-source injury details, supported return windows, and up to eight
+ID-resolved beneficiaries. Missing research degrades to an explicit unknown
+rather than a generic recovery estimate. Unrostered beneficiaries are shown
+first, but Sleeper remains authoritative for whether an Add action is available.
 
 ### 5. Conversation layer
 
