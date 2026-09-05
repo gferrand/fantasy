@@ -1,66 +1,67 @@
+import json
 import unittest
+from types import SimpleNamespace
 
-from fantasy_advisor.advisor_router import AdvisorRoute, route_interactive_request
+from fantasy_advisor.advisor_router import AdvisorRoute, RoutingError, route_interactive_request
+
+
+class FakeResponses:
+    def __init__(self, output_text):
+        self.output_text = output_text
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(output_text=self.output_text)
 
 
 class AdvisorRouterTests(unittest.TestCase):
-    def test_current_deal_question_uses_lightweight_web_research(self):
-        decision = route_interactive_request("What happened to the Balogun Everton deal?")
+    def route(self, output_text, question, **kwargs):
+        responses = FakeResponses(output_text)
+        client = SimpleNamespace(responses=responses)
+        decision = route_interactive_request(
+            question,
+            api_key="test-key",
+            model="router-model",
+            reasoning_effort="low",
+            client=client,
+            **kwargs,
+        )
+        return decision, responses.calls[0]
+
+    def test_router_uses_capability_reasoning_for_implied_trade_analysis(self):
+        decision, call = self.route(
+            '{"route":"codex_league","reason":"It needs other-manager rosters and league trade context."}',
+            "Could I turn Ajayi into a slightly better midfielder?",
+        )
+        self.assertEqual(decision.route, AdvisorRoute.CODEX)
+        self.assertIn("other managers' rosters", call["instructions"])
+        self.assertNotIn("trade(?:", call["instructions"])
+        self.assertEqual(json.loads(call["input"])["user_request"], "Could I turn Ajayi into a slightly better midfielder?")
+
+    def test_router_can_keep_a_public_question_on_web_research(self):
+        decision, _ = self.route(
+            '{"route":"openai_web","reason":"Public club news is sufficient."}',
+            "What did the manager say about Balogun's injury?",
+        )
         self.assertEqual(decision.route, AdvisorRoute.CHAT)
-        self.assertIn("web research", decision.reason)
 
-    def test_team_fit_question_uses_codex_with_league_data(self):
-        decision = route_interactive_request("Is Balogun a good fit for my team?")
-        self.assertEqual(decision.route, AdvisorRoute.CODEX)
-        self.assertIn("Sleeper", decision.reason)
-
-    def test_trade_questions_use_codex_with_league_data(self):
-        decision = route_interactive_request("Which midfielder can I trade Ajayi for?")
-        self.assertEqual(decision.route, AdvisorRoute.CODEX)
-        self.assertIn("Sleeper", decision.reason)
-
-    def test_explicit_codex_request_overrides_the_lightweight_web_path(self):
-        decision = route_interactive_request("Yes, please use a Codex task to get the data.")
-        self.assertEqual(decision.route, AdvisorRoute.CODEX)
-        self.assertIn("explicitly requested", decision.reason)
-
-    def test_waivers_and_dedicated_waiver_command_stay_on_codex(self):
-        self.assertEqual(
-            route_interactive_request("Who are the best free agents on waivers?").route,
-            AdvisorRoute.CODEX,
+    def test_router_receives_recent_context_and_request_metadata(self):
+        _, call = self.route(
+            '{"route":"codex_league","reason":"The attachment and recent conversation require league context."}',
+            "What about that option?",
+            context_packet="Previous discussion: compare offers involving my roster.",
+            waiver_analysis=True,
+            has_attachment=True,
         )
-        self.assertEqual(
-            route_interactive_request("Anything", waiver_analysis=True).route,
-            AdvisorRoute.CODEX,
-        )
+        payload = json.loads(call["input"])
+        self.assertEqual(payload["recent_conversation"], "Previous discussion: compare offers involving my roster.")
+        self.assertTrue(payload["request_metadata"]["is_dedicated_waiver_analysis"])
+        self.assertTrue(payload["request_metadata"]["has_user_attachment"])
 
-    def test_attachment_analysis_stays_on_codex(self):
-        self.assertEqual(
-            route_interactive_request("Summarize this", has_attachment=True).route,
-            AdvisorRoute.CODEX,
-        )
-
-    def test_general_follow_up_uses_same_context_capable_web_path(self):
-        self.assertEqual(
-            route_interactive_request("What did I just ask you?").route,
-            AdvisorRoute.CHAT,
-        )
-
-    def test_public_player_facts_do_not_need_the_private_league_path(self):
-        self.assertEqual(
-            route_interactive_request("Is Balogun injured or likely to start this weekend?").route,
-            AdvisorRoute.CHAT,
-        )
-        self.assertEqual(
-            route_interactive_request("Who does Balogun face in the next fixture?").route,
-            AdvisorRoute.CHAT,
-        )
-
-    def test_applying_public_facts_to_the_owner_roster_uses_codex(self):
-        self.assertEqual(
-            route_interactive_request("Which injured starter should I replace in my lineup?").route,
-            AdvisorRoute.CODEX,
-        )
+    def test_invalid_router_response_does_not_silently_choose_a_route(self):
+        with self.assertRaisesRegex(RoutingError, "invalid decision"):
+            self.route("not json", "Can you help?")
 
 
 if __name__ == "__main__":

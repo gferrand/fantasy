@@ -13,7 +13,7 @@ import tempfile
 import discord
 from discord import app_commands
 
-from .advisor_router import AdvisorRoute, route_interactive_request
+from .advisor_router import AdvisorRoute, RoutingError, route_interactive_request
 from .automation import (
     AppConfig,
     AutomationError,
@@ -184,8 +184,13 @@ def build_client(config: AppConfig) -> discord.Client:
             )
             return build_report_header(task, result) + result.text, False, result.thread_id, None
 
-        decision = route_interactive_request(
+        decision = await asyncio.to_thread(
+            route_interactive_request,
             content,
+            api_key=config.openai_api_key,
+            model=config.openai_web_model,
+            reasoning_effort=config.openai_web_reasoning_effort,
+            context_packet=context_packet,
             waiver_analysis=waiver_analysis,
             has_attachment=has_attachment,
         )
@@ -274,7 +279,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 if is_interactive:
                     remember_advisor_response(report, thread_id, route=route)
                 await send_chunks(message.channel, report)
-            except AutomationError as exc:
+            except (AutomationError, RoutingError) as exc:
                 LOGGER.exception("Advisor request failed for Discord message")
                 await send_chunks(message.channel, error_card("I couldn’t complete that task", str(exc)))
             except Exception:
@@ -355,7 +360,7 @@ def build_client(config: AppConfig) -> discord.Client:
                     await send_chunks(message.channel, watchlist_change("removed", removed))
                     return
                 raise WatchlistError(f"Unsupported watchlist action: {action}")
-            except (AutomationError, WatchlistError) as exc:
+            except (AutomationError, RoutingError, WatchlistError) as exc:
                 await send_chunks(message.channel, error_card("I couldn’t update the watchlist", str(exc)))
 
     async def run_interaction(
@@ -398,7 +403,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         chunk,
                         allowed_mentions=discord.AllowedMentions.none(),
                     )
-            except AutomationError as exc:
+            except (AutomationError, RoutingError) as exc:
                 LOGGER.exception("Advisor request failed for Discord command")
                 await interaction.edit_original_response(
                     content=compact_interaction_error("I couldn’t complete that task", exc)
