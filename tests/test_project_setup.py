@@ -58,9 +58,9 @@ class ProjectSetupTests(unittest.TestCase):
 
     def test_shared_chrome_instructions_and_discord_login_are_current(self):
         instructions = (ROOT / "AGENTS.md").read_text()
-        self.assertIn('version="2026-09-05.2"', instructions)
+        self.assertIn('version="2026-09-05.3"', instructions)
         self.assertIn(
-            'sha256="285edf0cfd3db9c45ba8344f0aa3dfcfa9eab89d7ab852d8cc3ac34b205abb56"',
+            'sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca"',
             instructions,
         )
         self.assertIn(
