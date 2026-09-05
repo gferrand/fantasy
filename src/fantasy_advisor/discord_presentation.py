@@ -147,6 +147,16 @@ def _stat_value(value: object) -> str:
     return str(value)
 
 
+def _trend_indicator(direction: object) -> str:
+    return {"up": " 🟢⬆️", "down": " 🔴⬇️", "flat": " ➖"}.get(str(direction), "")
+
+
+def _average_value(value: object, precision: int) -> str:
+    if not isinstance(value, (int, float)):
+        return "—"
+    return f"{float(value):.{precision}f}"
+
+
 def watchlist_stats_card(report: object) -> str:
     """Render the just-fetched current Sleeper totals for every watched player."""
 
@@ -158,6 +168,15 @@ def watchlist_stats_card(report: object) -> str:
     if week is not None:
         window += f" · GW{week}"
     lines = [f"📊 **Watchlist stats · {len(entries)} players**", f"*{window} · fetched {retrieved_at}*"]
+    trend_weeks = getattr(report, "trend_weeks", None)
+    trend_unavailable_reason = getattr(report, "trend_unavailable_reason", None)
+    if trend_weeks is not None:
+        previous_weeks, recent_weeks = trend_weeks
+        lines.append(
+            f"*Trend: GW{recent_weeks[0]}–{recent_weeks[-1]} vs GW{previous_weeks[0]}–{previous_weeks[-1]}*"
+        )
+    elif trend_unavailable_reason:
+        lines.append(f"*{trend_unavailable_reason}*")
     for entry in entries:
         player = getattr(entry, "player")
         club = str(getattr(player, "club")) or "no current club"
@@ -172,6 +191,34 @@ def watchlist_stats_card(report: object) -> str:
             if value is not None:
                 summary.append(f"{label} {_stat_value(value)}")
         lines.append("  " + " · ".join(summary or ["No scored stats returned."]))
+        averages = (
+            (
+                "Pts/min",
+                _average_value(getattr(entry, "points_per_minute", None), 2),
+                getattr(entry, "points_per_minute_trend", None),
+            ),
+            (
+                "Pts/game",
+                _average_value(getattr(entry, "points_per_game", None), 1),
+                getattr(entry, "points_per_game_trend", None),
+            ),
+            (
+                "Min/game",
+                _average_value(getattr(entry, "minutes_per_game", None), 1),
+                getattr(entry, "minutes_per_game_trend", None),
+            ),
+        )
+        lines.append(
+            "  " + " · ".join(
+                f"{label} {value}{_trend_indicator(direction)}" for label, value, direction in averages
+            )
+        )
+        if trend_weeks is not None:
+            unavailable = [label for label, _, direction in averages if direction is None]
+            if unavailable:
+                lines.append(
+                    f"  Trend unavailable for {', '.join(unavailable)}: no usable appearances in both windows."
+                )
         details = []
         for label, field in (("G", "goals"), ("A", "assists"), ("CS", "clean_sheets"), ("SV", "saves")):
             value = getattr(entry, field)
