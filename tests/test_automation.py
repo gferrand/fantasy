@@ -342,8 +342,14 @@ class AutomationTests(unittest.TestCase):
                 "retrieved_at": "2026-08-25T00:00:00+00:00", "round": 2,
                 "league": {"season": "2026", "name": "Kick & Run", "scoring_settings": {"pos_d_tk": 1}, "roster_positions": ["D"]},
                 "state": {"display_week": 2},
-                "users": [{"user_id": "1127171221277331456", "team_name": "Los Blancos"}],
-                "rosters": [{"owner_id": "1127171221277331456", "players": ["owned"]}],
+                "users": [
+                    {"user_id": "1127171221277331456", "team_name": "Los Blancos"},
+                    {"user_id": "other", "team_name": "Rival Team"},
+                ],
+                "rosters": [
+                    {"owner_id": "1127171221277331456", "players": ["owned"]},
+                    {"owner_id": "other", "players": ["other"]},
+                ],
                 "players": {"owned": {"name": "Owned Defender", "club": "ARS", "positions": ["D"]}, "other": {"name": "Other Player", "club": "CHE", "positions": ["M"]}},
                 "stats": [{"player_id": "owned", "stats": {"gp": 2, "gs": 2, "min": 180, "ignored": 99}}],
                 "available_players": [{"name": "Candidate"}],
@@ -360,6 +366,14 @@ class AutomationTests(unittest.TestCase):
             self.assertIn('"team_swap_recommendations"', packet)
             self.assertIn('"current_season_point_gain":5', packet)
             self.assertIn("INTERACTIVE", packet)
+
+            with patch("fantasy_advisor.automation.urlopen", side_effect=OSError("offline")):
+                league_packet = load_interactive_live_feed_context(
+                    config,
+                    include_league_rosters=True,
+                )
+            self.assertIn("Rival Team", league_packet)
+            self.assertIn("Other Player", league_packet)
 
     def test_previous_state_is_bounded_and_included(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -646,7 +646,12 @@ def load_live_compact_feed_context(config: AppConfig, *, include_availability: b
     )
 
 
-def load_interactive_live_feed_context(config: AppConfig, *, include_availability: bool = False) -> str:
+def load_interactive_live_feed_context(
+    config: AppConfig,
+    *,
+    include_availability: bool = False,
+    include_league_rosters: bool = False,
+) -> str:
     """Return only the user's relevant roster data to an interactive Codex task.
 
     Passing every compact-feed roster, player and stat record still creates a
@@ -683,27 +688,30 @@ def load_interactive_live_feed_context(config: AppConfig, *, include_availabilit
     for row in payload.get("stats") or []:
         if isinstance(row, dict) and isinstance(row.get("stats"), dict):
             stats_by_id[str(row.get("player_id") or "")] = row["stats"]
-    roster_players = []
-    for player_id in roster_ids:
+    def player_summary(player_id: str) -> dict[str, Any] | None:
         player = player_map.get(player_id)
         if not isinstance(player, dict):
-            continue
+            return None
         stat_row = stats_by_id.get(player_id, {})
-        roster_players.append(
-            {
-                "player_id": player_id,
-                "name": player.get("name"),
-                "club": player.get("club"),
-                "positions": player.get("positions") or [],
-                "injury_status": player.get("injury_status"),
-                "injury_notes": player.get("injury_notes"),
-                "current_season_summary": {
-                    key: stat_row[key]
-                    for key in ("gp", "gs", "min", "pts_std", "rank_std")
-                    if key in stat_row
-                },
-            }
-        )
+        return {
+            "player_id": player_id,
+            "name": player.get("name"),
+            "club": player.get("club"),
+            "positions": player.get("positions") or [],
+            "injury_status": player.get("injury_status"),
+            "injury_notes": player.get("injury_notes"),
+            "current_season_summary": {
+                key: stat_row[key]
+                for key in ("gp", "gs", "min", "pts_std", "rank_std")
+                if key in stat_row
+            },
+        }
+
+    roster_players = [
+        summary
+        for player_id in roster_ids
+        if (summary := player_summary(player_id)) is not None
+    ]
     league = payload["league"]
     compact = {
         "retrieved_at": payload["retrieved_at"],
@@ -717,6 +725,24 @@ def load_interactive_live_feed_context(config: AppConfig, *, include_availabilit
         "round": payload.get("round"),
         "your_team": {"name": team_name, "players": roster_players},
     }
+    if include_league_rosters:
+        team_names = {
+            str(user.get("user_id")): str(user.get("team_name") or user.get("display_name") or "Unknown team")
+            for user in users
+            if isinstance(user, dict) and user.get("user_id") is not None
+        }
+        compact["league_teams"] = [
+            {
+                "team_name": team_names.get(str(item.get("owner_id")), "Unknown team"),
+                "players": [
+                    summary
+                    for player_id in item.get("players") or []
+                    if (summary := player_summary(str(player_id))) is not None
+                ],
+            }
+            for item in rosters
+            if isinstance(item, dict) and item.get("owner_id") is not None
+        ]
     if include_availability:
         compact["available_player_shortlist"] = payload.get("available_players") or []
         compact["team_swap_recommendations"] = payload.get("team_swap_recommendations") or []
@@ -727,7 +753,7 @@ def load_interactive_live_feed_context(config: AppConfig, *, include_availabilit
         "LIVE INTERACTIVE SLEEPER FEED (bounded roster-specific snapshot)\n"
         f"Source: {source}\n"
         f"{premier_league_evidence_window(payload)}\n"
-        "This is the complete current context needed for ordinary roster questions. "
+        "This is the complete current context needed for this request. "
         "Do not reconstruct the full league player pool.\nJSON:\n"
         + json.dumps(compact, ensure_ascii=False, separators=(",", ":"))
     )
@@ -1609,6 +1635,7 @@ def run_interactive_task(
     *,
     context_packet: str | None = None,
     waiver_analysis: bool = False,
+    league_wide: bool = False,
 ) -> CodexResult:
     """Run an interactive task with an optional Discord-built context packet."""
 
@@ -1620,6 +1647,7 @@ def run_interactive_task(
             live_feed_packet=load_interactive_live_feed_context(
                 config,
                 include_availability=waiver_analysis or availability_question(question),
+                include_league_rosters=league_wide,
             ),
         ),
         label="discord-query",
