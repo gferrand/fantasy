@@ -13,7 +13,7 @@ import tempfile
 import discord
 from discord import app_commands
 
-from .advisor_router import AdvisorRoute, RoutingError, route_interactive_request
+from .advisor_router import AdvisorRoute, LeagueDataScope, RoutingError, route_interactive_request
 from .automation import (
     AppConfig,
     AutomationError,
@@ -202,6 +202,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 content,
                 context_packet=context_packet,
                 waiver_analysis=waiver_analysis,
+                league_wide=decision.league_data_scope is LeagueDataScope.LEAGUE_ROSTERS,
             )
         else:
             result = await asyncio.to_thread(
