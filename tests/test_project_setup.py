@@ -28,6 +28,7 @@ class ProjectSetupTests(unittest.TestCase):
         client = build_client(config)
         tree = client._fantasy_command_tree
         self.assertIn("analyze-waivers", [command.name for command in tree.get_commands()])
+        self.assertIn("rotation", [command.name for command in tree.get_commands()])
 
     def test_discord_presence_is_best_effort_and_guild_handling_stays_disabled(self):
         source = (ROOT / "src" / "fantasy_advisor" / "discord_bot.py").read_text()

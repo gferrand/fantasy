@@ -18,7 +18,7 @@ from fantasy_advisor.automation import (
 )
 from fantasy_advisor.gameweek import LEAGUE_ID
 from fantasy_advisor.sleeper import API_BASE, STATS_BASE, SleeperDataError
-from fantasy_advisor.trade_proposals import evaluate_lineup, load_trade_proposal_context
+from fantasy_advisor.trade_proposals import build_trade_options, evaluate_lineup, load_trade_proposal_context
 
 
 class _SleeperClient:
@@ -180,6 +180,68 @@ class TradeProposalTests(unittest.TestCase):
             for player in option["you_receive"]
         }
         self.assertNotIn("Erling Haaland", received_names)
+
+    def test_protected_players_are_excluded_from_outgoing_packages(self):
+        def signal(player_id, name, position, current, projected):
+            return {
+                "player_id": player_id,
+                "name": name,
+                "club": "ARS",
+                "positions": [position],
+                "position_points": {position: current},
+                "current_custom_points": current,
+                "projected_horizon_points": projected,
+                "custom_points_per_90": current,
+                "minutes": 360,
+                "scoring_data_available": True,
+                "forecast_horizon_fixtures": 4,
+                "forecast_fixture_adjustment": 0,
+            }
+
+        owner = {
+            "players": [
+                signal("of", "Owner Forward", "F", 30, 30),
+                signal("protected", "Protected Mid", "M", 66, 40),
+                signal("om", "Owner Backup", "M", 50, 35),
+                signal("od", "Owner Defender", "D", 50, 50),
+            ],
+            "remaining_faab": 50,
+        }
+        partner = {
+            "name": "Partner",
+            "roster_id": 2,
+            "players": [
+                signal("pf", "Partner Forward", "F", 60, 70),
+                signal("pm", "Partner Mid", "M", 10, 10),
+                signal("pd", "Partner Defender", "D", 50, 50),
+                signal("pb", "Partner Backup", "F", 20, 20),
+            ],
+        }
+        unprotected = build_trade_options(
+            owner_team=owner,
+            partner_teams=[partner],
+            starting_slots=("F", "M", "D"),
+            limit=5,
+        )
+        self.assertTrue(any(
+            outgoing["player_id"] == "protected"
+            for option in unprotected
+            for outgoing in option["you_send"]
+        ))
+
+        options = build_trade_options(
+            owner_team=owner,
+            partner_teams=[partner],
+            starting_slots=("F", "M", "D"),
+            protected_player_ids={"protected"},
+            limit=5,
+        )
+
+        self.assertTrue(all(
+            outgoing["player_id"] != "protected"
+            for option in options
+            for outgoing in option["you_send"]
+        ))
 
     def test_requires_current_custom_scoring(self):
         with self.assertRaisesRegex(SleeperDataError, "custom scoring"):

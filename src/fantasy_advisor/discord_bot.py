@@ -29,6 +29,7 @@ from .automation import (
     run_interactive_task,
     run_gameweek_web_briefing,
     run_injury_web_briefing,
+    run_rotation_web_briefing,
     run_trade_web_briefing,
     run_web_briefing,
     run_watchlist_web_briefing,
@@ -83,6 +84,7 @@ from .injury_opportunities import (
     render_injury_opportunities,
 )
 from .trade_proposals import load_trade_proposal_context
+from .rotation import load_rotation_context
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -463,6 +465,43 @@ def build_client(config: AppConfig) -> discord.Client:
             WAIVER_ANALYSIS_REQUEST,
             waiver_analysis=True,
         )
+
+    @command_tree.command(
+        name="rotation",
+        description="Plan protected-core moves around the next four fixtures",
+    )
+    @app_commands.allowed_installs(users=True, guilds=False)
+    @app_commands.allowed_contexts(guilds=False, dms=True, private_channels=False)
+    async def rotation_command(interaction: discord.Interaction) -> None:
+        if str(interaction.user.id) != config.discord_allowed_user_id:
+            await interaction.response.send_message(private_advisor_only(), ephemeral=True)
+            return
+        remember_dm_channel(interaction.channel)
+        await interaction.response.defer()
+        try:
+            async with run_lock:
+                fixture_schedule = await asyncio.to_thread(load_persisted_fixture_schedule, config)
+                context = await asyncio.to_thread(
+                    load_rotation_context,
+                    manager_id=EXPECTED_MANAGER_ID,
+                    fixture_schedule=fixture_schedule,
+                )
+                result = await asyncio.to_thread(
+                    run_rotation_web_briefing,
+                    config,
+                    live_context=context.as_json(),
+                )
+            await edit_interaction_with_chunks(interaction, result.text)
+        except (AutomationError, SleeperDataError) as exc:
+            LOGGER.exception("Could not build a rotation report")
+            await interaction.edit_original_response(
+                content=compact_interaction_error("Couldn’t build the rotation report", exc)
+            )
+        except Exception:
+            LOGGER.exception("Unexpected failure building a rotation report")
+            await interaction.edit_original_response(
+                content=error_card("Couldn’t build the rotation report", "Please try again shortly.")
+            )
 
     @command_tree.command(name="tasks", description="List the registered fantasy advisor tasks")
     @app_commands.allowed_installs(users=True, guilds=False)

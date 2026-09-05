@@ -189,6 +189,18 @@ use:
 /analyze-waivers
 ```
 
+For a fixture-timed Moneyball rotation plan, use:
+
+```text
+/rotation
+```
+
+It analyzes the next four published fixtures, shows difficult runs for core
+holds, and ranks at most five available-player or trade moves. Core players are
+calculated conservatively from the current and projected legal XIs and are
+excluded from every outgoing move. Sleeper still requires manual verification
+and execution.
+
 The waiver report is optimized for phone reading: emoji-led pickup cards,
 clear `ADD` → `DROP` swap cards, then the complete 30-player shortlist in
 one continuous ranked list. `/ask` chooses the web briefing for a general
