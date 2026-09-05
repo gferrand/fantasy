@@ -49,6 +49,7 @@ def help_menu() -> str:
     return (
         "🧭 **Fantasy Advisor guide**\n\n"
         "🏟️ **Waivers**\n`/analyze-waivers` — pickups and manual-review swaps\n\n"
+        "🔄 **Rotation**\n`/rotation` — protected-core moves for the next four fixtures\n\n"
         "🗓️ **Gameweek**\n`/gameweek prepare` — next lineup, fixtures, and key opponents\n"
         "`/gameweek recap` — last completed gameweek and watchlist signals\n\n"
         "🩺 **Injuries**\n`/injury opportunities` — complete injury board and likely beneficiaries\n\n"

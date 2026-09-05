@@ -4,6 +4,11 @@ A read-only, personalized advisor for the **Kick & Run** Sleeper fantasy English
 
 The project is designed to research and explain roster news, injuries, fixtures, lineup choices, waiver targets, trades, and weekly strategy. It must never make roster, waiver, trade, or lineup changes on Sleeper without an explicit human decision.
 
+Use `/rotation` in the private Fantasy Advisor DM for a protected-core,
+four-fixture Moneyball plan across available players and realistic trades. The
+command never proposes an automatically protected player as a drop or outgoing
+trade piece, and all actions remain manual in Sleeper.
+
 ## Project map
 
 - [`league_context.md`](league_context.md) — canonical league constants, rules, validation policy, and current roster.

@@ -39,6 +39,13 @@ class DiscordBotTests(unittest.TestCase):
     def test_private_player_catalog_update_command_is_registered(self):
         self.assert_private_group("player_catalog", ["update"])
 
+    def test_private_rotation_command_is_registered(self):
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("rotation")  # type: ignore[attr-defined]
+        self.assertIsNotNone(command)
+        self.assertFalse(command.allowed_contexts.guild)
+        self.assertTrue(command.allowed_contexts.dm_channel)
+
     def test_private_watch_stats_command_is_registered(self):
         self.assert_private_group(
             "watch", ["add", "remove", "list", "stats", "outlook", "recommend"]

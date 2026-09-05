@@ -650,8 +650,10 @@ def build_trade_options(
     owner_team: Mapping[str, Any],
     partner_teams: Iterable[Mapping[str, Any]],
     starting_slots: Iterable[str],
+    protected_player_ids: Iterable[str] = (),
+    limit: int = 3,
 ) -> list[dict[str, Any]]:
-    """Return up to three mutually viable two- or three-player packages.
+    """Return a bounded set of mutually viable two- or three-player packages.
 
     A package is eligible only when the owner's legal, current custom-scoring
     lineup improves, the other manager's legal lineup also improves, and the
@@ -665,7 +667,12 @@ def build_trade_options(
     owner_projection_before = evaluate_lineup(
         owner_players, slots, score_field="projected_horizon_points"
     )
-    outgoing_candidates = _candidate_players(owner_players, market_side="send")
+    protected = {str(player_id) for player_id in protected_player_ids}
+    outgoing_candidates = [
+        player
+        for player in _candidate_players(owner_players, market_side="send")
+        if str(player.get("player_id")) not in protected
+    ]
     outgoing_singles, outgoing_pairs = _packages(outgoing_candidates)
     raw_options: list[dict[str, Any]] = []
 
@@ -805,7 +812,7 @@ def build_trade_options(
         seen.add(identity)
         option.pop("_rank", None)
         selected.append(option)
-        if len(selected) == 3:
+        if len(selected) == limit:
             break
     return selected
 

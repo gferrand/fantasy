@@ -52,6 +52,13 @@ Planned read-only analyses include:
 - Trade-target and trade-value analysis
 - Weekly playoff and roster strategy
 
+The private `/rotation` command combines live custom-scoring rates with the
+persisted fixture calendar over four matches. Its protected core is the union
+of the best current XI, best projected four-fixture XI, and medical holds.
+Only legal-lineup-improving moves may be shown, and protected players are never
+used as outgoing pieces. Available-player and fair-trade paths share one
+five-move report with an explicit post-run reassessment window.
+
 Every recommendation should explain the evidence, uncertainty, relevant scoring categories, and the action for the manager to consider.
 
 The private `/injury opportunities` path fetches the complete active Sleeper
