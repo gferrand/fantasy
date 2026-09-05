@@ -551,7 +551,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 await interaction.edit_original_response(content=watchlist_empty())
                 return
             async with run_lock:
-                report = await asyncio.to_thread(load_current_watchlist_stats, watched)
+                report = await asyncio.to_thread(load_current_watchlist_stats, watched, include_trends=True)
             await edit_interaction_with_chunks(interaction, watchlist_stats_card(report))
         except (AutomationError, SleeperDataError, WatchlistError) as exc:
             LOGGER.exception("Could not load current Sleeper watchlist stats")

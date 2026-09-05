@@ -58,16 +58,67 @@ class DiscordPresentationTests(unittest.TestCase):
         report = WatchlistStatsReport(
             "2026", 3, "2026-09-03T02:10:00+00:00",
             (
-                WatchlistStat(player, 22.5, 2.0, 2.0, 180.0, 2.0, 1.0, None, None, None, None, True),
+                WatchlistStat(
+                    player, 22.5, 2.0, 2.0, 180.0, 2.0, 1.0, None, None, None, None, True,
+                    points_per_minute=0.125,
+                    points_per_game=11.25,
+                    minutes_per_game=90.0,
+                    points_per_minute_trend="up",
+                    points_per_game_trend="down",
+                    minutes_per_game_trend="flat",
+                ),
                 WatchlistStat(missing, None, None, None, None, None, None, None, None, None, None, False),
             ),
+            trend_weeks=((1, 2, 3), (4, 5, 6)),
         )
         card = watchlist_stats_card(report)
         self.assertIn("Watchlist stats · 2 players", card)
         self.assertIn("Pts 22.5 · GP 2 · GS 2 · Min 180", card)
+        self.assertIn("Trend: GW4–6 vs GW1–3", card)
+        self.assertIn("Pts/min 0.12 🟢⬆️", card)
+        self.assertIn("Pts/game 11.2 🔴⬇️", card)
+        self.assertIn("Min/game 90.0 ➖", card)
         self.assertIn("G 2 · A 1", card)
         self.assertIn("Former Player", card)
         self.assertIn("No current regular-season Sleeper stats returned.", card)
+
+    def test_watchlist_stats_card_explains_unavailable_trends(self):
+        player = WatchlistPlayer("1", "Bukayo Saka", "ARS", ("F",), "now")
+        report = WatchlistStatsReport(
+            "2026",
+            3,
+            "now",
+            (
+                WatchlistStat(
+                    player, 4.0, 1.0, 0.0, 45.0, None, None, None, None, None, None, True,
+                    points_per_minute=4 / 45,
+                    points_per_game=4,
+                    minutes_per_game=45,
+                ),
+            ),
+            trend_unavailable_reason="Trend needs six completed gameweeks.",
+        )
+
+        card = watchlist_stats_card(report)
+
+        self.assertIn("Trend needs six completed gameweeks.", card)
+        self.assertIn("Pts/min 0.09 · Pts/game 4.0 · Min/game 45.0", card)
+        self.assertNotIn("🟢", card)
+        self.assertNotIn("🔴", card)
+
+    def test_watchlist_stats_card_marks_player_specific_missing_history(self):
+        player = WatchlistPlayer("1", "New Player", "ARS", ("F",), "now")
+        report = WatchlistStatsReport(
+            "2026",
+            7,
+            "now",
+            (WatchlistStat(player, 8.0, 1.0, 1.0, 90.0, None, None, None, None, None, None, True),),
+            trend_weeks=((1, 2, 3), (4, 5, 6)),
+        )
+
+        card = watchlist_stats_card(report)
+
+        self.assertIn("Trend unavailable for Pts/min, Pts/game, Min/game", card)
 
 
 if __name__ == "__main__":
