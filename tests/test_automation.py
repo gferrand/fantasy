@@ -14,7 +14,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from fantasy_advisor.automation import (
     AppConfig,
     AutomationError,
-    BrowserTab,
     BrowserTabUnavailable,
     advisor_context_file,
     CodexResult,
@@ -621,7 +620,7 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("--ephemeral", command)
 
-    def test_browser_job_allocates_exact_owned_tab_runs_codex_and_closes_it(self):
+    def test_browser_job_creates_tab_runs_unmodified_prompt_and_closes_tab(self):
         created = subprocess.CompletedProcess(
             args=[], returncode=0, stdout=json.dumps({"status": "created", "tab_id": 42}), stderr=""
         )
@@ -656,9 +655,7 @@ class AutomationTests(unittest.TestCase):
             ],
         )
         submitted_prompt = process.communicate.call_args.kwargs["input"]
-        self.assertIn("Chrome tab ID 42", submitted_prompt)
-        self.assertIn("agent ID fantasy-test-task", submitted_prompt)
-        self.assertIn("Return the complete answer.", submitted_prompt)
+        self.assertEqual(submitted_prompt, "Return the complete answer.")
         self.assertIn("codex", popen.call_args.args[0])
 
     def test_browser_tab_allocation_failure_is_retryable_and_never_starts_codex(self):
@@ -698,48 +695,28 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(run.call_args_list[1].args[0][2], "close")
         self.assertEqual(run.call_args_list[1].args[0][-1], "42")
 
-    def test_browser_tab_touch_uses_matching_project_agent_and_tab(self):
-        touched = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=json.dumps({"status": "touched", "tab_id": 42}), stderr=""
+    def test_browser_job_closes_created_tab_when_codex_times_out(self):
+        created = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "created", "tab_id": 42}), stderr=""
         )
-        runner = CodexRunner(test_config())
-        with patch("fantasy_advisor.automation.subprocess.run", return_value=touched) as run:
-            runner._touch_browser_tab(BrowserTab(agent_id="fantasy-long-task", tab_id=42))
-        self.assertEqual(
-            run.call_args.args[0],
-            [
-                "infra-opt", "workspace", "touch", "--project", "fantasy",
-                "--agent-id", "fantasy-long-task", "--tab-id", "42",
-            ],
+        closed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "closed", "tab_id": 42}), stderr=""
         )
-
-    def test_long_browser_job_touches_exact_owned_tab_before_idle_limit(self):
-        process = MagicMock()
-        process.communicate.side_effect = [
-            subprocess.TimeoutExpired(cmd="codex", timeout=1),
-            ("events", "diagnostics"),
-        ]
+        process = MagicMock(pid=123)
+        process.communicate.side_effect = subprocess.TimeoutExpired(cmd="codex", timeout=60)
         runner = CodexRunner(test_config())
-        tab = BrowserTab(agent_id="fantasy-long-task", tab_id=42)
         with (
-            patch("fantasy_advisor.automation.BROWSER_TOUCH_INTERVAL_SECONDS", 1),
-            patch(
-                "fantasy_advisor.automation.time.monotonic",
-                side_effect=[0, 0, 0, 1.1, 1.1, 1.1],
-            ),
-            patch.object(runner, "_touch_browser_tab") as touch,
+            patch("fantasy_advisor.automation.subprocess.run", side_effect=[created, closed]) as run,
+            patch("fantasy_advisor.automation.subprocess.Popen", return_value=process),
+            patch.object(runner, "_browser_agent_id", return_value="fantasy-test-task"),
+            patch.object(runner, "_terminate_process") as terminate,
         ):
-            result = runner._communicate_with_tab_heartbeat(
-                process,
-                "prompt",
-                label="test",
-                timeout=10,
-                browser_tab=tab,
-            )
-        self.assertEqual(result, ("events", "diagnostics"))
-        touch.assert_called_once_with(tab)
-        self.assertEqual(process.communicate.call_args_list[0].kwargs["input"], "prompt")
-        self.assertIsNone(process.communicate.call_args_list[1].kwargs["input"])
+            with self.assertRaisesRegex(CodexRunError, "exceeded 60s"):
+                runner.run("Research current news.", label="test")
+        terminate.assert_called_once_with(process)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].args[0][2], "close")
+        self.assertEqual(run.call_args_list[1].args[0][-1], "42")
 
     def test_codex_event_parsing(self):
         events = "\n".join(

@@ -61,7 +61,6 @@ FANTASY_WEB_MODEL = "gpt-5.6-terra"
 FANTASY_WEB_REASONING_EFFORT = "low"
 BROWSER_PROJECT = "fantasy"
 BROWSER_COMMAND_TIMEOUT_SECONDS = 50
-BROWSER_TOUCH_INTERVAL_SECONDS = 45 * 60
 
 
 class AutomationError(RuntimeError):
@@ -294,12 +293,11 @@ class CodexRunner:
             result: CodexResult | None = None
             try:
                 result = self._run_local_codex(
-                    self._browser_task_prompt(prompt, tab),
+                    prompt,
                     label=label,
                     timeout=timeout,
                     started=started,
                     ephemeral=ephemeral,
-                    browser_tab=tab,
                 )
             except BaseException as exc:
                 failure = exc
@@ -323,7 +321,6 @@ class CodexRunner:
             timeout=timeout,
             started=started,
             ephemeral=ephemeral,
-            browser_tab=None,
         )
 
     def _run_local_codex(
@@ -334,7 +331,6 @@ class CodexRunner:
         timeout: int,
         started: float,
         ephemeral: bool | None,
-        browser_tab: BrowserTab | None,
     ) -> CodexResult:
         with tempfile.TemporaryDirectory(prefix="fantasy-codex-") as temporary:
             temporary_path = Path(temporary)
@@ -351,17 +347,12 @@ class CodexRunner:
                     start_new_session=True,
                 )
                 try:
-                    events, diagnostics = self._communicate_with_tab_heartbeat(
-                        process,
-                        prompt,
-                        label=label,
-                        timeout=timeout,
-                        browser_tab=browser_tab,
-                    )
-                except AutomationError:
-                    if process.poll() is None:
-                        self._terminate_process(process)
-                    raise
+                    events, diagnostics = process.communicate(input=prompt, timeout=timeout)
+                except subprocess.TimeoutExpired as exc:
+                    self._terminate_process(process)
+                    raise CodexRunError(
+                        f"Codex task {label!r} exceeded {timeout}s"
+                    ) from exc
             except FileNotFoundError as exc:
                 raise CodexRunError(
                     f"Codex executable not found: {self.config.codex_bin}"
@@ -402,20 +393,6 @@ class CodexRunner:
             agent_id,
             "--purpose",
             purpose,
-        ]
-
-    @staticmethod
-    def _browser_touch_command(tab: BrowserTab) -> list[str]:
-        return [
-            "infra-opt",
-            "workspace",
-            "touch",
-            "--project",
-            BROWSER_PROJECT,
-            "--agent-id",
-            tab.agent_id,
-            "--tab-id",
-            str(tab.tab_id),
         ]
 
     @staticmethod
@@ -473,15 +450,6 @@ class CodexRunner:
             raise BrowserTabUnavailable("Browser tab allocation was not confirmed")
         return BrowserTab(agent_id=agent_id, tab_id=tab_id)
 
-    def _touch_browser_tab(self, tab: BrowserTab) -> None:
-        body = self._workspace_action(self._browser_touch_command(tab), action="touch")
-        try:
-            confirmed_tab_id = int(body.get("tab_id") or 0)
-        except (TypeError, ValueError) as exc:
-            raise BrowserTabUnavailable("Browser tab touch returned an invalid tab ID") from exc
-        if body.get("status") != "touched" or confirmed_tab_id != tab.tab_id:
-            raise BrowserTabUnavailable("Browser tab touch was not confirmed")
-
     def _close_browser_tab(self, tab: BrowserTab) -> None:
         body = self._workspace_action(self._browser_close_command(tab), action="cleanup")
         try:
@@ -490,51 +458,6 @@ class CodexRunner:
             raise BrowserTabUnavailable("Browser tab cleanup returned an invalid tab ID") from exc
         if body.get("status") != "closed" or confirmed_tab_id != tab.tab_id:
             raise BrowserTabUnavailable("Browser tab cleanup was not confirmed")
-
-    @staticmethod
-    def _browser_task_prompt(prompt: str, tab: BrowserTab) -> str:
-        return f"""Browser ownership for this task:
-- Use Chrome tab ID {tab.tab_id}, owned by project fantasy and agent ID {tab.agent_id}.
-- Attach directly to that existing Chrome tab on the first browser-control call.
-- Do not create, reuse, switch to, move, touch, or close any other tab or window.
-- The caller owns lifecycle cleanup for this exact tab after the task finishes.
-
-{prompt}"""
-
-    def _communicate_with_tab_heartbeat(
-        self,
-        process: subprocess.Popen[str],
-        prompt: str,
-        *,
-        label: str,
-        timeout: int,
-        browser_tab: BrowserTab | None,
-    ) -> tuple[str, str]:
-        deadline = time.monotonic() + timeout
-        next_touch = (
-            time.monotonic() + BROWSER_TOUCH_INTERVAL_SECONDS if browser_tab is not None else None
-        )
-        pending_input: str | None = prompt
-        while True:
-            now = time.monotonic()
-            remaining = deadline - now
-            if remaining <= 0:
-                self._terminate_process(process)
-                raise CodexRunError(f"Codex task {label!r} exceeded {timeout}s")
-            wait_seconds = remaining
-            if next_touch is not None:
-                wait_seconds = min(wait_seconds, max(0.1, next_touch - now))
-            try:
-                return process.communicate(input=pending_input, timeout=wait_seconds)
-            except subprocess.TimeoutExpired as exc:
-                pending_input = None
-                now = time.monotonic()
-                if now >= deadline:
-                    self._terminate_process(process)
-                    raise CodexRunError(f"Codex task {label!r} exceeded {timeout}s") from exc
-                if browser_tab is not None and next_touch is not None and now >= next_touch:
-                    self._touch_browser_tab(browser_tab)
-                    next_touch = time.monotonic() + BROWSER_TOUCH_INTERVAL_SECONDS
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[str]) -> tuple[str, str]:
