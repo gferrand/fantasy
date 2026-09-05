@@ -51,6 +51,7 @@ def help_menu() -> str:
         "🏟️ **Waivers**\n`/analyze-waivers` — pickups and manual-review swaps\n\n"
         "🗓️ **Gameweek**\n`/gameweek prepare` — next lineup, fixtures, and key opponents\n"
         "`/gameweek recap` — last completed gameweek and watchlist signals\n\n"
+        "🩺 **Injuries**\n`/injury opportunities` — complete injury board and likely beneficiaries\n\n"
         "🧠 **Ask anything**\n`/ask` — research a player, fixture, or decision\n\n"
         "📬 **Reports**\n`/tasks` — see scheduled reports\n`/task <id>` — run one now\n\n"
         "🛡️ **Deadline Guardian**\n`/guardian done` — acknowledge current lineup alerts\n"

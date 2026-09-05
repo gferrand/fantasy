@@ -45,7 +45,8 @@ preprocessing: voice transcription continues to use
 The app's commands are installed to the Discord user account and remain DM-only.
 The bot is also installed in GF Control Room with outbound `View Channel` and
 `Send Messages` access limited to `#fantasy`. The durable on-demand entry point
-is `/ask`, with `/tasks` and `/task` for registered jobs. The gateway also
+is `/ask`, with `/tasks` and `/task` for registered jobs. `/injury opportunities`
+provides the complete Sleeper EPL injury board and likely beneficiaries. The gateway also
 retains ordinary one-to-one DM handling where Discord exposes message content.
 Every guild message, group DM, and non-allowlisted author is ignored before it
 can start a Codex task.
@@ -235,6 +236,14 @@ podcasts, and creators; club/league and general football reporting corroborate
 the underlying facts. The cards label the fantasy-analyst view separately from
 the club/news check. Both commands are private, read-only, and explicitly
 label every pickup/drop as a manual Sleeper decision.
+
+Use `/injury opportunities` for a fresh scan of every active EPL player Sleeper
+marks Out or GTD/Questionable, including unrostered players. The report gives a
+plain-English injury summary and only source-supported return outlooks, then
+ranks up to eight credible playing-time beneficiaries with unrostered league
+options first. Suspensions are excluded. If current injury research is
+unavailable, the command still returns Sleeper's complete status inventory and
+labels details and timetables unknown; it does not infer a recovery window.
 
 The transfer monitor stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or
