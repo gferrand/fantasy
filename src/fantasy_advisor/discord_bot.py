@@ -480,7 +480,11 @@ def build_client(config: AppConfig) -> discord.Client:
         await interaction.response.defer()
         try:
             async with run_lock:
-                fixture_schedule = await asyncio.to_thread(load_fixture_schedule, config)
+                fixture_schedule = await asyncio.to_thread(
+                    load_fixture_schedule,
+                    config,
+                    now=discord.utils.utcnow(),
+                )
                 context = await asyncio.to_thread(
                     load_rotation_context,
                     manager_id=EXPECTED_MANAGER_ID,

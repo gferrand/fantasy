@@ -51,7 +51,8 @@ class DiscordBotTests(unittest.TestCase):
         source = Path(discord_bot.__file__).read_text(encoding="utf-8")
 
         rotation_source = source.split("async def rotation_command", 1)[1][:1_500]
-        self.assertIn("load_fixture_schedule, config", rotation_source)
+        self.assertIn("load_fixture_schedule,", rotation_source)
+        self.assertIn("now=discord.utils.utcnow()", rotation_source)
         self.assertNotIn("load_persisted_fixture_schedule, config", rotation_source)
 
     def test_private_watch_stats_command_is_registered(self):
