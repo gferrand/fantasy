@@ -107,6 +107,8 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 - Policy marker: `infrastructure-chrome-workspace-policy:v1`.
 - Before browser work, run `infra-opt workspace preflight --project fantasy` exactly once. If this first preflight returns nonzero, run `infra-opt workspace focus --project fantasy` exactly once, then rerun `infra-opt workspace preflight --project fantasy` exactly once. Browser work is allowed only if that second preflight succeeds; otherwise stop.
 - Do not loop, retry, inspect content, or take any browser action during this recovery sequence.
+- Every browser-capable Fantasy job must invoke exactly `infra-opt workspace browser --project fantasy`, with the complete request supplied on standard input. This broker is the only browser route: never fall back to generic or shared host executors, Nettie, `infra-opt workspace current`, a General/manual window, another project, or metadata-only `codex exec` search.
+- The broker may use any website required by an authorized Fantasy request after it proves the managed Fantasy workspace; do not add a website allowlist. If that proof fails, return only a clean retryable blocked result and take no browser action.
 - Create tabs only through `infra-opt workspace create --project fantasy --purpose SAFE_PURPOSE`. General, Control, generic Chrome, and direct tab or window creation or switching are forbidden.
 - Use only CLI-created, recorded tabs. When complete, close only the recorded tab through `infra-opt workspace close --project fantasy --tab-id TAB_ID`; never close untracked tabs.
 - Use only this project's registered Chrome window; never create a Chrome profile, tab group, or routine browser restart.

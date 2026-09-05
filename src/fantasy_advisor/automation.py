@@ -21,7 +21,7 @@ import tempfile
 import time
 import tomllib
 from typing import Any
-from urllib.error import HTTPError, URLError
+from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from .context_store import SCHEDULED_REPORT, append_event, build_context_packet
@@ -93,8 +93,6 @@ class AppConfig:
     codex_timeout_seconds: int
     codex_ephemeral: bool
     codex_interactive_timeout_seconds: int = 180
-    host_executor_url: str | None = None
-    host_executor_token: str | None = None
     openai_api_key: str | None = None
     openai_audio_transcription_model: str = "gpt-4o-mini-transcribe"
     openai_document_model: str = "gpt-4.1-mini"
@@ -176,8 +174,6 @@ class AppConfig:
             codex_timeout_seconds=timeout,
             codex_ephemeral=parse_bool(os.environ.get("CODEX_EPHEMERAL", "false")),
             codex_interactive_timeout_seconds=interactive_timeout,
-            host_executor_url=os.environ.get("GF_HOST_EXECUTOR_URL", "").strip() or None,
-            host_executor_token=os.environ.get("GF_HOST_EXECUTOR_TOKEN", "").strip() or None,
         )
 
     def require_discord(self) -> None:
@@ -215,6 +211,16 @@ class CodexRunError(AutomationError):
     """Raised when a Codex task exits unsuccessfully or emits no final text."""
 
 
+class BrowserWorkspaceBlocked(CodexRunError):
+    """A verified Fantasy browser workspace is not currently available.
+
+    Callers may retry this failure later.  It deliberately has no local,
+    shared-executor, General-window, or metadata-only Codex fallback.
+    """
+
+    retryable = True
+
+
 class CodexRunner:
     """Launch the installed Codex CLI in a controlled, non-interactive task."""
 
@@ -222,7 +228,7 @@ class CodexRunner:
         self.config = config
 
     def command(self, output_file: Path, *, ephemeral: bool | None = None) -> list[str]:
-        command = [self.config.codex_bin, "--search", "exec"]
+        command = [self.config.codex_bin, "exec"]
         if self.config.codex_model:
             command.extend(("--model", self.config.codex_model))
         if self.config.codex_reasoning_effort:
@@ -259,6 +265,7 @@ class CodexRunner:
         label: str,
         timeout_seconds: int | None = None,
         ephemeral: bool | None = None,
+        browser_capable: bool = True,
     ) -> CodexResult:
         if not prompt.strip():
             raise CodexRunError(f"Cannot run empty Codex prompt for {label}")
@@ -266,8 +273,13 @@ class CodexRunner:
         if timeout < 1:
             raise CodexRunError(f"Codex timeout for {label!r} must be positive")
         started = time.monotonic()
-        if self.config.host_executor_url:
-            return self._run_on_host_executor(prompt, label=label, timeout=timeout, started=started)
+        if browser_capable:
+            return self._run_in_fantasy_browser_workspace(
+                prompt,
+                label=label,
+                timeout=timeout,
+                started=started,
+            )
         with tempfile.TemporaryDirectory(prefix="fantasy-codex-") as temporary:
             temporary_path = Path(temporary)
             output_file = temporary_path / "last-message.txt"
@@ -321,34 +333,50 @@ class CodexRunner:
                 elapsed_seconds=round(time.monotonic() - started, 2),
             )
 
-    def _run_on_host_executor(self, prompt: str, *, label: str, timeout: int, started: float) -> CodexResult:
-        if not self.config.host_executor_token:
-            raise CodexRunError("Host Codex executor is configured without its authentication token")
-        request = Request(
-            self.config.host_executor_url.rstrip("/") + "/v1/execute",
-            data=json.dumps(
-                {
-                    "app": "fantasy",
-                    "prompt": prompt,
-                    "model": self.config.codex_model or "",
-                    "reasoning_effort": self.config.codex_reasoning_effort or "",
-                    "sandbox": self.config.codex_sandbox,
-                    "timeout_seconds": timeout,
-                }
-            ).encode(),
-            headers={"Content-Type": "application/json", "X-GF-Executor-Secret": self.config.host_executor_token},
-            method="POST",
-        )
+    @staticmethod
+    def browser_command() -> list[str]:
+        """The only browser-capable executor for Fantasy requests."""
+        return ["infra-opt", "workspace", "browser", "--project", "fantasy"]
+
+    def _run_in_fantasy_browser_workspace(
+        self, prompt: str, *, label: str, timeout: int, started: float
+    ) -> CodexResult:
+        """Dispatch the complete request to Infrastructure's verified broker.
+
+        The broker owns workspace preflight and returns a blocked status if it
+        cannot prove the Fantasy window.  Do not add a fallback here: doing so
+        would permit a browser request to escape project isolation.
+        """
         try:
-            with urlopen(request, timeout=max(5, min(timeout + 15, 1815))) as response:
-                body = json.loads(response.read().decode())
-        except (HTTPError, URLError, TimeoutError, ValueError) as exc:
-            raise CodexRunError(f"Host Codex executor could not complete {label!r}") from exc
+            completed = subprocess.run(
+                self.browser_command(),
+                input=prompt,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.config.repo_root,
+                timeout=timeout,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise CodexRunError("infra-opt workspace browser is not installed") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise CodexRunError(f"Browser task {label!r} exceeded {timeout}s") from exc
+        try:
+            body = json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            detail = completed.stderr.strip()[-1000:] or "no broker result"
+            raise CodexRunError(f"Browser broker could not complete {label!r}: {detail}") from exc
+        if body.get("status") == "blocked":
+            reason = str(body.get("reason") or "workspace_unverified")
+            raise BrowserWorkspaceBlocked(
+                f"Browser workspace blocked for {label!r}; retryable: {reason}"
+            )
         if body.get("status") != "completed":
-            raise CodexRunError(f"Host Codex executor failed {label!r}")
-        text = str((body.get("result") or {}).get("response") or "").strip()
+            raise CodexRunError(f"Browser broker failed {label!r}")
+        text = str(body.get("result") or "").strip()
         if not text:
-            raise CodexRunError(f"Host Codex executor completed {label!r} without a final message")
+            raise CodexRunError(f"Browser broker completed {label!r} without a final message")
         return CodexResult(text=text, thread_id=None, elapsed_seconds=round(time.monotonic() - started, 2))
 
 

@@ -9,24 +9,33 @@ launchd
   ├─ 22:00 nightly recap   │
   └─ :17 every hour        │
                            v
-                    local `codex exec`
+       `infra-opt workspace browser --project fantasy`
+                    (complete request on stdin)
                            |
                            v
                  GF Control Room #fantasy
 ```
 
-The scheduled jobs use the installed local Codex CLI. Private Discord
+Every browser-capable scheduled or Discord Codex job invokes exactly
+`infra-opt workspace browser --project fantasy`, streaming its complete request
+on standard input. The Infrastructure broker first proves the managed Fantasy
+window; if it cannot, it returns a clean retryable blocked result. There is no
+generic/shared host executor, Nettie, `infra-opt workspace current`, General
+or manual-window, other-project, or metadata-only `codex exec` search fallback.
+Once the Fantasy window is verified, a job may use the websites its authorized
+request requires; this project does not maintain a website allowlist. Any tabs
+created for a request must be project-recorded and closed when finished; never
+inspect, reuse, move, or close untracked, owner, or another agent's tabs.
+
+Private Discord
 questions are routed by the data they need: public current-events and transfer
 questions use an OpenAI Responses API web-research briefing, while Sleeper,
 roster, waiver, player-fit, fixture, and scoring questions use local Codex
 with the validated league packet. Both paths remain read-only; neither makes
 or simulates a Sleeper transaction.
 
-Fantasy analysis is permanently pinned in application code to
-`gpt-5.6-luna` with `medium` reasoning. The runner sends both settings on every
-scheduled and league-data invocation, including requests routed through the
-shared host executor, so host-wide Codex defaults and environment variables do
-not alter the Fantasy profile. Public web briefings use `gpt-5.6-terra` with
+Legitimate non-browser Fantasy analysis is permanently pinned in application
+code to `gpt-5.6-luna` with `medium` reasoning. Public web briefings use `gpt-5.6-terra` with
 low reasoning and built-in web search; override that model only with
 `OPENAI_WEB_MODEL` in the local `.env`. These pins do not apply to attachment
 preprocessing: voice transcription continues to use

@@ -68,6 +68,11 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("General, Control, generic Chrome, and direct tab or window creation or switching are forbidden", instructions)
         self.assertIn("Use only CLI-created, recorded tabs", instructions)
         self.assertIn("close only the recorded tab", instructions)
+        self.assertIn("infra-opt workspace browser --project fantasy", instructions)
+        self.assertIn("complete request supplied on standard input", instructions)
+        self.assertIn("metadata-only `codex exec` search", instructions)
+        self.assertIn("clean retryable blocked result", instructions)
+        self.assertIn("do not add a website allowlist", instructions)
 
 
     def test_context_contains_current_club_safety_rules(self):

@@ -55,7 +55,18 @@ Every recommendation should explain the evidence, uncertainty, relevant scoring 
 
 ### 5. Conversation layer
 
-ChatGPT Scheduled Tasks will run focused recurring prompts and report findings to the manager. Stable league context is embedded in those prompts because Scheduled Tasks cannot access files stored in a ChatGPT Project.
+Browser-capable recurring and Discord-request analysis streams its complete
+request on standard input to `infra-opt workspace browser --project fantasy`.
+The Infrastructure broker may proceed only after it proves the managed Fantasy
+window. A failed proof is a clean retryable blocked result: no generic/shared
+executor, Nettie, `infra-opt workspace current`, General/manual window, other
+project, or metadata-only `codex exec` search fallback is allowed. Once the
+window is verified, the request may use its required websites without a website
+allowlist. It records and closes only its own project tabs at completion.
+
+Legitimate non-browser local execution remains available for work that does not
+need browser capability. Stable league context is embedded in task packets so
+the advisor can make bounded, reproducible use of league data.
 
 ## Boundaries
 
