@@ -1,10 +1,11 @@
-"""Explainable routing for private fantasy-advisor conversations."""
+"""LLM-based execution routing for private fantasy-advisor conversations."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
-import re
+import json
+from typing import Any
 
 
 class AdvisorRoute(StrEnum):
@@ -20,41 +21,107 @@ class RouteDecision:
     reason: str
 
 
-# League-state questions need the validated Sleeper packet and the Codex
-# workflow. Keep this explicit: public player facts such as injury news,
-# minutes, likely starts, and fixtures belong on the lighter web path unless
-# the owner asks us to apply them to their team or league.
-_LEAGUE_STATE_PATTERN = re.compile(
-    r"\b(?:sleeper|waivers?|free\s+agents?|available\s+players?|pickup|pick\s+up|"
-    r"drop|swap|replace|trade(?:s|d|ing)?|roster|squad|my\s+team|my\s+players?|los\s+blancos|"
-    r"team\s+fit|fit\s+for\s+my|fantasy\s+points?|league\s+settings?|scoring|"
-    r"gameweek|my\s+lineup|set\s+(?:my\s+)?lineup|captain|add\s+option|watchlist)\b",
-    re.IGNORECASE,
-)
-_CODEX_REQUEST_PATTERN = re.compile(r"\bcodex\b", re.IGNORECASE)
-_NEWS_PATTERN = re.compile(
-    r"\b(?:what\s+happened|news|deal|transfer|rumou?r|latest|report(?:ed)?|"
-    r"announc(?:e|ed|ement)|club\s+statement|confirmed?)\b",
-    re.IGNORECASE,
-)
+class RoutingError(RuntimeError):
+    """Raised when the LLM router cannot make a valid routing decision."""
+
+
+ROUTING_CAPABILITIES = """You route private Discord messages for a read-only fantasy
+Premier League advisor. Choose the smallest backend that can answer correctly.
+
+CODEX LEAGUE ANALYSIS can read the advisor's current Sleeper league snapshot and
+project context. It can reason about the owner's roster, other managers' rosters,
+trade possibilities, player ownership and availability, league scoring, lineups,
+waivers, free agents, watchlist, fixtures as they affect this particular league,
+and prior conversation context. It can also do bounded public football research.
+It is read-only: it cannot make Sleeper transactions.
+
+WEB RESEARCH can research public football news, transfers, injuries, fixtures,
+or player facts, but has no access to Sleeper, the owner's team, other managers,
+league scoring, roster ownership, trade block, waivers, free agents, or watchlist.
+
+Use CODEX whenever the answer needs, would materially benefit from, or is
+explicitly requested to use any league-specific information. Do not infer that
+a request is public merely because it does not name Sleeper. Interpret the full
+request and supplied recent context. Use WEB only when public football research
+is sufficient. Return only JSON matching the supplied schema."""
+
+ROUTE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "route": {"type": "string", "enum": ["codex_league", "openai_web"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 240},
+    },
+    "required": ["route", "reason"],
+}
+
+
+def _response_json(response: Any) -> dict[str, Any]:
+    text = str(getattr(response, "output_text", "") or "").strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise RoutingError("The advisor router returned an invalid decision") from exc
+    if not isinstance(payload, dict):
+        raise RoutingError("The advisor router returned an invalid decision")
+    return payload
 
 
 def route_interactive_request(
     question: str,
     *,
+    api_key: str | None,
+    model: str,
+    reasoning_effort: str,
+    context_packet: str | None = None,
     waiver_analysis: bool = False,
     has_attachment: bool = False,
+    client: Any | None = None,
 ) -> RouteDecision:
-    """Choose the smallest capable backend for an owner DM request."""
+    """Use LLM reasoning and the capability contract to select an execution path."""
 
-    if waiver_analysis:
-        return RouteDecision(AdvisorRoute.CODEX, "dedicated waiver analysis requires league data")
-    if has_attachment:
-        return RouteDecision(AdvisorRoute.CODEX, "attachment analysis stays on the local advisory path")
-    if _CODEX_REQUEST_PATTERN.search(question):
-        return RouteDecision(AdvisorRoute.CODEX, "owner explicitly requested the Codex league-analysis path")
-    if _LEAGUE_STATE_PATTERN.search(question):
-        return RouteDecision(AdvisorRoute.CODEX, "request depends on Sleeper, roster, or fantasy-league state")
-    if _NEWS_PATTERN.search(question):
-        return RouteDecision(AdvisorRoute.CHAT, "current football news can use focused web research")
-    return RouteDecision(AdvisorRoute.CHAT, "general question does not require private league data")
+    if not api_key:
+        raise RoutingError("OPENAI_API_KEY is required to choose the advisor execution path")
+    if client is None:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover - dependency is declared
+            raise RoutingError("The OpenAI Python SDK is not installed") from exc
+        client = OpenAI(api_key=api_key)
+
+    request_context = {
+        "user_request": question.strip(),
+        "recent_conversation": (context_packet or "").strip(),
+        "request_metadata": {
+            "is_dedicated_waiver_analysis": waiver_analysis,
+            "has_user_attachment": has_attachment,
+        },
+    }
+    try:
+        response = client.responses.create(
+            model=model,
+            instructions=ROUTING_CAPABILITIES,
+            input=json.dumps(request_context, ensure_ascii=False),
+            reasoning={"effort": reasoning_effort},
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "advisor_route",
+                    "strict": True,
+                    "schema": ROUTE_SCHEMA,
+                }
+            },
+            store=False,
+        )
+    except Exception as exc:
+        raise RoutingError("The advisor router could not choose an execution path") from exc
+
+    payload = _response_json(response)
+    try:
+        route = AdvisorRoute(payload["route"])
+    except (KeyError, ValueError) as exc:
+        raise RoutingError("The advisor router returned an unsupported execution path") from exc
+    reason = payload.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        raise RoutingError("The advisor router returned an invalid decision")
+    return RouteDecision(route=route, reason=reason.strip())
