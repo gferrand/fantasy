@@ -3,6 +3,7 @@ import unittest
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from fantasy_advisor.automation import (
     AppConfig,
     AutomationError,
+    BrowserWorkspaceBlocked,
     advisor_context_file,
     CodexResult,
     CodexRunner,
@@ -598,7 +600,8 @@ class AutomationTests(unittest.TestCase):
 
     def test_codex_command_is_non_interactive_and_read_only_by_default(self):
         command = CodexRunner(test_config()).command(Path("/tmp/fantasy-last-message.txt"))
-        self.assertEqual(command[:3], ["codex", "--search", "exec"])
+        self.assertEqual(command[:2], ["codex", "exec"])
+        self.assertNotIn("--search", command)
         self.assertIn("--model", command)
         self.assertIn("gpt-5.6-luna", command)
         self.assertIn('model_reasoning_effort="medium"', command)
@@ -616,38 +619,29 @@ class AutomationTests(unittest.TestCase):
         )
         self.assertIn("--ephemeral", command)
 
-    def test_host_executor_request_pins_luna_medium(self):
-        captured = {}
-
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def read(self):
-                return json.dumps(
-                    {"status": "completed", "result": {"response": "ok"}}
-                ).encode()
-
-        def fake_urlopen(request, timeout):
-            captured["payload"] = json.loads(request.data.decode())
-            captured["timeout"] = timeout
-            return FakeResponse()
-
-        config = test_config().__class__(
-            **{
-                **test_config().__dict__,
-                "host_executor_url": "http://127.0.0.1:8799",
-                "host_executor_token": "secret",
-            }
+    def test_browser_job_uses_exact_project_broker_and_full_stdin_request(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=json.dumps({"status": "completed", "result": "ok"}), stderr=""
         )
-        with patch("fantasy_advisor.automation.urlopen", side_effect=fake_urlopen):
-            result = CodexRunner(config).run("Return ok.", label="test")
+        with patch("fantasy_advisor.automation.subprocess.run", return_value=completed) as run:
+            result = CodexRunner(test_config()).run("Return the complete answer.", label="test")
         self.assertEqual(result.text, "ok")
-        self.assertEqual(captured["payload"]["model"], "gpt-5.6-luna")
-        self.assertEqual(captured["payload"]["reasoning_effort"], "medium")
+        self.assertEqual(run.call_args.args[0], ["infra-opt", "workspace", "browser", "--project", "fantasy"])
+        self.assertEqual(run.call_args.kwargs["input"], "Return the complete answer.")
+        self.assertTrue(run.call_args.kwargs["text"])
+
+    def test_browser_workspace_block_is_retryable_and_never_falls_back(self):
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=2,
+            stdout=json.dumps({"status": "blocked", "reason": "workspace_unverified"}),
+            stderr="",
+        )
+        runner = CodexRunner(test_config())
+        with patch("fantasy_advisor.automation.subprocess.run", return_value=completed) as run:
+            with self.assertRaisesRegex(BrowserWorkspaceBlocked, "retryable: workspace_unverified"):
+                runner.run("Research current news.", label="test")
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0], runner.browser_command())
 
     def test_codex_event_parsing(self):
         events = "\n".join(
