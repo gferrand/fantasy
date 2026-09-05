@@ -117,6 +117,7 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 
 ## Shared Chrome tab policy
 
+- The required task-owned tab lifecycle is `create` → `touch` (when needed) → `close`; do not skip or reorder these ownership steps.
 - Chrome uses Infrastructure's single shared normal window in the existing signed-in profile. Never create a Chrome profile, tab group, extra window, or routine browser restart.
 - Before any browser interaction, synchronously run `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE` and wait for its confirmed tab ID. Work only in that exact task-owned tab.
 - Give each task a unique, non-sensitive agent ID and a short, non-sensitive purpose. Never put URLs, titles, page content, cookies, credentials, prompts, or tokens in either value.
