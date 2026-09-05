@@ -78,7 +78,7 @@ from .watchlist import (
 )
 from .watchlist_stats import load_current_watchlist_stats
 from .gameweek import load_gameweek_prepare_context, load_gameweek_recap_context
-from .lineup_alerts import load_persisted_fixture_schedule
+from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
 from .injury_opportunities import (
     load_injury_opportunities_context,
     render_injury_opportunities,
@@ -480,7 +480,7 @@ def build_client(config: AppConfig) -> discord.Client:
         await interaction.response.defer()
         try:
             async with run_lock:
-                fixture_schedule = await asyncio.to_thread(load_persisted_fixture_schedule, config)
+                fixture_schedule = await asyncio.to_thread(load_fixture_schedule, config)
                 context = await asyncio.to_thread(
                     load_rotation_context,
                     manager_id=EXPECTED_MANAGER_ID,

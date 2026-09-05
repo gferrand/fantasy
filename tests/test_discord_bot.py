@@ -8,6 +8,7 @@ ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from fantasy_advisor.automation import AppConfig, FANTASY_CODEX_MODEL, FANTASY_CODEX_REASONING_EFFORT
+from fantasy_advisor import discord_bot
 from fantasy_advisor.discord_bot import build_client
 
 
@@ -45,6 +46,13 @@ class DiscordBotTests(unittest.TestCase):
         self.assertIsNotNone(command)
         self.assertFalse(command.allowed_contexts.guild)
         self.assertTrue(command.allowed_contexts.dm_channel)
+
+    def test_rotation_initializes_fixture_schedule_when_missing(self):
+        source = Path(discord_bot.__file__).read_text(encoding="utf-8")
+
+        rotation_source = source.split("async def rotation_command", 1)[1][:1_500]
+        self.assertIn("load_fixture_schedule, config", rotation_source)
+        self.assertNotIn("load_persisted_fixture_schedule, config", rotation_source)
 
     def test_private_watch_stats_command_is_registered(self):
         self.assert_private_group(
