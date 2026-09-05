@@ -26,6 +26,7 @@ MIN_INCOMING_MINUTES = 90.0
 MIN_INCOMING_STARTS = 1.0
 MIN_EXPECTED_MINUTES = 60.0
 MAX_TARGET_FIXTURE_DIFFICULTY = 3.0
+TRADE_VALUE_PERCENTILE = 0.75
 DIFFICULT_FIXTURE_THRESHOLD = 3.1
 KNOWN_NON_EPL_TRANSFERS = {
     "Mohamed Salah": "Trabzonspor",
@@ -82,7 +83,7 @@ def _target_summary(
         key: player.get(key)
         for key in (
             "player_id", "name", "club", "positions", "injury_status", "minutes", "starts",
-            "custom_points_per_90", "projected_horizon_points",
+            "games", "current_custom_points", "custom_points_per_90", "projected_horizon_points",
             "forecast_expected_minutes_per_fixture", "forecast_fixture_difficulty",
             "forecast_next_fixtures",
         )
@@ -143,6 +144,54 @@ def _rank_targets(
         )
         for player in selected[:limit]
     ]
+
+
+def _percentile(values: Iterable[float], percentile: float) -> float:
+    """Return a linearly interpolated percentile without another dependency."""
+
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return 0.0
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] + ((ordered[upper] - ordered[lower]) * fraction)
+
+
+def _rank_trade_targets(
+    players: Iterable[Mapping[str, Any]],
+    *,
+    extended_by_id: Mapping[str, Mapping[str, Any]],
+    owners: Mapping[str, str],
+    limit: int = 5,
+) -> tuple[list[dict[str, Any]], float]:
+    """Keep rotation trades below the current-production premium tier.
+
+    Current scoring is the clearest market-cost signal available from Sleeper.
+    The top quartile is therefore treated as established/premium rather than a
+    plausible fixture-streaming or buy-low pool.
+    """
+
+    reliable = [player for player in players if _has_reliable_role(player)]
+    cutoff = _percentile(
+        (float(player.get("current_custom_points") or 0.0) for player in reliable),
+        TRADE_VALUE_PERCENTILE,
+    )
+    value_pool = [
+        player
+        for player in reliable
+        if float(player.get("current_custom_points") or 0.0) <= cutoff
+    ]
+    return (
+        _rank_targets(
+            value_pool,
+            extended_by_id=extended_by_id,
+            owners=owners,
+            limit=limit,
+        ),
+        round(cutoff, 2),
+    )
 
 
 def _rank_drop_candidates(
@@ -284,7 +333,7 @@ def load_rotation_context(
     pickup_targets = _rank_targets(
         available_players, extended_by_id=extended_by_id, limit=5
     )
-    trade_targets = _rank_targets(
+    trade_targets, trade_premium_cutoff = _rank_trade_targets(
         partner_players,
         extended_by_id=extended_by_id,
         owners=partner_owners,
@@ -334,6 +383,12 @@ def load_rotation_context(
             "fixture_priority": (
                 f"Targets at or below {MAX_TARGET_FIXTURE_DIFFICULTY:.1f} difficulty rank first; "
                 "mixed runs remain visible as clearly labeled alternatives."
+            ),
+            "trade_value_gate": (
+                "Trade targets exclude the top quartile of reliable other-roster players by "
+                f"current custom points (current cutoff: {trade_premium_cutoff:.2f}). This keeps "
+                "the list focused on plausible buy-low and fixture-rotation targets rather than "
+                "elite, expensive cornerstones."
             ),
             "availability": "Sleeper public data cannot distinguish an immediate Add from waivers.",
             "transactions": "No Sleeper add, waiver, drop, or trade was made or simulated.",

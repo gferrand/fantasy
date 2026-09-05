@@ -1507,7 +1507,10 @@ Write a concise phone-first report with no Markdown table or code block. Use:
    quality, risk, and supplied exit plan. Never attach or imply a drop.
 4. `🤝 **TRADE TARGETS**` listing verified `trade_targets` independently with
    current fantasy team, next fixtures, projection, role, and acquisition case.
-   Do not invent an offer or outgoing package.
+   These must be realistic Moneyball rotation or buy-low targets. Never present
+   an established premium star, elite centerpiece, or obviously expensive asset
+   as a rotation target, even if supplied; omit them. Do not invent an offer or
+   outgoing package.
 5. `📉 **POSSIBLE DROPS / SHOP LIST**` listing only supplied `drop_candidates`
    and why each non-core roster spot is expendable. Never pair one automatically
    with a pickup or trade target. Say explicitly that the manager chooses the
