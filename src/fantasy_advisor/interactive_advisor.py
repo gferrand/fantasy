@@ -38,6 +38,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_RESULT_CHARS = 16_000
 FINAL_RESERVE_SECONDS = 30
 GROUNDING_TIMEOUT_SECONDS = 15
+TARGET_RESEARCH_TIMEOUT_SECONDS = 45
 MAX_PRIVATE_TOOL_CALLS = 4
 
 
@@ -844,7 +845,13 @@ async def run_advisor(
         try:
             reasoning_kwargs: dict[str, Any] = {
                 "instructions": final_advisor_instructions(reasoning_standard, contract, finalization),
-                "budget": min(30, deadline.remaining(FINAL_RESERVE_SECONDS)) if can_retrieve else deadline.remaining(),
+                "budget": (
+                    min(
+                        TARGET_RESEARCH_TIMEOUT_SECONDS if must_research_final_target else 30,
+                        deadline.remaining(FINAL_RESERVE_SECONDS),
+                    )
+                    if can_retrieve else deadline.remaining()
+                ),
                 "phase": "reasoning", "tools": external_tools,
                 "parallel_tool_calls": True,
             }
@@ -857,6 +864,12 @@ async def run_advisor(
                 **reasoning_kwargs,
             )
         except AutomationError:
+            # A target recommendation is unsafe without its required current
+            # public availability and role check.  Do not turn a failed web
+            # research pass into an unverified recommendation from Sleeper
+            # evidence alone.
+            if must_research_final_target:
+                return finish_failure()
             if evidence:
                 answer = None
                 try:

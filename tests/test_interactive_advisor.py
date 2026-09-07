@@ -285,6 +285,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         first_names = [tool.get("name") for tool in client.responses.create.call_args_list[0].kwargs["tools"] if tool["type"] == "function"]
         self.assertNotIn("retrieve_missing_private_fact", first_names)
 
+    async def test_failed_required_target_research_never_falls_back_to_an_unverified_recommendation(self):
+        call = NS(type="function_call", name="get_waiver_context", arguments='{"position":"ANY","limit":12}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), asyncio.TimeoutError()])))
+        packet = {
+            "status": "complete", "data": {"available_candidates": []}, "limitations": [],
+            "sources": [{"source": "test", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}],
+        }
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet), patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "What waiver move should I make right now?", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertEqual(client.responses.create.await_count, 2)
+
     async def test_normal_advisor_can_iterate_named_tools_for_compound_request(self):
         calls = [
             NS(type="function_call", name="get_team_context", arguments='{"team_name":"Los Blancos"}'),
