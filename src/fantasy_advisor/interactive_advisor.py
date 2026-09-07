@@ -207,7 +207,11 @@ Parse HTTP JSON and print only requested fields; do not dump full roster or stat
 payloads. Fresh reads are available through the configured HTTP proxy.
 Use /usr/bin/curl --fail --silent --show-error --max-time 8 for HTTPS GETs;
 it uses the working system trust store. Parse its captured stdout as JSON in
-Python. The default python3 urllib trust store can fail on this Mac; do not
+Python. Keep extraction commands short: print requested facts and timestamps,
+then format the final result JSON yourself. Do not build a validation framework
+inside the shell command. Use a Python heredoc with real newlines for multiline
+code, not escaped newlines in python -c.
+The default python3 urllib trust store can fail on this Mac; do not
 spend the budget trying it first. Never disable TLS verification (no curl -k,
 --insecure, or unverified SSL contexts). If verified HTTPS fails, report a source
 failure; do not bypass certificate checks.
@@ -346,7 +350,7 @@ async def run_advisor(
     except (ValueError, AttributeError) as exc:
         raise AutomationError("The advisor could not determine the required evidence. Please try again.") from exc
     if request:
-        await retrieve(request, 45)
+        await retrieve(request, 60)
     can_followup = bool(request) and deadline.remaining() > 45
     tools = [{"type": "web_search_preview", "search_context_size": "medium"}]
     if can_followup:
