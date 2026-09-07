@@ -49,6 +49,19 @@ def _season_and_week(state: object) -> tuple[str, int]:
     return season, week
 
 
+def latest_completed_gameweek(state: object) -> int:
+    """Return the completed round used by Fantasy's established recap flow.
+
+    Sleeper's EPL state exposes ``display_week`` as the round being displayed;
+    the recap has always reported the immediately preceding completed round.
+    Keeping this rule here prevents transaction and recap callers from making
+    separate calendar assumptions.
+    """
+
+    _season, display_week = _season_and_week(state)
+    return max(1, display_week - 1)
+
+
 def _name(player_id: str, player: Mapping[str, Any]) -> str:
     metadata = player.get("metadata")
     metadata = metadata if isinstance(metadata, Mapping) else {}
@@ -167,7 +180,7 @@ def load_gameweek_recap_context(
 
     sleeper = client or SleeperClient()
     season, display_week, league, rosters, users, _season_rows = _load_common(manager_id=manager_id, client=sleeper)
-    completed_week = max(1, display_week - 1)
+    completed_week = latest_completed_gameweek({"season": season, "display_week": display_week})
     weekly_rows = _validate_array(
         sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{season}/{completed_week}?season_type=regular"),
         "gameweek stats",

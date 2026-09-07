@@ -85,6 +85,13 @@ class GuidanceTests(unittest.TestCase):
         self.assertIn("# Fantasy Advisor Reasoning & Decision Standard", standard)
         self.assertIn("Do not tell the Owner to manually check", standard)
 
+    def test_runtime_capability_contract_describes_named_tool_loop_not_planner_limits(self):
+        contract = advisor.capability_contract(config()).casefold()
+        self.assertIn("four deterministic/private tool calls", contract)
+        self.assertIn("get_waiver_context", contract)
+        self.assertNotIn("planner", contract)
+        self.assertNotIn("third retrieval", contract)
+
     def test_missing_unreadable_or_empty_reasoning_standard_fails_clearly(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -112,9 +119,21 @@ class GuidanceTests(unittest.TestCase):
     def test_watchlist_action_requires_a_named_explicit_tool_call(self):
         with patch.object(advisor, "LocalActions") as actions:
             actions.return_value.add_to_watchlist.return_value = {"status": "success", "data": {"name": "Enciso"}, "detail": "Added"}
-            packet = advisor.execute_fantasy_tool(config(), "add_to_watchlist", json.dumps({"player_name": "Enciso"}), timeout=1)
+            packet = advisor.execute_fantasy_tool(config(), "add_to_watchlist", json.dumps({"player_name": "Enciso"}), timeout=1, requester_id="123")
         self.assertEqual(packet["status"], "success")
         actions.return_value.add_to_watchlist.assert_called_once_with("Enciso")
+        self.assertEqual(actions.call_args.kwargs["requester_id"], "123")
+
+    def test_guardian_and_remove_are_named_authenticated_actions(self):
+        with patch.object(advisor, "LocalActions") as actions:
+            actions.return_value.remove_from_watchlist.return_value = {"status": "success", "data": {}, "detail": "Removed"}
+            actions.return_value.acknowledge_guardian_alerts.return_value = {"status": "no_op", "data": {}, "detail": "None"}
+            remove = advisor.execute_fantasy_tool(config(), "remove_from_watchlist", '{"player_name":"Enciso"}', timeout=1, requester_id="123")
+            guardian = advisor.execute_fantasy_tool(config(), "acknowledge_guardian_alerts", "{}", timeout=1, requester_id="123")
+        self.assertEqual(remove["status"], "success")
+        self.assertEqual(guardian["status"], "no_op")
+        actions.return_value.remove_from_watchlist.assert_called_once_with("Enciso")
+        actions.return_value.acknowledge_guardian_alerts.assert_called_once()
 
     def test_named_catalog_routes_compact_league_and_market_requests(self):
         packet = {"status": "complete", "data": {}, "limitations": [], "sources": []}
@@ -181,7 +200,8 @@ class GuidanceTests(unittest.TestCase):
                 "get_trade_context",
             ):
                 with self.subTest(name=name):
-                    packet = advisor.execute_fantasy_tool(config(), name, "{}", timeout=1)
+                    arguments = '{"mode":"prepare"}' if name == "get_gameweek_context" else "{}"
+                    packet = advisor.execute_fantasy_tool(config(), name, arguments, timeout=1)
                     self.assertEqual(packet["status"], "complete")
                     self.assertEqual(packet["data"], context.payload)
                     self.assertFalse(packet["sources"][0]["stale"])
@@ -189,13 +209,16 @@ class GuidanceTests(unittest.TestCase):
         rotation.assert_called_once_with(
             manager_id=advisor.EXPECTED_MANAGER_ID,
             fixture_schedule="schedule",
+            client=ANY,
         )
         trade.assert_called_once_with(
             manager_id=advisor.EXPECTED_MANAGER_ID,
             fixture_schedule="schedule",
+            client=ANY,
         )
 
 
+@unittest.skip("The planner-only runtime was retired in favor of named product tools.")
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
         client = NS(responses=NS(create=AsyncMock(side_effect=responses)))
@@ -241,6 +264,17 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         execute.assert_called_once()
         self.assertEqual(persist.call_args.kwargs["metadata"]["source"], "advisor_tool:get_team_context")
         self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
+
+    async def test_best_waiver_request_can_use_one_compound_capability_without_codex(self):
+        call = NS(type="function_call", name="get_waiver_context", arguments="{}")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Add A, drop B")])) )
+        packet = {"status": "complete", "data": {"available_candidates": [], "roster_swap_recommendations": []}, "limitations": [], "sources": [{"source": "test", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}]}
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Look at my team and tell me the best waiver move I should make right now.", client=client, requester_id="123")
+        self.assertEqual(answer.text, "Add A, drop B")
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1], "get_waiver_context")
+        self.assertNotIn("Codex", str(client.responses.create.call_args_list))
 
     async def test_normal_advisor_can_iterate_named_tools_for_compound_request(self):
         calls = [

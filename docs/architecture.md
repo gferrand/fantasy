@@ -73,14 +73,13 @@ ordered chunks, avoiding both truncation and file attachments.
 
 ### 5. Conversation layer
 
-Normal `/ask`, plain messages, and supported attachments use an OpenAI-first
-private-data planner. Optional ephemeral Codex retrieval returns bounded facts;
-OpenAI produces every final advisory answer with public web-search access.
-The planner uses [data capabilities](advisor/DATA_CAPABILITIES.md) to determine
-which private facts may be needed; the final answer uses the durable
-[advisor reasoning standard](advisor/ADVISOR_REASONING.md). At most one
-additional essential private-fact retrieval is allowed. These
-retrieval tasks use no browser. The existing context SQLite database retains
+Normal `/ask`, plain messages, and supported attachments use the OpenAI Advisor
+with a bounded catalog of named deterministic capabilities and public
+web-search access. OpenAI chooses up to four material capabilities; Codex is a
+narrow fallback only when no named capability can retrieve the needed private
+fact. The final answer uses the durable
+[advisor reasoning standard](advisor/ADVISOR_REASONING.md). The existing
+context SQLite database retains
 separate timestamped private-evidence events alongside recent conversation.
 See [interactive advisor flow](discord-request-routing.md).
 

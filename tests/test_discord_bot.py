@@ -174,6 +174,15 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recent context", self.advisor.call_args.kwargs["context_packet"])
         self.assertIsNotNone(self.advisor.call_args.kwargs["deadline"])
 
+    async def test_watchlist_action_and_advice_both_use_the_semantic_tool_path(self):
+        for text in ("Remove Enciso from my watchlist.", "Should I remove Enciso from my watchlist?"):
+            with self.subTest(text=text):
+                message = self.message(text)
+                await self.client.on_message(message)
+                self.assertEqual(self.advisor.await_count, 1)
+                self.assertEqual(self.advisor.call_args.args[1], text)
+                self.advisor.reset_mock()
+
     async def test_ask_command_goes_to_unified_advisor(self):
         from types import SimpleNamespace as NS
         interaction = NS(user=NS(id=123), channel=NS(id=1234), response=NS(defer=AsyncMock()), edit_original_response=AsyncMock(), followup=NS(send=AsyncMock()))
@@ -183,16 +192,14 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.legacy.assert_not_called()
         self.assertIn("OpenAI final answer", interaction.edit_original_response.call_args.kwargs["content"])
 
-    async def test_waiver_command_keeps_legacy_route(self):
+    async def test_waiver_command_uses_the_shared_tool_capable_advisor(self):
         from types import SimpleNamespace as NS
         from fantasy_advisor.advisor_router import RouteDecision, AdvisorRoute, LeagueDataScope
         interaction = NS(user=NS(id=123), channel=NS(id=1234), response=NS(defer=AsyncMock()), edit_original_response=AsyncMock(), followup=NS(send=AsyncMock()))
         command = self.client._fantasy_command_tree.get_command("analyze-waivers")
-        with patch.object(discord_bot, "route_interactive_request", return_value=RouteDecision(AdvisorRoute.CODEX, "waiver", LeagueDataScope.LEAGUE_ROSTERS)):
-            await command.callback(interaction)
-        self.advisor.assert_not_awaited()
-        self.legacy.assert_called_once()
-        self.assertTrue(self.legacy.call_args.kwargs["waiver_analysis"])
+        await command.callback(interaction)
+        self.advisor.assert_awaited_once()
+        self.legacy.assert_not_called()
 
     async def test_attachments_use_same_pipeline_and_remove_temporary_files(self):
         from types import SimpleNamespace as NS

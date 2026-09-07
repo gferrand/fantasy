@@ -195,6 +195,7 @@ def build_client(config: AppConfig) -> discord.Client:
     async def report_for_content(
         content: str,
         *,
+        requester_id: str,
         context_packet: str | None = None,
         waiver_analysis: bool = False,
         has_attachment: bool = False,
@@ -213,8 +214,20 @@ def build_client(config: AppConfig) -> discord.Client:
             return build_report_header(task, result) + result.text, False, result.thread_id, None
 
         if not waiver_analysis:
-            result = await run_advisor(config, content, context_packet=context_packet, deadline=deadline)
+            result = await run_advisor(
+                config, content, context_packet=context_packet, deadline=deadline,
+                requester_id=requester_id,
+            )
             return advisor_header() + "\n\n" + result.text, True, None, None
+
+        # Dedicated waivers now use the same tool-capable Advisor. The
+        # compound capability keeps roster, ownership, and scoring evidence in
+        # one model tool call instead of reviving a separate report engine.
+        result = await run_advisor(
+            config, content, context_packet=context_packet, deadline=deadline or RequestDeadline.start(),
+            requester_id=requester_id,
+        )
+        return waiver_header() + "\n\n" + result.text, True, None, None
 
         decision = await asyncio.to_thread(
             route_interactive_request,
@@ -308,6 +321,7 @@ def build_client(config: AppConfig) -> discord.Client:
                     await asyncio.to_thread(remember_user_message, content, metadata=user_metadata)
                     report, is_interactive, thread_id, route = await report_for_content(
                         content, context_packet=context_packet,
+                        requester_id=str(message.author.id),
                         has_attachment=user_metadata is not None, deadline=deadline,
                     )
                     if is_interactive:
@@ -403,13 +417,14 @@ def build_client(config: AppConfig) -> discord.Client:
         await interaction.response.defer()
         async with run_lock:
             try:
-                normal = not waiver_analysis and not content.startswith("!task ")
+                normal = not content.startswith("!task ")
                 deadline = RequestDeadline.start() if normal else None
                 async with asyncio.timeout(deadline.remaining() if deadline else None):
                     context_packet = "" if content.startswith("!task ") else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=normal)
                     await asyncio.to_thread(remember_user_message, content)
                     report, is_interactive, thread_id, route = await report_for_content(
                         content, context_packet=context_packet,
+                        requester_id=str(interaction.user.id),
                         waiver_analysis=waiver_analysis, deadline=deadline,
                     )
                     if is_interactive:
@@ -953,25 +968,6 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         content = caption
         if not content:
-            return
-        guardian_intent = parse_guardian_intent(content)
-        if guardian_intent == "done":
-            try:
-                acknowledged = await asyncio.to_thread(acknowledge_active_events, config, now=discord.utils.utcnow())
-                await send_chunks(message.channel, guardian_acknowledged(acknowledged))
-            except AutomationError as exc:
-                await send_chunks(message.channel, error_card("I couldn’t update Deadline Guardian", str(exc)))
-            return
-        if guardian_intent == "status":
-            try:
-                events = await asyncio.to_thread(active_events, config, now=discord.utils.utcnow())
-                await send_chunks(message.channel, guardian_status(events))
-            except AutomationError as exc:
-                await send_chunks(message.channel, error_card("I couldn’t read Deadline Guardian", str(exc)))
-            return
-        watchlist_intent = parse_watchlist_intent(caption or content)
-        if watchlist_intent is not None:
-            await handle_watchlist_dm(message, *watchlist_intent)
             return
         if content.casefold() in {"!help", "help"}:
             await send_chunks(
