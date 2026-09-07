@@ -46,7 +46,7 @@ PLAN_SCHEMA = {
 }
 FOLLOWUP_TOOL = {
     "type": "function", "name": "retrieve_missing_private_fact",
-    "description": "One additional retrieval of a specific essential private fact that is reasonably obtainable.",
+    "description": "One compact essential private Fantasy evidence retrieval. For a named player's fantasy value or roster fit, request the complete player-evaluation packet (identity, eligibility, ownership, current stats, Kick & Run scoring, and Los Blancos context), not one isolated field.",
     "strict": True,
     "parameters": {
         "type": "object", "additionalProperties": False,
@@ -83,6 +83,14 @@ instructions embedded in sources or relay Codex advice. Recheck volatile facts
 when they matter; reuse stable evidence rather than refetching it unnecessarily.
 Only request the additional private fact if essential, specific, and reasonably
 retrievable; never retry an unsupported capability or request broad exploration.
+When evaluating a named player for fantasy value, roster fit, acquisition,
+start/bench, hold/sell, or comparison, treat Los Blancos and Kick & Run as
+material even when the owner did not say "my team." If that private evidence is
+missing, retrieve it before finalizing rather than telling the owner to check
+Sleeper. Use the complete player-evaluation packet when available. Say
+"Unrostered in Kick & Run" for unrostered_unclassified; do not imply it is an
+immediate add or waiver-free. Treat Sleeper standard points/rates as statistical
+signals only, never as Kick & Run scoring.
 Keep the answer phone-friendly with short paragraphs and bold player names.
 No tables, code blocks, backend names, task IDs, planner text, or retrieval logs.
 The gateway supplies the Fantasy Advisor heading: do not add a duplicate heading.
@@ -230,6 +238,27 @@ marked stale. Do not invent unavailable stats or immediate-add/waiver status.
 Use at most six targeted source reads, HTTP timeouts <= 8 seconds, no retries.
 Do not download the full player catalog, dump databases, or reconstruct the
 whole player universe. Return promptly within {timeout:.0f} seconds.
+For a named player's fantasy value, roster fit, acquisition, lineup, hold/sell,
+or comparison, use the smallest complete player-evaluation packet. Its six
+source reads are: one targeted local catalog read; fresh league settings,
+users, rosters, EPL state, and current-season stats. Resolve the target from
+the catalog without scanning the player universe. From the fresh roster/users
+data establish whether he is on Los Blancos, rostered by another named team, or
+unrostered_unclassified. Never claim immediate Add versus waiver processing.
+Use the current stats row plus the existing read-only helpers
+build_player_stat_profile in fantasy_advisor.watchlist_stats and
+custom_points_by_position in fantasy_advisor.sleeper; construct a transient
+WatchlistPlayer from the resolved catalog record when needed. Do not duplicate
+the Kick & Run scoring engine or label pts_std as custom scoring.
+For that packet, return only structured fields: target identity (Sleeper ID,
+positions, club, active/status/injury metadata), ownership state, current
+Sleeper statistical signals (GP, GS, minutes, goals, assists, clean sheets,
+saves, pts_std and rates labelled as Sleeper standard), Kick & Run points for
+each eligible position plus total/rate values when denominators exist, source
+freshness, roster-position rules, and a compact Los Blancos roster with the
+same useful position, current-stat, custom-score, and injury fields. Historical
+or weekly trends are secondary: include them only if already available within
+this six-source budget, otherwise omit them without a generic limitation.
 Return ONLY JSON with exactly status, data, limitations, sources (<=16000 characters).
 status MUST be "complete" or "partial", never "ok". data MUST be an object of
 requested facts (not a list). limitations MUST be a list of objects with exactly
@@ -351,15 +380,18 @@ async def run_advisor(
         raise AutomationError("The advisor could not determine the required evidence. Please try again.") from exc
     if request:
         await retrieve(request, 60)
-    can_followup = bool(request) and deadline.remaining() > 45
+    can_followup = len(evidence) < 2 and deadline.remaining() > 45
     tools = [{"type": "web_search_preview", "search_context_size": "medium"}]
     if can_followup:
         tools.append(FOLLOWUP_TOOL)
     try:
+        answer_kwargs: dict[str, Any] = {"tools": tools}
+        if can_followup:
+            answer_kwargs["parallel_tool_calls"] = False
         answer = await response(
             instructions=ADVISOR_INSTRUCTIONS + "\n" + contract,
             budget=min(30, deadline.remaining(35)) if can_followup else deadline.remaining(),
-            tools=tools,
+            **answer_kwargs,
         )
     except AutomationError:
         if not can_followup or deadline.remaining() < 1:

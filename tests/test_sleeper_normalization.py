@@ -9,12 +9,23 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 from fantasy_advisor.sleeper import (
     available_epl_players,
     available_stats_backed_players,
+    custom_points_by_position,
     normalize_completed_trades,
     transactions_url,
 )
 
 
 class SleeperNormalizationTests(unittest.TestCase):
+    def test_custom_points_are_per_position_and_ignore_standard_points(self):
+        scores = custom_points_by_position(
+            {"pts_std": 999, "pos_m_g": 1, "pos_m_a": 2, "pos_f_g": 1},
+            {"pos_m_g": 6, "pos_m_a": 3, "pos_f_g": 9},
+            ["M", "F", "D"],
+        )
+
+        self.assertEqual(scores, {"M": 12.0, "F": 9.0})
+        self.assertNotIn("pts_std", scores)
+
     def test_transactions_url_requires_numeric_round(self):
         self.assertEqual(
             transactions_url("league-1", 3),

@@ -302,7 +302,7 @@ def available_stats_backed_players(
     return sorted(result.values(), key=lambda item: (item["name"].casefold(), item["player_id"]))
 
 
-def _position_score(
+def custom_position_score(
     stats: Mapping[str, Any],
     scoring_settings: Mapping[str, Any],
     position: str,
@@ -323,6 +323,22 @@ def _position_score(
         total += value * multiplier
         found = True
     return round(total, 2) if found else None
+
+
+def custom_points_by_position(
+    stats: Mapping[str, Any],
+    scoring_settings: Mapping[str, Any],
+    positions: Iterable[object],
+) -> dict[str, float]:
+    """Return configured Kick & Run points for each valid eligible position."""
+
+    scores: dict[str, float] = {}
+    for raw_position in positions:
+        position = str(raw_position).upper().strip()
+        score = custom_position_score(stats, scoring_settings, position) if position else None
+        if score is not None:
+            scores[position] = score
+    return scores
 
 
 def _stat_number(stats: Mapping[str, Any], key: str) -> float | None:
@@ -366,11 +382,7 @@ def pickup_candidates(
         player_id = item["player_id"]
         stats = stats_by_id.get(player_id, {})
         positions = [str(position).upper() for position in item.get("positions") or []]
-        position_scores = {
-            position: score
-            for position in positions
-            if (score := _position_score(stats, scoring_settings, position)) is not None
-        }
+        position_scores = custom_points_by_position(stats, scoring_settings, positions)
         candidates.append(
             {
                 **item,
@@ -464,11 +476,7 @@ def roster_swap_recommendations(
             continue
         stats = stats_by_id.get(player_id, {})
         positions = [str(position).upper() for position in raw.get("fantasy_positions") or []]
-        position_points = {
-            position: score
-            for position in positions
-            if (score := _position_score(stats, scoring_settings, position)) is not None
-        }
+        position_points = custom_points_by_position(stats, scoring_settings, positions)
         if not position_points:
             continue
         rostered.append(

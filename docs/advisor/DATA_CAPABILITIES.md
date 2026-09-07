@@ -17,6 +17,28 @@ Use retained stable evidence when sufficient; recheck volatile facts when they
 matter. For decision-critical roster, ownership, availability, scoring, and
 league state, query the freshest authoritative source available.
 
+Fantasy value is personalized even when the owner does not explicitly say "my
+team." When the owner asks whether a named player is interesting, valuable,
+roster-worthy, startable, droppable, tradeable, an upgrade, or a fit for a
+comparison, private Fantasy context is normally material: player identity and
+eligibility, league ownership or unrostered state, current-season Sleeper
+signals, Kick & Run scoring, and Los Blancos roster construction. Request the
+smallest useful player-evaluation packet rather than evaluating the player in
+isolation. Public research and private Fantasy facts are complementary. This is
+semantic guidance, not keyword routing, and a pure public-football question
+such as a manager's injury comment normally needs no private retrieval.
+
+For player evaluation, request a compact packet with the resolved Sleeper ID,
+positions, club/active/injury metadata, ownership (including the owning team
+when rostered), current GP/GS/minutes and useful event totals/rates, distinct
+Sleeper standard-stat signals, per-position Kick & Run points/rates, relevant
+source timestamps, roster-position rules, and compact Los Blancos comparison
+data. If no league roster owns the player, use `unrostered_unclassified`: the
+answer may say "Unrostered in Kick & Run," but must not claim immediate Add
+versus waiver processing. Keep the core packet to six targeted sources: local
+catalog, league, users, rosters, EPL state, and current-season stats. Historical
+watchlist-style trends are optional only when already within that budget.
+
 Sleeper ownership does not establish an immediately addable free agent versus
 pending waivers. Metadata may be stale for transfers and real-world club/role.
 Some stats, minutes, and other fantasy concepts are not exposed. Current injury
@@ -29,7 +51,11 @@ file/database writes, credentials, browser use, or unrelated account access.
 OpenAI owns reasoning and the final response, including conditional advice when
 facts are missing. Ask the user only if unresolved ambiguity could materially
 change the decision. A second retrieval is allowed only for a specific missing,
-essential, reasonably retrievable private fact. Never request a third retrieval.
+essential, reasonably retrievable private fact. The final reasoning pass may
+request that retrieval even if the initial planner selected no private data;
+never request a third retrieval. Do not push retrievable Sleeper or Fantasy
+facts back to the owner. If a retrieval fails, state that narrow failure rather
+than asking the owner to look it up.
 
 ## Retrieval reference (not loaded into the planner)
 
