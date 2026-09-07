@@ -625,6 +625,24 @@ async def run_advisor(
             elapsed_seconds=trace["elapsed_seconds"], trace=trace,
         )
 
+    def finish_local_action(name: str, result: dict[str, Any]) -> WebResult:
+        """Return a deterministic confirmation when the final-answer reserve is closed."""
+
+        status = str(result.get("status") or "operational_failure")
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        player_name = str(data.get("name") or "that player")
+        if status == "success" and name == "add_to_watchlist":
+            text = f"Added {player_name} to your watchlist."
+        elif status == "success" and name == "remove_from_watchlist":
+            text = f"Removed {player_name} from your watchlist."
+        elif status in {"success", "no_op", "forbidden", "not_found", "operational_failure"}:
+            text = str(result.get("detail") or "I couldn’t complete that local action right now. Please try again.")
+        else:
+            text = "I couldn’t complete that local action right now. Please try again."
+        trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+        return WebResult(text=text, response_id=None, elapsed_seconds=trace["elapsed_seconds"], trace=trace)
+
     async def response(*, instructions: str, budget: float, phase: str, **kwargs: Any) -> Any:
         if budget <= 0:
             raise AutomationError("The advisor reached its response time limit. Please try again.")
@@ -653,10 +671,13 @@ async def run_advisor(
         except (TimeoutError, AutomationError):
             LOGGER.warning("Private evidence could not be retained; current answer still has the retrieved facts")
 
+    last_action_name: str | None = None
+    last_action_result: dict[str, Any] | None = None
+
     async def execute_calls(calls: list[Any], *, grounding: bool) -> bool:
         """Execute selected data/actions exactly once and record compact provenance."""
 
-        nonlocal tool_calls
+        nonlocal tool_calls, last_action_name, last_action_result
         retrievals = [call for call in calls if call.name != NO_PRIVATE_FANTASY_DATA_NEEDED["name"]]
         if tool_calls + len(retrievals) > MAX_PRIVATE_TOOL_CALLS:
             return False
@@ -670,26 +691,51 @@ async def run_advisor(
             action_key = (call.name, call.arguments)
             if call.name in local_action_names and action_key in executed_actions:
                 return False
-            if call.name == FOLLOWUP_TOOL["name"]:
-                # Codex never appears in the grounding catalog and is only a
-                # bounded later fallback for an unsupported private fact.
-                try:
-                    followup = _object(call.arguments)
-                    followup_request = _request(followup["request"])
-                except (KeyError, ValueError):
-                    return False
-                trace["codex_used"] = True
-                facts = await asyncio.to_thread(
-                    retrieve_private_data, config, followup_request.value,
-                    timeout=max(0.01, budget),
-                )
-            else:
-                facts = await asyncio.to_thread(
-                    execute_fantasy_tool, config, call.name, call.arguments,
-                    timeout=max(0.01, budget), capabilities=capabilities,
-                    requester_id=requester_id,
-                )
-                used_deterministic_names.add(call.name)
+            # Local SQLite actions remain executable after external retrieval
+            # closes, provided there is enough time to safely return their
+            # result.  Private retrievals share the remaining external budget.
+            operation_budget = (
+                min(3.0, deadline.remaining())
+                if call.name in local_action_names
+                else budget
+            )
+            if operation_budget <= 0:
+                return False
+            try:
+                if call.name == FOLLOWUP_TOOL["name"]:
+                    # Codex never appears in the grounding catalog and is only a
+                    # bounded later fallback for an unsupported private fact.
+                    try:
+                        followup = _object(call.arguments)
+                        followup_request = _request(followup["request"])
+                    except (KeyError, ValueError):
+                        return False
+                    trace["codex_used"] = True
+                    facts = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            retrieve_private_data, config, followup_request.value,
+                            timeout=max(0.01, operation_budget),
+                        ),
+                        timeout=operation_budget,
+                    )
+                else:
+                    facts = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            execute_fantasy_tool, config, call.name, call.arguments,
+                            timeout=max(0.01, operation_budget), capabilities=capabilities,
+                            requester_id=requester_id,
+                        ),
+                        timeout=operation_budget,
+                    )
+                    used_deterministic_names.add(call.name)
+            except TimeoutError:
+                if call.name in local_action_names:
+                    facts = {
+                        "status": "operational_failure", "data": {},
+                        "detail": "I couldn’t update the watchlist right now. Please try again.",
+                    }
+                else:
+                    facts = unavailable("Current Fantasy data could not be retrieved within this answer's time limit.")
             evidence.append(facts)
             await retain_private_evidence(facts, source=f"advisor_tool:{call.name}")
             trace_entry = {
@@ -703,6 +749,8 @@ async def run_advisor(
             trace["tools"].append(trace_entry)
             if call.name in local_action_names:
                 executed_actions.add(action_key)
+                last_action_name = call.name
+                last_action_result = facts
                 trace["local_action"] = {
                     "name": call.name, "status": facts.get("status"),
                     "detail": facts.get("detail"),
@@ -756,6 +804,8 @@ async def run_advisor(
 
     grounded_no_op = grounded_calls[0].name == NO_PRIVATE_FANTASY_DATA_NEEDED["name"]
     performed_local_action = any(call.name in local_action_names for call in grounded_calls)
+    if performed_local_action and deadline.remaining(FINAL_RESERVE_SECONDS) <= 0:
+        return finish_local_action(last_action_name or "", last_action_result or {})
     target_research_capabilities = {"get_waiver_context", "get_trade_context"}
     compound_context_capabilities = {
         "get_waiver_context", "get_gameweek_context", "get_rotation_context", "get_trade_context",
@@ -832,6 +882,8 @@ async def run_advisor(
             return finish_failure()
         if any(call.name in local_action_names for call in calls):
             performed_local_action = True
+            if deadline.remaining(FINAL_RESERVE_SECONDS) <= 0:
+                return finish_local_action(last_action_name or "", last_action_result or {})
         answer = None
     text = discord_answer_text(answer)
     if not text:

@@ -367,9 +367,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(
                 config(), "Remove Santos from my watchlist.", client=client, requester_id="123",
-                deadline=advisor.RequestDeadline(time.monotonic() + 31),
+                deadline=advisor.RequestDeadline(time.monotonic() + 29),
             )
-        self.assertEqual(answer.text, "Removed Santos.")
+        self.assertEqual(answer.text, "Removed Santos from your watchlist.")
         execute.assert_called_once()
 
     async def test_slow_first_pass_does_not_mutate_for_watchlist_advice(self):
