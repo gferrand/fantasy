@@ -207,7 +207,11 @@ def build_client(config: AppConfig) -> discord.Client:
     ) -> dict[str, object]:
         """Attach command metadata without changing the shared evidence shape."""
 
-        envelope = current_evidence_envelope(context if data is None else data, source)
+        # Provenance belongs to the report that was actually retrieved, even
+        # when a command substitutes a compact model-facing projection of it.
+        envelope = current_evidence_envelope(context, source)
+        if data is not None:
+            envelope["data"] = data
         envelope.update({"capability": capability, "arguments": arguments, "cache_hits": []})
         return envelope
 
