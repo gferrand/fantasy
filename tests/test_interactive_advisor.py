@@ -139,6 +139,7 @@ class GuidanceTests(unittest.TestCase):
         packet = {"status": "complete", "data": {}, "limitations": [], "sources": []}
         cases = (
             ("get_league_context", "{}", "get_league_context", ()),
+            ("get_league_activity", '{"round_number":null}', "get_league_activity", (None,)),
             ("search_player_pool", '{"query":"Enciso","limit":5}', "search_player_pool", ("Enciso",)),
             ("get_draft_context", '{"player_name":"Damsgaard"}', "get_draft_context", ("Damsgaard",)),
             ("get_player_trends", '{"kind":"add","hours":24,"limit":8}', "get_player_trends", ()),
@@ -160,6 +161,14 @@ class GuidanceTests(unittest.TestCase):
         capabilities.return_value.get_player_trends.assert_called_with(
             kind="add", hours=24, limit=8,
         )
+
+    def test_strict_tool_schemas_require_every_declared_property(self):
+        for tool in advisor.FANTASY_TOOLS:
+            with self.subTest(tool=tool["name"]):
+                parameters = tool["parameters"]
+                self.assertTrue(set(parameters["properties"]).issubset(parameters["required"]))
+        activity = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_league_activity")
+        self.assertEqual(activity["parameters"]["properties"]["round_number"]["type"], ["integer", "null"])
 
     def test_watchlist_stats_tool_uses_the_shared_bounded_stats_engine(self):
         watched = [WatchlistPlayer("enciso", "Julio Enciso", "IPS", ("M",), "2026-09-01T00:00:00+00:00")]

@@ -78,7 +78,7 @@ FANTASY_TOOLS = (
     {"type": "function", "name": "get_player_trends", "description": "Current bounded Sleeper add or drop trend list. Use as one waiver-market signal, not as a deterministic player ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"kind": {"type": "string", "enum": ["add", "drop"]}, "hours": {"type": "integer", "minimum": 1, "maximum": 168}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["kind", "hours", "limit"]}},
     {"type": "function", "name": "get_watchlist", "description": "Saved Fantasy watchlist only; does not change it.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_watchlist_stats", "description": "Current-season Sleeper stats for the saved watchlist using the same deterministic statistics engine as /watch stats. It omits longer trend and prior-season reads to stay within an interactive answer deadline.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_league_activity", "description": "Bounded, human-readable completed league transactions. Omit round_number for the latest verified completed round; use it only for a historical round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": "integer", "minimum": 1}}, "required": []}},
+    {"type": "function", "name": "get_league_activity", "description": "Bounded, human-readable completed league transactions. Send round_number as null for the latest verified completed round; use an integer only for a historical round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": ["integer", "null"], "minimum": 1}}, "required": ["round_number"]}},
     {"type": "function", "name": "get_waiver_context", "description": "One fresh compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for every current best-waiver-move or available-players-versus-bench question in this request. Unrostered means unrostered; only immediate-add versus waiver processing is unknown.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "add_to_watchlist", "description": "Add one named player to the saved watchlist. Use only when the owner explicitly asks to add the player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "remove_from_watchlist", "description": "Remove one named player from the saved watchlist. Use only when the owner explicitly asks to remove that player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
@@ -171,7 +171,9 @@ def execute_fantasy_tool(
         }
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
-    if name == "get_league_activity" and (not payload or isinstance(payload.get("round_number"), int)):
+    if name == "get_league_activity" and (
+        payload.get("round_number") is None or isinstance(payload.get("round_number"), int)
+    ):
         result = capabilities.get_league_activity(payload.get("round_number"))
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
