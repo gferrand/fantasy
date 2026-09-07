@@ -1048,6 +1048,13 @@ def build_client(config: AppConfig) -> discord.Client:
         content = caption
         if not content:
             return
+        # Discord may emit the rendered slash-command message through the DM
+        # message event as well as its interaction event.  The command handler
+        # is the authoritative route for these messages; letting this fallback
+        # continue would run the grounded freeform Advisor in parallel with a
+        # specialist command.
+        if content.startswith("/"):
+            return
         if content.casefold() in {"!help", "help"}:
             await send_chunks(
                 message.channel,

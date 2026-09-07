@@ -196,6 +196,14 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(self.advisor.call_args.kwargs["deadline"])
         self.context.assert_called_once_with(ANY, include_private_evidence=False)
 
+    async def test_rendered_slash_command_does_not_enter_the_freeform_advisor(self):
+        message = self.message("/injury opportunities")
+        await self.client.on_message(message)
+
+        self.advisor.assert_not_awaited()
+        self.context.assert_not_called()
+        message.channel.send.assert_not_awaited()
+
     async def test_watchlist_action_and_advice_both_use_the_semantic_tool_path(self):
         for text in ("Remove Enciso from my watchlist.", "Should I remove Enciso from my watchlist?"):
             with self.subTest(text=text):
