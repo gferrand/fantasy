@@ -513,6 +513,13 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     def test_runtime_forbids_lineup_advice_for_a_player_absent_from_current_roster(self):
         self.assertIn("cannot start that player in\nthis league", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)
 
+    def test_watchlist_contract_requires_the_canonical_read_before_stats_enrichment(self):
+        watchlist = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_watchlist")
+        stats = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_watchlist_stats")
+        self.assertIn("Always use this tool", watchlist["description"])
+        self.assertIn("never substitute it", stats["description"])
+        self.assertIn("call get_watchlist", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)
+
 
 class RetrievalTests(unittest.TestCase):
     def test_accepts_fresh_and_stale_facts_and_each_limitation_kind(self):
