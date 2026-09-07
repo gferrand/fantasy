@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 import logging
 import time
@@ -137,18 +138,44 @@ def get_player_evaluation_context(
     """Return up to six direct reads for one player; never invokes Codex or writes."""
 
     started = time.monotonic()
+    deadline = started + max(0.0, timeout)
     sources: list[dict[str, Any]] = []
     limitations: list[dict[str, str]] = []
-    sleeper = client or SleeperClient(timeout=min(8.0, max(1.0, timeout)), retries=1)
+    sleeper = client or SleeperClient(timeout=min(8.0, max(0.001, timeout)), retries=1)
+    exhausted = False
+
+    def remaining() -> float:
+        return deadline - time.monotonic()
+
+    def mark_exhausted() -> None:
+        nonlocal exhausted
+        if not exhausted:
+            exhausted = True
+            limitations.append(_limitation(
+                "temporarily_unavailable", "packet_deadline",
+                "Current league data could not be retrieved within this answer's time limit.",
+            ))
+            _log(source="player_evaluation_packet", success=False, elapsed=time.monotonic() - started, failure="timeout")
+
+    def partial() -> dict[str, Any]:
+        return {"status": "partial", "data": {}, "limitations": limitations, "sources": sources}
 
     def fetch(source: str, url: str, field: str, expected_type: type) -> object | None:
+        if exhausted or remaining() <= 0:
+            mark_exhausted()
+            return None
         began = time.monotonic()
+        request_timeout = min(8.0, remaining())
         try:
-            value = sleeper.get_json(url)
+            requester = replace(sleeper, timeout=request_timeout, retries=1) if isinstance(sleeper, SleeperClient) else sleeper
+            value = requester.get_json(url)
         except SleeperDataError as exc:
             _log(source=source, success=False, elapsed=time.monotonic() - began,
                  status=_http_status(exc), failure=_failure_kind(exc))
             limitations.append(_limitation("temporarily_unavailable", field, "Current league data could not be accessed."))
+            return None
+        if remaining() <= 0:
+            mark_exhausted()
             return None
         if not isinstance(value, expected_type):
             _log(source=source, success=False, elapsed=time.monotonic() - began, failure="validation")
@@ -159,21 +186,45 @@ def get_player_evaluation_context(
         return value
 
     league = fetch("Sleeper league settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", "league_settings", Mapping)
+    if exhausted:
+        return partial()
     users = fetch("Sleeper league users", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users", "league_users", list)
+    if exhausted:
+        return partial()
     rosters = fetch("Sleeper league rosters", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters", "league_rosters", list)
+    if exhausted:
+        return partial()
     state = fetch("Sleeper EPL state", f"{API_BASE}/state/clubsoccer:epl", "epl_state", Mapping)
+    if exhausted:
+        return partial()
     season = str(state.get("season") or "") if isinstance(state, Mapping) else ""
     stats = fetch(
         "Sleeper current-season EPL stats", f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular", "current_stats", list,
     ) if season.isdigit() else None
+    if exhausted:
+        return partial()
     if state is not None and not season.isdigit():
         limitations.append(_limitation("temporarily_unavailable", "epl_state", "Current league data could not be processed."))
         _log(source="Sleeper EPL state", success=False, elapsed=0, failure="validation")
 
+    rosters_valid = isinstance(rosters, list) and all(
+        isinstance(row, Mapping)
+        and str(row.get("owner_id") or "").strip()
+        and isinstance(row.get("players"), list)
+        for row in rosters
+    )
+    if rosters is not None and not rosters_valid:
+        limitations.append(_limitation("temporarily_unavailable", "league_rosters", "Current league data could not be processed."))
+        _log(source="Sleeper league rosters", success=False, elapsed=0, failure="validation")
+        rosters = None
+
     owner_ids = ()
-    if isinstance(rosters, list):
+    if rosters_valid:
         owner = next((row for row in rosters if isinstance(row, Mapping) and str(row.get("owner_id")) == EXPECTED_MANAGER_ID), None)
         owner_ids = tuple(str(value) for value in (owner.get("players") or [])) if isinstance(owner, Mapping) else ()
+    if remaining() <= 0:
+        mark_exhausted()
+        return partial()
     catalog_started = time.monotonic()
     try:
         refreshed_at, catalog_rows = read_player_catalog(
@@ -185,6 +236,9 @@ def get_player_evaluation_context(
         limitations.append(_limitation("temporarily_unavailable", "player_identity", "Player identity data could not be accessed."))
         _log(source="local_player_catalog", success=False, elapsed=time.monotonic() - catalog_started, failure="local_data")
         return {"status": "partial", "data": {}, "limitations": limitations, "sources": sources}
+    if remaining() <= 0:
+        mark_exhausted()
+        return partial()
 
     requested = normalize_player_text(player_name)
     matches = [row for row in catalog_rows if normalize_player_text(row["name"]) == requested and "epl" in {str(x).casefold() for x in row.get("competitions") or []}]
@@ -211,7 +265,9 @@ def get_player_evaluation_context(
     if owner is None and rosters is not None:
         limitations.append(_limitation("temporarily_unavailable", "los_blancos", "Current league roster data could not be processed."))
     target_owner = next((row for row in roster_rows if str(target["player_id"]) in {str(value) for value in (row.get("players") or [])}), None)
-    if target_owner is None:
+    if rosters is None:
+        ownership = {"state": "unknown"}
+    elif target_owner is None:
         ownership = {"state": "unrostered_unclassified"}
     elif str(target_owner.get("owner_id")) == EXPECTED_MANAGER_ID:
         ownership = {"state": "los_blancos"}
