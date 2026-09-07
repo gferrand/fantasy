@@ -699,6 +699,9 @@ async def finalize_advisor_from_evidence(
     finalization = (
         "This is an explicit slash command. The supplied current-request evidence is authoritative; "
         "do not use historical conversation, invent a package/player, or imply a transaction occurred. "
+        "For every player you recommend acquiring or trading for, state the current public availability/role evidence "
+        "and include its source in the answer. If that verification is not available, return HOLD/no actionable recommendation "
+        "instead of naming an unverified target. "
         + command_instructions
     )
     try:
