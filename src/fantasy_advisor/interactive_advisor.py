@@ -205,6 +205,12 @@ compute len(row["players"] or []). Do NOT count matching roster rows (that is
 usually one and is not the number of players).
 Parse HTTP JSON and print only requested fields; do not dump full roster or stats
 payloads. Fresh reads are available through the configured HTTP proxy.
+Use /usr/bin/curl --fail --silent --show-error --max-time 8 for HTTPS GETs;
+it uses the working system trust store. Parse its captured stdout as JSON in
+Python. The default python3 urllib trust store can fail on this Mac; do not
+spend the budget trying it first. Never disable TLS verification (no curl -k,
+--insecure, or unverified SSL contexts). If verified HTTPS fails, report a source
+failure; do not bypass certificate checks.
 Retrieval started at {started_at.isoformat()}. Obtain real source timestamps
 with datetime.now(timezone.utc).isoformat() in the SAME command as the GET,
 and copy that timestamp exactly into the JSON; never invent or round it.

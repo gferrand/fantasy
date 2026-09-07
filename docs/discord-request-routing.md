@@ -31,7 +31,9 @@ network destinations remain blocked. It changes no global Codex settings.
 This requires a Codex CLI supporting named permission profiles and the network
 proxy; unsupported runtimes fail visibly without weakening the sandbox.
 It receives only the requested facts and a compact source/identity map, not the
-complete conversation. Known sources do not require repeated document discovery.
+complete conversation. Known sources do not require repeated document discovery. HTTPS retrieval uses
+the system HTTP client with certificate verification; trust failures remain
+source failures and must never trigger a TLS-verification bypass.
 Fresh source timestamps must fall within the current retrieval window; old
 observations are accepted only when explicitly marked stale. Current public
 news requires publication-date and event-year verification before it is called
