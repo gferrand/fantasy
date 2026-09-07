@@ -849,7 +849,6 @@ async def run_advisor(
                 tool for tool in FANTASY_TOOLS
                 if tool["name"] not in used_deterministic_names
             )
-            external_tools.append(FOLLOWUP_TOOL)
         finalization = (
             "Produce the final answer now using only current-request evidence. "
             "For an acquisition or trade target you actually recommend, use current public web research for material availability/injury and role facts; if that research changes the target, verify the replacement before finalizing."
@@ -909,12 +908,14 @@ async def run_advisor(
             return finish_failure()
         if not calls:
             break
-        allowed_later = deterministic_names | {FOLLOWUP_TOOL["name"]}
+        # Product capabilities are the complete normal Advisor catalog. Do not
+        # offer the Codex escape hatch after a named capability has supplied a
+        # partial result; a narrow partial answer is safer than unsupported
+        # private retrieval and keeps ordinary Fantasy questions on this path.
+        allowed_later = deterministic_names
         if any(call.name not in allowed_later for call in calls):
             return finish_failure()
         if grounded_no_op or performed_local_action or not can_retrieve:
-            return finish_failure()
-        if any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1:
             return finish_failure()
         if not await execute_calls(calls, grounding=False):
             return finish_failure()

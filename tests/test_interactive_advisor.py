@@ -354,17 +354,19 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         self.assertTrue(cancelled.is_set())
 
-    async def test_codex_fallback_is_only_for_unsupported_private_facts(self):
+    async def test_later_reasoning_does_not_expose_codex_after_named_capability(self):
         call = NS(type="function_call", name="retrieve_missing_private_fact", arguments=json.dumps({
             "request": {"kind": "codex_exploration", "codex_request": "Find an unsupported private fact"}, "reason": "No named tool covers it",
         }))
         ground = NS(type="function_call", name="get_league_context", arguments="{}")
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("", [call]), result("Conditional answer")])))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("", [call])])))
         with (patch.object(advisor, "retrieve_private_data", return_value=facts()) as retrieve, patch.object(advisor, "execute_fantasy_tool", return_value=facts()), patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "What unusual private fact applies?", client=client)
-        self.assertEqual(answer.text, "Conditional answer")
-        retrieve.assert_called_once()
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        retrieve.assert_not_called()
         self.assertNotIn("player_evaluation", json.dumps(client.responses.create.call_args_list[0].kwargs["tools"]))
+        later_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in later_tools if tool["type"] == "function"])
 
     async def test_slow_first_pass_still_allows_one_explicit_authenticated_remove(self):
         call = NS(type="function_call", name="remove_from_watchlist", arguments='{"player_name":"Santos"}')
