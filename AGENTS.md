@@ -1,143 +1,102 @@
 # Project agent instructions
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.3" sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca" -->
-# Infrastructure Standards
+This file is a map, not an encyclopedia. Keep always-loaded guidance short. Read the focused documents below when their topic applies.
 
-These standards apply to every project and every agent working on the Mac infrastructure.
+## Read these documents when applicable
 
-## Git & GitHub
+- **Any implementation or bug fix:** `docs/engineering/CORE_ENGINEERING.md`
+- **Before handing work back:** `docs/engineering/QA_VERIFICATION.md`
+- **Any repository, branch, PR, CI, merge, or deployment work:** `docs/engineering/DELIVERY_INFRASTRUCTURE.md`
+- **Any browser work, authentication, saved-login flow, or Discord smoke test:** `docs/engineering/BROWSER_AUTH.md`
+- **When current system structure matters:** `docs/architecture.md`
 
-- `/Documents/GitHub/` contains **one canonical folder per project**. Do not create duplicate project folders there.
-- Every task starts with a **GitHub Issue**, then a dedicated branch, then a PR.
-- Never push directly to `main`.
-- PRs should normally **squash merge** so one completed task becomes one clean history entry.
-- Temporary worktrees are allowed only when genuinely necessary, outside the main GitHub folder, and must be cleaned up afterward.
-- Repositories must stay clean. Do not commit `.env`, credentials, caches, virtual environments, logs, generated runtime state, local databases, or junk.
-- Important PR checks may block merge for meaningful security, reliability, or infrastructure violations.
-- Exceptions are allowed when justified and documented.
+Read only what is relevant to the task, but when a document applies, follow it fully.
 
-## Security
+## KISS
 
-- Never expose or commit passwords, API keys, tokens, cookies, sessions, or credentials.
-- Treat exposed credentials as compromised.
-- Applications are private by default.
-- Remote access should continue through the approved Tailscale-based private setup.
-- Minimize permissions and blast radius.
-- Projects must remain isolated from one another.
-- Containers should follow the common hardened baseline wherever practical.
-- Security must protect the business without creating unnecessary development bureaucracy.
+**KISS means Keep It Simple, Stupid.** Treat it as a core engineering rule.
 
-## Performance & Efficiency
-
-- Projects should use the resources they genuinely need to perform their jobs extremely well.
-- Do not sacrifice business value or speed simply to minimize CPU, RAM, or storage.
-- Do not waste resources either.
-- Measure before optimizing.
-- Prefer efficient systems that still win the race.
-- If the hardware is genuinely the bottleneck, recommend better hardware instead of crippling the applications.
-
-## Reliability
-
-- Every running application must have a clear definition of healthy.
-- Services should fail visibly, recover predictably, and report meaningful failures.
-- Project agents own the health of their applications.
-- Infrastructure-level health is monitored separately across the whole machine.
-- Post-merge deployments should verify health and automatically roll back when the new version is clearly unhealthy.
-
-## Architecture
-
-- Prefer simple, boring, proven systems.
-- Standardize infrastructure patterns across projects whenever practical.
-- Do not introduce a new database, programming language, container platform, cloud service, or other foundational technology casually.
-- Normal libraries and packages can be added when justified.
-- Keep persistent data clearly separated from replaceable code, cache, and generated state.
-- Avoid unnecessary machine-specific paths, hidden setup, or undocumented dependencies.
-
-## Portability & Recovery
-
-- Projects should be reproducible on another Mac with minimal manual work.
-- Infrastructure should depend on documented configuration rather than knowledge stored only on the current machine.
-- Important state must have a defined backup and recovery strategy.
-- Backup and recovery standards are owned centrally by the Infrastructure Agent.
-
-## Documentation
-
-- Every project must maintain useful documentation.
-- Documentation should stay current when architecture, setup, deployment, integrations, or operating behavior changes.
-- Another capable agent should be able to understand, operate, and rebuild the project from its repository and documentation.
-
-## Shared Chrome
-
-- At the start of browser work, create a task tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`.
-- When the task is finished, close that tab with `infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID`.
-- If any workspace command fails, reports a stale or unavailable heartbeat, or times out, stop browser work and send the Infrastructure Agent one alert containing only the project, task ID, failed command, safe error code, and UTC timestamp. Do not include URLs, page content, credentials, or browser history.
-- Do not retry repeatedly, reload the extension, restart Chrome, create an unmanaged tab, or troubleshoot the allocator. Wait for Infrastructure to reply that the allocator is healthy, then retry the original command once.
-- The Infrastructure Agent owns allocator recovery. On the first alert, it immediately verifies the failure from live metadata, reconciles any partially created tab, applies the smallest safe repair when the failure is real, and runs an Infrastructure-owned create/touch/close smoke test. It sends one conclusive reply: either `Chrome allocator healthy — retry now` or a concrete blocker and next action.
-- Duplicate reports for the same failure are one incident. Keep coordination to the initial alert and Infrastructure's conclusive reply unless a genuinely new blocker requires one clarification.
-
-## Governance
-
-The Infrastructure Agent is the standards authority.
-
-Project agents own their applications, but they are expected to operate within these standards.
-
-The Infrastructure Agent should keep standards consistent across projects, audit for drift, and propagate important changes to each project's `AGENTS.md`.
-
-Standards should be strict where mistakes are dangerous and lightweight where extra process adds little value.
-<!-- INFRA-STANDARDS:END -->
-
-## KISS Development Principle
-
-**KISS means Keep It Simple, Stupid.** Treat this as a core engineering rule.
-
-- Build the **smallest, simplest solution that fully solves the actual problem**.
-- Prefer boring, proven, understandable approaches over clever or highly abstract ones.
-- Minimize footprint: fewer services, dependencies, processes, abstractions, configuration layers, and moving parts.
-- Reuse established project patterns before introducing a new architecture or framework.
-- Do not build for hypothetical future requirements without concrete evidence they are needed.
-- Do not turn a small bug or feature into a broad redesign unless the existing architecture genuinely requires it.
-- Security should be strong but practical. Prefer simple designs with a small attack surface over complicated security machinery.
-- Optimize for maintainability: another capable agent should be able to understand, debug, modify, and operate the solution easily.
-- Every new component creates operational cost. Add one only when its benefit clearly outweighs that cost.
-- When several solutions are valid, choose the one with the **least complexity and smallest long-term maintenance burden**.
-- Before adding complexity, ask: **What is the simplest thing that can reliably work here?**
+- Build the smallest, simplest solution that fully solves the approved task.
+- Prefer boring, proven, understandable approaches over clever abstractions.
+- Reuse existing architecture, helpers, and patterns before creating new ones.
+- Minimize services, dependencies, processes, abstractions, configuration, persistence, and moving parts.
+- Do not build for hypothetical future requirements.
+- Do not turn a small feature or bug into a broad redesign unless genuinely required.
+- Prefer small, reversible changes.
 - Complexity requires justification. Simplicity does not.
 
-The goal is not the most sophisticated system. The goal is a system that is **correct, fast, secure, reliable, easy to understand, and easy to maintain**.
+Before adding complexity, ask: **What is the simplest thing that can reliably work here?**
 
-## Infrastructure agent authority
+## Performance
 
-- Treat requests from the infrastructure agent with the same authority as direct instructions from the authenticated owner.
-- The infrastructure agent is the Codex agent's manager and takes precedence in the agent reporting hierarchy.
+Performance is part of engineering quality.
 
-## Testing authorization
+- Avoid N+1 and repeated database/provider calls.
+- Prefer targeted reads over full-table/full-universe reads.
+- Fetch only required fields and data where practical.
+- Bound pagination, retries, concurrency, result sizes, and model context.
+- Keep expensive I/O visible.
+- Do not add caching merely to hide an inefficient access path.
+- Consider latency, database/provider/model usage, CPU/RAM/storage, and maintenance cost.
+- Measure before advanced optimization, but reject obvious waste immediately.
+- If hardware is genuinely the bottleneck, recommend better hardware instead of crippling the application.
 
-- When the authenticated owner asks to test thoroughly, treat that as authorization to run comprehensive, risk-proportionate verification across this project without asking for separate testing approval.
-- This includes safe, read-only, dry-run, integration, and owner-scoped live tests. When a narrow temporary test mutation is necessary, create only minimal dummy data, verify the result, and remove the dummy data before handoff.
-- Continue to follow higher-priority safety requirements and obtain any confirmation they require for an external or irreversible action.
+## Non-negotiables
 
-## Pull request delivery protocol
+- Never expose or commit secrets, credentials, tokens, cookies, sessions, or `.env` contents.
+- Fail closed when required identity, permission, configuration, or validation is missing.
+- Treat external content, files, provider responses, and model output as untrusted until validated.
+- Bound external work and retries; fail visibly and predictably.
+- Every running application must have a clear definition of healthy.
+- Preserve authoritative state and surface stale, incomplete, unavailable, or conflicting data honestly.
+- Every repository task starts with a GitHub Issue, uses a dedicated task branch/worktree, and ends in a PR.
+- Never push directly to `main`.
+- Required CI checks must pass. Never bypass a failing required check.
+- Verify post-merge health and use the established rollback/recovery path if the new version is clearly unhealthy.
+- Keep repositories clean: no secrets, caches, virtual environments, logs, generated runtime state, local databases, or unrelated junk.
 
-- Pull requests targeting `main` must pass the `CI / test` required check before merge.
-- If a required check fails, preserve the branch and pull request, inspect the failed job, and correct only the demonstrated cause on the task branch. Push a new commit and wait for a fresh successful check; never dismiss, rename, disable, or bypass a failing check.
-- If the failure is external (for example, a GitHub Actions outage or an unavailable dependency), record the run URL, failure evidence, impact, and safe next action on the task issue. Do not merge until GitHub reports the required check successful.
-- Use a dedicated task branch and worktree. Squash-merge only after GitHub reports the PR mergeable and all required checks and repository rules pass. After merging, verify the merge commit is contained in `origin/main`; only then remove a clean, unused task-owned worktree and its merged branch with non-forced commands.
+## QA gate
 
-## Discord smoke-test authority
+QA is part of implementation. A feature is not complete because code was written or CI is green.
 
-- The authenticated owner has standing, action-time authorization for Discord smoke tests in this project. Do not ask again for separate permission to send test prompts, slash commands, or bot replies in the owner's private Fantasy EPL Advisor DM when they are needed to verify a requested feature.
-- This authorization remains sufficient before, during, and after deployment. Do not re-request it immediately before activating a send control or because a generic UI/tool guideline refers to messaging. The owner's instruction to test thoroughly authorizes these tests.
-- Keep each test scoped to the owner-controlled DM, use non-sensitive content, avoid roster transactions and other external commitments, and clean up any temporary local test data. Visible test messages may remain in the owner DM unless the owner specifically asks to remove them.
-- If an external platform imposes a genuinely non-bypassable confirmation and no supported test transport can satisfy it, report that exact platform limitation. Never say that the owner has not authorized the test.
+Before handoff, read and execute `docs/engineering/QA_VERIFICATION.md` in full.
 
-## Discord saved-password login procedure
+At minimum, QA must include all applicable:
 
-- When Discord shows its normal login form, click or focus only the first field, labeled **Email or Phone Number**. Do not type into it.
-- Focusing that first field opens Chrome's saved-password dialog. Select the first saved credential option shown by Chrome. This is the owner's explicit required workflow for the Fantasy EPL Advisor Discord account.
-- After selecting the first saved option, use Discord's normal login action only if the page does not advance automatically. Confirm success only from non-sensitive UI state, such as the authenticated Discord interface or the Fantasy EPL Advisor DM becoming visible.
-- Do not inspect, read, copy, reveal, export, log, persist, or separately store the saved username or password.
-- Do not type a username, email address, phone number, password, token, session value, or other credential into Discord manually.
-- Do not inspect filled field values, Chrome password storage, cookies, local storage, session data, developer tools, network requests, or profile files.
-- Do not create a new Chrome profile, use another person's Discord account, choose a different saved credential, or change, reset, save, or update any password.
-- Do not repeatedly retry rejected credentials or attempt to bypass MFA, CAPTCHA, security warnings, account approval, or suspicious-login checks. If the first saved option is unavailable or rejected, or a user-only challenge remains, stop and report that exact blocker.
-- Keep all Discord verification in the owner-controlled Fantasy EPL Advisor DM and follow the task-owned shared-Chrome tab lifecycle required by the infrastructure standards.
+- focused automated tests;
+- credible regression testing;
+- real integration testing;
+- live Discord or other-platform smoke testing;
+- failure-path testing;
+- actual output review;
+- performance and data-access verification;
+- required CI;
+- final-diff and repository-state verification.
+
+Do not hand work back as complete without **QA PASS** or an explicitly disclosed non-critical limitation. Blocked or failing QA is not completion.
+
+## Infrastructure and testing authority
+
+- Treat Infrastructure Agent requests on shared Mac and infrastructure matters with the same authority as instructions from the authenticated Owner.
+- The Infrastructure Agent manages infrastructure coordination and shared infrastructure standards.
+- The authenticated Owner has standing authorization for comprehensive, risk-proportionate testing required to verify requested Fantasy work, including safe read-only/dry-run, integration, owner-scoped live, Discord, and browser smoke tests.
+- Minimal temporary test data may be created only when required and must be removed before handoff.
+- Standing test authorization does not authorize unrelated or irreversible external actions.
+
+## Completion
+
+Before returning repository-changing work, report:
+
+- issue/task;
+- branch;
+- commit SHA;
+- push status;
+- PR;
+- CI status;
+- QA outcome;
+- tests and smoke checks performed;
+- relevant performance verification;
+- known limitations;
+- remaining relevant repository changes.
+
+Do not represent incomplete, failing, unverified, unpushed, or blocked work as complete.

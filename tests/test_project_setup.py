@@ -56,29 +56,35 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("Los Blancos", context)
         self.assertIn("1127171221277331456", context)
 
-    def test_shared_chrome_instructions_and_discord_login_are_current(self):
+    def test_agent_guidance_maps_to_current_shared_chrome_and_discord_rules(self):
         instructions = (ROOT / "AGENTS.md").read_text()
-        self.assertIn('version="2026-09-05.3"', instructions)
+        engineering_docs = ROOT / "docs" / "engineering"
+        expected_documents = (
+            engineering_docs / "CORE_ENGINEERING.md",
+            engineering_docs / "QA_VERIFICATION.md",
+            engineering_docs / "DELIVERY_INFRASTRUCTURE.md",
+            engineering_docs / "BROWSER_AUTH.md",
+            ROOT / "docs" / "architecture.md",
+        )
+        for document in expected_documents:
+            self.assertTrue(document.is_file(), document)
+            self.assertIn(str(document.relative_to(ROOT)), instructions)
+
+        browser_rules = (engineering_docs / "BROWSER_AUTH.md").read_text()
         self.assertIn(
-            'sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca"',
-            instructions,
+            "infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE",
+            browser_rules,
         )
         self.assertIn(
-            "infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE",
-            instructions,
+            "infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            browser_rules,
         )
-        self.assertIn(
-            "infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID",
-            instructions,
-        )
-        self.assertEqual(instructions.count("infra-opt workspace"), 2)
-        self.assertNotIn("workspace touch", instructions)
-        project_rules = instructions.split("<!-- INFRA-STANDARDS:END -->", 1)[1]
-        self.assertNotIn("infra-opt workspace", project_rules)
-        self.assertIn("## Discord saved-password login procedure", project_rules)
-        self.assertIn("focus only the first field", project_rules)
-        self.assertIn("Select the first saved credential option", project_rules)
-        self.assertIn("Do not inspect, read, copy, reveal, export", project_rules)
+        self.assertEqual(browser_rules.count("infra-opt workspace"), 2)
+        self.assertNotIn("workspace touch", browser_rules)
+        self.assertIn("## Discord saved-password login", browser_rules)
+        self.assertIn("click or focus only **Email or Phone Number**", browser_rules)
+        self.assertIn("Select the **first saved credential**", browser_rules)
+        self.assertIn("inspect, read, copy, reveal, export", browser_rules)
 
 
     def test_context_contains_current_club_safety_rules(self):
