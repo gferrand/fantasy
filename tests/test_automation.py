@@ -22,6 +22,7 @@ from fantasy_advisor.automation import (
     FANTASY_CODEX_MODEL,
     FANTASY_CODEX_REASONING_EFFORT,
     FANTASY_WEB_MODEL,
+    FANTASY_WEB_REASONING_EFFORT,
     TaskSpec,
     final_message_from_events,
     load_live_compact_feed_context,
@@ -87,7 +88,12 @@ class AutomationTests(unittest.TestCase):
                 )
         self.assertEqual(config.codex_model, "gpt-5.6-luna")
         self.assertEqual(config.codex_reasoning_effort, "medium")
-        self.assertEqual(config.openai_web_model, FANTASY_WEB_MODEL)
+        self.assertEqual(FANTASY_WEB_MODEL, "gpt-5.6-luna")
+        self.assertEqual(FANTASY_WEB_REASONING_EFFORT, "medium")
+        self.assertEqual(config.openai_web_model, "gpt-5.6-luna")
+        self.assertEqual(config.openai_web_reasoning_effort, "medium")
+        self.assertEqual(config.openai_audio_transcription_model, "gpt-4o-mini-transcribe")
+        self.assertEqual(config.openai_document_model, "gpt-4.1-mini")
 
     def test_web_briefing_uses_responses_web_search_and_preserves_context(self):
         class FakeResponses:
@@ -113,6 +119,7 @@ class AutomationTests(unittest.TestCase):
         client.assert_called_once_with(api_key="test-key", timeout=config.codex_interactive_timeout_seconds)
         call = fake_responses.calls[0]
         self.assertEqual(call["model"], FANTASY_WEB_MODEL)
+        self.assertEqual(call["reasoning"], {"effort": FANTASY_WEB_REASONING_EFFORT})
         self.assertEqual(call["tools"], [{"type": "web_search_preview", "search_context_size": "medium"}])
         self.assertFalse(call["store"])
         self.assertIn("RECENT_MARKER", call["instructions"])
@@ -144,6 +151,8 @@ class AutomationTests(unittest.TestCase):
 
         self.assertEqual(result.response_id, "resp-watch")
         call = fake_responses.calls[0]
+        self.assertEqual(call["model"], FANTASY_WEB_MODEL)
+        self.assertEqual(call["reasoning"], {"effort": FANTASY_WEB_REASONING_EFFORT})
         self.assertEqual(call["tools"], [{"type": "web_search_preview", "search_context_size": "medium"}])
         self.assertFalse(call["store"])
         self.assertIn("Ryan Giles", call["instructions"])

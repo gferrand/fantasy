@@ -10,7 +10,12 @@ from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
-from fantasy_advisor.automation import AppConfig, AutomationError
+from fantasy_advisor.automation import (
+    AppConfig,
+    AutomationError,
+    FANTASY_WEB_MODEL,
+    FANTASY_WEB_REASONING_EFFORT,
+)
 from fantasy_advisor import interactive_advisor as advisor
 from fantasy_advisor.context_store import append_event, build_context_packet, DISCORD_USER_MESSAGE, PRIVATE_EVIDENCE
 
@@ -112,6 +117,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         codex_retrieve.assert_not_called()
         persist.assert_not_called()
         self.assertEqual(calls.await_count, 2)
+        for call in calls.call_args_list:
+            self.assertEqual(call.kwargs["model"], FANTASY_WEB_MODEL)
+            self.assertEqual(call.kwargs["reasoning"], {"effort": FANTASY_WEB_REASONING_EFFORT})
         self.assertEqual(calls.call_args_list[1].kwargs["tools"][0]["type"], "web_search_preview")
         reasoning = advisor.advisor_reasoning(config())
         self.assertIn("OpenAI researches public football evidence", calls.call_args_list[0].kwargs["instructions"])

@@ -36,8 +36,8 @@ See [interactive advisor flow](discord-request-routing.md) for budgets,
 freshness, evidence continuity, and the unchanged specialized workflows.
 
 Legitimate non-browser Fantasy analysis is permanently pinned in application
-code to `gpt-5.6-luna` with `medium` reasoning. Public web briefings use `gpt-5.6-terra` with
-low reasoning and built-in web search; override that model only with
+code to `gpt-5.6-luna` with `medium` reasoning. Public web briefings also use
+`gpt-5.6-luna` with `medium` reasoning and built-in web search; override that model only with
 `OPENAI_WEB_MODEL` in the local `.env`. These pins do not apply to attachment
 preprocessing: voice transcription continues to use
 `gpt-4o-mini-transcribe`, and PDF/document extraction continues to use
