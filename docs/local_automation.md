@@ -254,12 +254,17 @@ the club/news check. Both commands are private, read-only, and explicitly
 label every pickup/drop as a manual Sleeper decision.
 
 Use `/injury opportunities` for a fresh scan of every active EPL player Sleeper
-marks Out or GTD/Questionable, including unrostered players. The report gives a
-plain-English injury summary and only source-supported return outlooks, then
-ranks up to eight credible playing-time beneficiaries with unrostered league
-options first. Suspensions are excluded. If current injury research is
-unavailable, the command still returns Sleeper's complete status inventory and
-labels details and timetables unknown; it does not infer a recovery window.
+marks Out or GTD/Questionable, including unrostered players. The report keeps
+that complete Sleeper inventory, while a single bounded public-web pass checks
+return reporting only for the most Fantasy-interesting injuries: rostered trade
+assets and players with meaningful current production or minutes. It labels the
+coverage so an unresearched status flag is never mistaken for a researched
+return outlook. The researched players receive only source-supported timelines;
+the command then ranks up to eight credible playing-time beneficiaries with
+unrostered league options first. Suspensions are excluded. If current injury
+research is unavailable, the command still returns Sleeper's complete status
+inventory and labels details and timetables unknown; it does not infer a
+recovery window.
 The complete report is split across ordinary Discord DM messages when needed;
 the command does not send report attachments.
 

@@ -116,6 +116,7 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         long_report = "\n\n".join(["x" * 1800] * 6)
         with (
             patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
+            patch("fantasy_advisor.discord_bot.injury_timeline_research_context", return_value={"injured_players": []}),
             patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=long_report),
         ):
@@ -150,6 +151,7 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         report = "🩺 **Injury opportunities**\nNo current injuries."
         with (
             patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
+            patch("fantasy_advisor.discord_bot.injury_timeline_research_context", return_value={"injured_players": []}),
             patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=report),
         ):

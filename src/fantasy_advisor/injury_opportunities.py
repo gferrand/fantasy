@@ -15,6 +15,7 @@ from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, STATS_BASE, SleeperClient, Slee
 OUT_STATUSES = {"OUT", "O", "IR", "IR+"}
 DOUBTFUL_STATUSES = {"GTD", "Q", "QUESTIONABLE", "DOUBTFUL", "D"}
 MAX_OPPORTUNITIES = 8
+MAX_TIMELINE_RESEARCH = 12
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,61 @@ class InjuryResearch:
 
     injuries: tuple[dict[str, Any], ...]
     opportunities: tuple[dict[str, Any], ...]
+    web_search_used: bool = False
+    retry_used: bool = False
+
+
+def injury_timeline_research_context(
+    context: InjuryOpportunitiesContext,
+    *,
+    limit: int = MAX_TIMELINE_RESEARCH,
+) -> dict[str, Any]:
+    """Return the bounded, trade-relevant injury set for current web research.
+
+    Sleeper can mark a large number of players at once.  One web-research pass
+    cannot responsibly establish a return outlook for that whole board, so
+    prioritize rostered assets (where a return date can inform a trade), then
+    confirmed absences and current fantasy impact.  The full Sleeper inventory
+    remains in the Discord report; only its public timetable enrichment is
+    bounded.
+    """
+
+    if not isinstance(limit, int) or not 1 <= limit <= MAX_TIMELINE_RESEARCH:
+        raise ValueError(f"Timeline research limit must be between 1 and {MAX_TIMELINE_RESEARCH}")
+    injuries = list(context.payload.get("injured_players") or [])
+    injuries = [item for item in injuries if isinstance(item, dict)]
+
+    def metric(item: Mapping[str, Any], key: str) -> float:
+        try:
+            return float(item.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    interesting = [
+        item for item in injuries
+        if bool((item.get("ownership") or {}).get("rostered"))
+        or metric(item, "custom_points") >= 10
+        or metric(item, "minutes") >= 180
+    ]
+    # A quiet early season can leave no player above the normal relevance
+    # thresholds; retain a deterministic fallback rather than making no pass.
+    injuries = interesting or injuries
+    injuries.sort(
+        key=lambda item: (
+            not bool((item.get("ownership") or {}).get("rostered")),
+            item.get("status_category") != "out",
+            -metric(item, "custom_points"),
+            -metric(item, "minutes"),
+            str(item.get("name") or "").casefold(),
+        )
+    )
+    return {
+        "season": context.season,
+        "gameweek": context.gameweek,
+        "retrieved_at": context.retrieved_at,
+        "injured_players": injuries[:limit],
+        "beneficiary_candidates": context.payload.get("beneficiary_candidates") or [],
+    }
 
 
 INJURY_RESEARCH_SCHEMA: dict[str, Any] = {
@@ -44,6 +100,7 @@ INJURY_RESEARCH_SCHEMA: dict[str, Any] = {
     "properties": {
         "injuries": {
             "type": "array",
+            "maxItems": MAX_TIMELINE_RESEARCH,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -351,6 +408,7 @@ def render_injury_opportunities(
     research: InjuryResearch | None,
     *,
     research_error: str | None = None,
+    researched_player_ids: Iterable[str] | None = None,
 ) -> str:
     """Render every Sleeper flag and only ID-resolved opportunity research."""
 
@@ -364,6 +422,13 @@ def render_injury_opportunities(
     research_by_id = {
         str(item.get("player_id")): item for item in (research.injuries if research else ())
     }
+    researched_ids = None if researched_player_ids is None else {str(item) for item in researched_player_ids}
+    if researched_ids is not None:
+        lines.extend((
+            f"*Current public return reporting was checked for {len(researched_ids)} priority Fantasy injury asset(s). "
+            "Other listed flags retain Sleeper status only.*",
+            "",
+        ))
     for category, heading in (("out", "🚑 **Out**"), ("doubt", "⚠️ **GTD / Questionable**")):
         selected = [item for item in injuries if item["status_category"] == category]
         if not selected:
@@ -374,7 +439,14 @@ def render_injury_opportunities(
             owner = player["ownership"]["team"]
             ownership = f"Owned · {owner}" if owner else "Unrostered in league"
             detail = _text(item.get("injury_summary"), "Injury details not verified", 170)
-            timeline = _text(item.get("return_window"), "No reliable timetable", 100)
+            if item:
+                timeline = _text(item.get("return_window"), "No reliable timetable", 100)
+            elif researched_ids is not None and player["player_id"] not in researched_ids:
+                timeline = "Not researched in this priority pass"
+            elif research_error:
+                timeline = "Current public timetable unavailable"
+            else:
+                timeline = "No reliable timetable"
             sources = _source_links(item.get("sources"))
             lines.append(
                 f"• **{player['name']}** · {player['club']} · {player['sleeper_status']} · {ownership}\n"

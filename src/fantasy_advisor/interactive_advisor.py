@@ -702,6 +702,8 @@ async def finalize_advisor_from_evidence(
     command_instructions: str,
     mandatory_web: bool,
     partial_text: str,
+    web_enabled: bool = True,
+    trace_fields: dict[str, Any] | None = None,
     deadline: RequestDeadline | None = None,
     client: Any = None,
     request_id: str | None = None,
@@ -734,6 +736,8 @@ async def finalize_advisor_from_evidence(
         "target_verification_metadata_valid": False,
         "result_status": "failed",
     }
+    if trace_fields:
+        trace.update(trace_fields)
 
     def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
         # Every fail-closed partial text supplied by a slash command is an
@@ -763,7 +767,8 @@ async def finalize_advisor_from_evidence(
             return await finalize_advisor_from_evidence(
                 config, command=command, question=question, evidence=evidence,
                 command_instructions=command_instructions, mandatory_web=mandatory_web,
-                partial_text=partial_text, deadline=deadline, client=owned_client,
+                partial_text=partial_text, web_enabled=web_enabled, trace_fields=trace_fields,
+                deadline=deadline, client=owned_client,
                 request_id=request_id,
             )
 
@@ -795,26 +800,28 @@ async def finalize_advisor_from_evidence(
         "Never claim actionable=true unless every listed target meets those checks. "
         + command_instructions
     )
+    request_kwargs: dict[str, Any] = {
+        "model": config.openai_web_model,
+        "reasoning": {"effort": config.openai_web_reasoning_effort},
+        "instructions": final_advisor_instructions(
+            advisor_reasoning(config), capability_contract(config), finalization,
+        ),
+        "input": json.dumps(payload, ensure_ascii=False),
+        "store": False,
+        "timeout": budget,
+    }
+    if web_enabled:
+        request_kwargs["tools"] = [{"type": "web_search_preview", "search_context_size": "medium"}]
+        request_kwargs["tool_choice"] = "required" if mandatory_web else "auto"
     try:
         response = await asyncio.wait_for(
-            client.responses.create(
-                model=config.openai_web_model,
-                reasoning={"effort": config.openai_web_reasoning_effort},
-                instructions=final_advisor_instructions(
-                    advisor_reasoning(config), capability_contract(config), finalization,
-                ),
-                input=json.dumps(payload, ensure_ascii=False),
-                tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
-                tool_choice="required" if mandatory_web else "auto",
-                store=False,
-                timeout=budget,
-            ),
+            client.responses.create(**request_kwargs),
             timeout=budget,
         )
     except Exception:
         LOGGER.warning("Advisor slash finalization failed command=%s", command, exc_info=True)
         return finish(partial_text, "partial")
-    trace["web_search_used"] = any(
+    trace["web_search_used"] = trace["web_search_used"] or any(
         getattr(item, "type", None) == "web_search_call" for item in getattr(response, "output", [])
     )
     if mandatory_web and not trace["web_search_used"]:
