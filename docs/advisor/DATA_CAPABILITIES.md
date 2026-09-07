@@ -48,8 +48,14 @@ unrostered player will process as an immediate Add or through waivers.
 For a current named-player decision involving roster or watchlist value,
 add/drop, trade, start/bench, role, minutes, or appearances, obtain fresh
 current evidence in the same request with `get_player_context` and the relevant
-compound capability. Use public research for material current real-world facts
+compound capability. A concrete named trade offer is the exception: its exact
+`get_trade_context` packet carries those player profiles directly. Use public research for material current real-world facts
 that private statistics do not establish when they are reasonably retrievable.
+For a concrete trade offer that names the players on both sides, use exactly one
+compound `get_trade_context` call with `you_send` and `you_receive`. It returns the exact live player profiles, current
+ownership, and legal before/after Kick & Run lineup math for that offer; an
+all-null trade-context call is only for generating possible trade
+packages.
 A club-role, injury/news, or real-world-availability question with no Fantasy
 league decision is public-only: ground exclusively to
 `no_private_fantasy_data_needed` and research the public web instead.

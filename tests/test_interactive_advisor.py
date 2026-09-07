@@ -209,7 +209,11 @@ class GuidanceTests(unittest.TestCase):
                 "get_trade_context",
             ):
                 with self.subTest(name=name):
-                    arguments = '{"mode":"prepare"}' if name == "get_gameweek_context" else "{}"
+                    arguments = (
+                        '{"mode":"prepare"}' if name == "get_gameweek_context"
+                        else '{"you_send":null,"you_receive":null}' if name == "get_trade_context"
+                        else "{}"
+                    )
                     packet = advisor.execute_fantasy_tool(config(), name, arguments, timeout=1)
                     self.assertEqual(packet["status"], "complete")
                     self.assertEqual(packet["data"], context.payload)
@@ -224,14 +228,48 @@ class GuidanceTests(unittest.TestCase):
             manager_id=advisor.EXPECTED_MANAGER_ID,
             fixture_schedule="schedule",
             client=ANY,
+            named_offer=None,
         )
+
+    def test_named_trade_offer_passes_the_exact_players_to_the_existing_trade_capability(self):
+        context = NS(
+            payload={"specific_offer": {"you_send": [{"name": "Wissa"}], "you_receive": [{"name": "Rayan"}]}},
+            retrieved_at="2026-09-07T12:00:00+00:00",
+        )
+        arguments = json.dumps({
+            "you_send": ["Wissa", "Calafiori"],
+            "you_receive": ["Rayan", "Mykolenko"],
+        })
+        with (
+            patch.object(advisor, "load_persisted_fixture_schedule", return_value="schedule"),
+            patch.object(advisor, "get_trade_context", return_value=context) as trade,
+        ):
+            packet = advisor.execute_fantasy_tool(config(), "get_trade_context", arguments, timeout=1)
+        self.assertEqual(packet["status"], "complete")
+        self.assertEqual(packet["data"], context.payload)
+        trade.assert_called_once_with(
+            manager_id=advisor.EXPECTED_MANAGER_ID,
+            fixture_schedule="schedule",
+            client=ANY,
+            named_offer={
+                "you_send": ["Wissa", "Calafiori"],
+                "you_receive": ["Rayan", "Mykolenko"],
+            },
+        )
+
+    def test_named_trade_offer_rejects_malformed_arguments(self):
+        packet = advisor.execute_fantasy_tool(
+            config(), "get_trade_context", '{"you_send":["Wissa"],"you_receive":null}', timeout=1,
+        )
+        self.assertEqual(packet["status"], "partial")
+        self.assertEqual(packet["limitations"][0]["kind"], "unsupported")
 
     def test_intelligence_provider_failures_return_partial_evidence(self):
         for name, arguments, target in (
             ("get_gameweek_context", '{"mode":"prepare"}', "get_gameweek_prepare_context"),
             ("get_injury_opportunity_context", "{}", "get_injury_opportunity_context"),
             ("get_rotation_context", "{}", "get_rotation_context"),
-            ("get_trade_context", "{}", "get_trade_context"),
+            ("get_trade_context", '{"you_send":null,"you_receive":null}', "get_trade_context"),
         ):
             with self.subTest(name=name), patch.object(advisor, target, side_effect=RuntimeError("provider unavailable")):
                 if name in {"get_rotation_context", "get_trade_context"}:
@@ -429,6 +467,38 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             [tool.get("name") for tool in final_tools if tool["type"] == "function"],
         )
 
+    async def test_named_trade_offer_grounding_uses_one_exact_current_trade_packet(self):
+        trade = NS(
+            type="function_call",
+            name="get_trade_context",
+            arguments=json.dumps({
+                "you_send": ["Yoane Wissa", "Riccardo Calafiori"],
+                "you_receive": ["Rayan", "Vitalii Mykolenko"],
+            }),
+        )
+        web = NS(type="web_search_call")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[
+            result("", [trade]), result("Decline the offer.", [web]),
+        ])))
+        packet = {
+            "status": "complete",
+            "data": {"specific_offer": {"you_send": [{"name": "Yoane Wissa"}], "you_receive": [{"name": "Rayan"}]}},
+            "limitations": [],
+            "sources": [{"source": "live Sleeper EPL", "retrieved_at": "2026-09-07T12:00:00+00:00", "stale": False}],
+        }
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(
+                config(),
+                "I'm getting offered Rayan and Mykolenko for Wissa and Calafiori. Thoughts?",
+                client=client,
+            )
+        self.assertEqual(answer.text, "Decline the offer.")
+        self.assertEqual(answer.trace["grounding"][0]["calls"], [{"name": "get_trade_context", "arguments": trade.arguments}])
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1], "get_trade_context")
+        self.assertTrue(answer.trace["web_search_used"])
+        self.assertIn("specific_offer", client.responses.create.call_args_list[1].kwargs["input"])
+
     async def test_grounding_noop_requires_public_web_research_before_answering(self):
         no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
         web = NS(type="web_search_call")
@@ -509,6 +579,12 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("immediate Add or through waivers", instructions)
         self.assertIn("Fresh current", player_tool["description"])
         self.assertIn("Unrostered means unrostered", waiver_tool["description"])
+
+    def test_trade_contract_requires_exact_offer_arguments_for_named_trade_questions(self):
+        trade_tool = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_trade_context")
+        self.assertIn("you_send", trade_tool["parameters"]["properties"])
+        self.assertIn("Do not pass null", trade_tool["description"])
+        self.assertIn("concrete trade offer", advisor.GROUNDING_INSTRUCTIONS)
 
     def test_runtime_forbids_lineup_advice_for_a_player_absent_from_current_roster(self):
         self.assertIn("cannot start that player in\nthis league", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)

@@ -92,7 +92,7 @@ FANTASY_TOOLS = (
     {"type": "function", "name": "get_gameweek_context", "description": "Deterministic next-gameweek prepare or latest-gameweek recap context. Use for a specific gameweek lineup/recap question, not a multi-fixture rotation question; select only the needed mode.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["prepare", "recap"]}}, "required": ["mode"]}},
     {"type": "function", "name": "get_injury_opportunity_context", "description": "Current deterministic Sleeper injury inventory and candidate beneficiaries; public injury research remains separate.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_rotation_context", "description": "Deterministic protected-core, rotation candidates, and fixture context for Los Blancos.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_trade_context", "description": "Deterministic legal trade packages and current scoring context; recommendation remains model judgment.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_trade_context", "description": "Fresh deterministic trade evidence. For a concrete offer naming players, pass you_send and you_receive exactly as the Owner described them; it returns those current player profiles, ownership, and legal before/after Kick & Run lineup math in one packet. Do not pass null for a named offer. Set both values to null only when asking the Advisor to generate possible trade packages.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"you_send": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 3}]}, "you_receive": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 3}]}}, "required": ["you_send", "you_receive"]}},
 )
 
 
@@ -248,13 +248,29 @@ def execute_fantasy_tool(
         except Exception:
             return context_failure("injury_opportunities")
         return context_packet(context, "Fantasy injury context")
-    if name in {"get_rotation_context", "get_trade_context"} and not payload:
+    named_trade_offer = _named_trade_offer(payload) if name == "get_trade_context" else None
+    if name == "get_trade_context" and not _valid_trade_context_payload(payload, named_trade_offer):
+        return {
+            "status": "partial", "data": {}, "sources": [],
+            "limitations": [{
+                "kind": "unsupported", "field": "trade_offer",
+                "detail": "A concrete trade offer needs non-empty you_send and you_receive player lists.",
+            }],
+        }
+    if (name == "get_rotation_context" and not payload) or (
+        name == "get_trade_context" and _valid_trade_context_payload(payload, named_trade_offer)
+    ):
         try:
             schedule = load_persisted_fixture_schedule(config)
             context = (
                 get_rotation_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
                 if name == "get_rotation_context"
-                else get_trade_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
+                else get_trade_context(
+                    manager_id=EXPECTED_MANAGER_ID,
+                    fixture_schedule=schedule,
+                    client=capabilities.bounded_client(),
+                    named_offer=named_trade_offer,
+                )
             )
         except Exception:
             return context_failure("rotation" if name == "get_rotation_context" else "trade")
@@ -290,6 +306,11 @@ absent private field as proof that the fact is unverified. When fresh waiver
 evidence says a player is unrostered, state that as fact. The only distinct
 limitation is whether Sleeper will process that unrostered player as an
 immediate Add or through waivers.
+For a concrete named trade offer, get_trade_context with the offer arguments is
+the relevant compound capability: its exact-offer packet supplies the current
+profiles and lineup math for every named player, so do not claim that those
+facts are absent merely because individual get_player_context calls were not
+also made.
 For a start/bench question, if the current roster evidence says the named
 player is not on Los Blancos, say that the owner cannot start that player in
 this league. Do not offer conditional or counterfactual lineup advice for a
@@ -348,6 +369,30 @@ def _object(text: str) -> dict[str, Any]:
     if not isinstance(result, dict):
         raise ValueError("Expected a structured object")
     return result
+
+
+def _named_trade_offer(payload: dict[str, Any]) -> dict[str, list[str]] | None:
+    """Validate the optional exact-offer argument for the trade capability."""
+
+    if payload == {"you_send": None, "you_receive": None}:
+        return None
+    if set(payload) != {"you_send", "you_receive"}:
+        return None
+    result: dict[str, list[str]] = {}
+    for key in ("you_send", "you_receive"):
+        names = payload.get(key)
+        if (
+            not isinstance(names, list)
+            or not 1 <= len(names) <= 3
+            or not all(isinstance(name, str) and name.strip() for name in names)
+        ):
+            return None
+        result[key] = names
+    return result
+
+
+def _valid_trade_context_payload(payload: dict[str, Any], offer: dict[str, list[str]] | None) -> bool:
+    return payload == {"you_send": None, "you_receive": None} or offer is not None
 
 
 @dataclass(frozen=True)
@@ -551,6 +596,12 @@ For "Who owns <full player name> right now?", select get_player_context for
 that name, never search_player_pool. For a named other-team roster question,
 select get_team_context for that team. For a current available-player or best
 waiver request, select get_waiver_context.
+For a concrete trade offer that names players on both sides, select exactly one
+get_trade_context call with you_send for the players the Owner gives up and
+you_receive for the players the Owner receives. Do not also select individual
+get_player_context calls for those same players. Example: "Rayan and Mykolenko
+for Wissa and Calafiori" means you_send=["Wissa", "Calafiori"] and
+you_receive=["Rayan", "Mykolenko"].
 For a waiver recommendation, normally request
 about 12 position-filtered candidates even when the Owner asks to see only a few.
 """

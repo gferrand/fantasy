@@ -181,6 +181,53 @@ class TradeProposalTests(unittest.TestCase):
         }
         self.assertNotIn("Erling Haaland", received_names)
 
+    def test_named_offer_uses_the_actual_players_and_keeps_two_for_two_math(self):
+        context = load_trade_proposal_context(
+            manager_id=self.manager_id,
+            client=_SleeperClient(self._responses()),
+            fixture_schedule=self._schedule(),
+            now=datetime(2026, 9, 1, tzinfo=timezone.utc),
+            retrieved_at="now",
+            named_offer={
+                "you_send": ["Owner Mid", "Owner Defender"],
+                "you_receive": ["Target Forward", "Rival Defender"],
+            },
+        )
+        self.assertEqual(context.payload["candidate_packages"], [])
+        offer = context.payload["specific_offer"]
+        self.assertEqual(offer["partner_team"], "Fair Rivals")
+        self.assertEqual([player["name"] for player in offer["you_send"]], ["Owner Mid", "Owner Defender"])
+        self.assertEqual([player["name"] for player in offer["you_receive"]], ["Target Forward", "Rival Defender"])
+        self.assertEqual(offer["package_shape"], "2-for-2")
+        self.assertIn("current-season custom Sleeper points", offer["math"]["lineup_score_basis"])
+        self.assertIn("projected_horizon_points", offer["you_receive"][0])
+
+    def test_named_offer_resolves_a_unique_surname_against_current_roster_data(self):
+        context = load_trade_proposal_context(
+            manager_id=self.manager_id,
+            client=_SleeperClient(self._responses()),
+            fixture_schedule=self._schedule(),
+            named_offer={
+                "you_send": ["Mid"],
+                "you_receive": ["Forward"],
+            },
+        )
+        offer = context.payload["specific_offer"]
+        self.assertEqual(offer["you_send"][0]["name"], "Owner Mid")
+        self.assertEqual(offer["you_receive"][0]["name"], "Target Forward")
+
+    def test_named_offer_rejects_players_not_on_one_current_partner_roster(self):
+        with self.assertRaisesRegex(SleeperDataError, "not all on one current live league roster"):
+            load_trade_proposal_context(
+                manager_id=self.manager_id,
+                client=_SleeperClient(self._responses()),
+                fixture_schedule=self._schedule(),
+                named_offer={
+                    "you_send": ["Owner Mid"],
+                    "you_receive": ["Target Forward", "Erling Haaland"],
+                },
+            )
+
     def test_protected_players_are_excluded_from_outgoing_packages(self):
         def signal(player_id, name, position, current, projected):
             return {
