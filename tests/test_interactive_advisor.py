@@ -359,6 +359,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, "Here is advice only.")
         execute.assert_not_called()
 
+    async def test_completed_local_action_is_not_offered_for_a_same_request_retry(self):
+        call = NS(type="function_call", name="remove_from_watchlist", arguments='{"player_name":"Santos"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Removed Santos.")])))
+        packet = {"status": "success", "data": {"name": "Santos"}, "detail": "Removed", "limitations": [], "sources": []}
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Remove Santos from my watchlist.", client=client, requester_id="123")
+        self.assertEqual(answer.text, "Removed Santos.")
+        execute.assert_called_once()
+        final_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertNotIn(
+            "remove_from_watchlist",
+            [tool.get("name") for tool in final_tools if tool["type"] == "function"],
+        )
+
     async def test_current_waiver_request_uses_a_fresh_compound_capability(self):
         call = NS(type="function_call", name="get_waiver_context", arguments="{}")
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Fresh waiver answer.")])))
