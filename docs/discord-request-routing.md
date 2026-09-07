@@ -72,8 +72,20 @@ one Fantasy Advisor heading, and genuine operational errors. Current public
 claims retain source links; private source details appear only when material.
 
 `/analyze-waivers` uses the same unified Advisor path as `/ask`, selecting the
-compound waiver capability when material. `/task`, `/rotation`, `/trade propose`,
-`/injury opportunities`, `/gameweek`, `/watch recommend`, other dedicated
-workflows, and scheduled reports retain their existing execution paths.
+compound waiver capability when material. Specialist analytical slash commands
+(`/rotation`, `/trade propose`, `/injury opportunities`, `/gameweek prepare`,
+`/gameweek recap`, `/watch outlook`, and `/watch recommend`) skip semantic
+grounding because the command itself is the explicit router. Each performs its
+known deterministic retrieval, then enters the shared Advisor finalizer with
+current evidence, a bounded deadline, runtime-SHA tracing, and no Codex
+fallback. Commands requiring current football research require a web search;
+recap may finalize from completed-round evidence alone. State and operational
+commands remain direct and model-free.
+
+For an actionable acquisition or trade, the finalizer records each ultimately
+recommended incoming target plus per-target current availability/injury and
+role/minutes verification status and named public sources in the request trace.
+An incomplete target record is fail-closed: the Owner receives the command's
+HOLD/no-action partial response rather than an actionable recommendation.
 Owner-DM authorization, duplicate suppression, and mention controls remain in
 place.

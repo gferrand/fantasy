@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
@@ -43,7 +44,12 @@ from .attachment_intake import (
     validate_attachment_size,
 )
 from .context_store import DISCORD_ASSISTANT_RESPONSE, DISCORD_USER_MESSAGE
-from .interactive_advisor import RequestDeadline, run_advisor
+from .interactive_advisor import (
+    RequestDeadline,
+    current_evidence_envelope,
+    finalize_advisor_from_evidence,
+    run_advisor,
+)
 from .sleeper import SleeperDataError
 from .discord_presentation import (
     advisor_header,
@@ -179,6 +185,35 @@ def build_client(config: AppConfig) -> discord.Client:
                 chunk,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
+
+    async def bounded_context_load(deadline: RequestDeadline, function, /, *args, **kwargs):
+        """Clamp direct slash retrieval to the same whole-operation deadline."""
+
+        remaining = deadline.remaining()
+        if remaining <= 0:
+            raise AutomationError("The advisor reached its response time limit. Please try again.")
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(function, *args, **kwargs), timeout=remaining)
+        except TimeoutError as exc:
+            raise AutomationError("The advisor reached its response time limit. Please try again.") from exc
+
+    def slash_evidence(
+        context: object,
+        *,
+        capability: str,
+        arguments: dict[str, object],
+        source: str,
+        data: object | None = None,
+    ) -> dict[str, object]:
+        """Attach command metadata without changing the shared evidence shape."""
+
+        # Provenance belongs to the report that was actually retrieved, even
+        # when a command substitutes a compact model-facing projection of it.
+        envelope = current_evidence_envelope(context, source)
+        if data is not None:
+            envelope["data"] = data
+        envelope.update({"capability": capability, "arguments": arguments, "cache_hits": []})
+        return envelope
 
     def remember_dm_channel(channel: discord.abc.Messageable) -> None:
         channel_id = getattr(channel, "id", None)
@@ -442,22 +477,39 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         remember_dm_channel(interaction.channel)
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                fixture_schedule = await asyncio.to_thread(
+                fixture_schedule = await bounded_context_load(
+                    deadline,
                     load_fixture_schedule,
                     config,
                     now=discord.utils.utcnow(),
                 )
-                context = await asyncio.to_thread(
+                context = await bounded_context_load(
+                    deadline,
                     get_rotation_context,
                     manager_id=EXPECTED_MANAGER_ID,
                     fixture_schedule=fixture_schedule,
                 )
-                result = await asyncio.to_thread(
-                    run_rotation_web_briefing,
+                result = await finalize_advisor_from_evidence(
                     config,
-                    live_context=context.as_json(),
+                    command="/rotation",
+                    question="Plan protected-core moves around the next four fixtures.",
+                    evidence=slash_evidence(
+                        context, capability="get_rotation_context", arguments={}, source="Fantasy rotation context",
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=(
+                        "🔄 **Rotation · current Fantasy evidence retrieved**\n"
+                        "I couldn’t verify current public role and availability information, so I’m not recommending a pickup or trade target. HOLD rather than act on unverified news."
+                    ),
+                    command_instructions=(
+                        "Use the deterministic protected core, roster, fixtures, pickup targets, trade targets, and drop candidates only. "
+                        "Research current role, availability, injury, and club facts before recommending any incoming target. "
+                        "An honest HOLD is preferred to a marginal move. Never combine a pickup with a drop automatically."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:
@@ -603,18 +655,36 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
             if not watched:
                 await interaction.edit_original_response(content=watchlist_empty())
                 return
+            selected = watched[:12]
+            omitted = len(watched) - len(selected)
             async with run_lock:
-                report = await asyncio.to_thread(get_watchlist_stats, watched)
-                result = await asyncio.to_thread(
-                    run_watchlist_web_briefing,
+                report = await bounded_context_load(deadline, get_watchlist_stats, selected)
+                data = json.loads(watchlist_outlook_context(report))
+                data["watchlist_omitted_count"] = omitted
+                result = await finalize_advisor_from_evidence(
                     config,
-                    "Give me a current outlook for every player on my watchlist.",
-                    live_context=watchlist_outlook_context(report),
+                    command="/watch outlook",
+                    question="Give me a current outlook for every player on my watchlist.",
+                    evidence=slash_evidence(
+                        report, capability="get_watchlist_stats", arguments={}, source="Fantasy watchlist and current Sleeper statistics", data=data,
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=(
+                        "👀 **Watchlist outlook · current Fantasy evidence retrieved**\n"
+                        "I couldn’t verify the current public outlook right now, so I’m not adding role or availability claims beyond the current watchlist/stat facts."
+                        + (f"\n\n*{omitted} watchlist player(s) were not covered because this command is limited to 12 per run.*" if omitted else "")
+                    ),
+                    command_instructions=(
+                        "Discuss only the canonical watched players in the supplied evidence. Research current role, availability, injury, and minutes outlook. "
+                        "If watchlist_omitted_count is positive, explicitly disclose it. Do not recommend a player who is not currently watched."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError, WatchlistError) as exc:
@@ -633,23 +703,38 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             watched = await asyncio.to_thread(list_watchlist, watchlist_file(config))
             if not watched:
                 await interaction.edit_original_response(content=watchlist_empty())
                 return
             async with run_lock:
-                context = await asyncio.to_thread(
+                context = await bounded_context_load(
+                    deadline,
                     load_current_watchlist_recommendation_context,
                     watched,
                     manager_id=EXPECTED_MANAGER_ID,
                 )
-                result = await asyncio.to_thread(
-                    run_watchlist_web_briefing,
+                data = json.loads(watchlist_recommendation_context(context))
+                result = await finalize_advisor_from_evidence(
                     config,
-                    "Assess my watched players against my current roster and identify only the best manual pickup/drop opportunities.",
-                    live_context=watchlist_recommendation_context(context),
-                    recommendation=True,
+                    command="/watch recommend",
+                    question="Assess my watched players against my current roster and identify only the best manual pickup/drop opportunities.",
+                    evidence=slash_evidence(
+                        context, capability="get_watchlist_recommendation_context", arguments={}, source="Fantasy watchlist recommendation context", data=data,
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=(
+                        "🎯 **Watchlist recommendations · current Fantasy evidence retrieved**\n"
+                        "I couldn’t verify current public role and availability information, so HOLD rather than make an actionable pickup recommendation."
+                    ),
+                    command_instructions=(
+                        "Use the supplied canonical watchlist, current roster, and same-position signals. "
+                        "Recommend at most three manual opportunities, never mutate the watchlist, and verify every acquisition target's current role and availability. "
+                        "Do not describe a rostered player as available."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError, WatchlistError) as exc:
@@ -677,26 +762,29 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                context = await asyncio.to_thread(get_injury_opportunity_context)
-                research = None
-                research_error = None
-                try:
-                    research = await asyncio.to_thread(
-                        run_injury_web_briefing,
-                        config,
-                        live_context=context.as_json(),
-                    )
-                except AutomationError as exc:
-                    LOGGER.exception("Current injury research was unavailable; returning Sleeper inventory")
-                    research_error = str(exc)
-                report = render_injury_opportunities(
-                    context,
-                    research,
-                    research_error=research_error,
+                context = await bounded_context_load(deadline, get_injury_opportunity_context)
+                result = await finalize_advisor_from_evidence(
+                    config,
+                    command="/injury opportunities",
+                    question="Find current EPL injuries and likely playing-time beneficiaries.",
+                    evidence=slash_evidence(
+                        context, capability="get_injury_opportunity_context", arguments={}, source="Fantasy injury opportunity context",
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=render_injury_opportunities(
+                        context, None,
+                        research_error="Current public verification was unavailable; no beneficiary recommendation is inferred.",
+                    ),
+                    command_instructions=(
+                        "Use deterministic Sleeper injury flags as inventory, but verify material injuries and beneficiaries with current public sources before making an opportunity recommendation. "
+                        "If verification is incomplete, report the inventory and clearly decline to infer a beneficiary."
+                    ),
                 )
-            await edit_injury_interaction(interaction, report)
+            await edit_injury_interaction(interaction, result.text)
         except SleeperDataError as exc:
             LOGGER.exception("Could not load the current Sleeper injury board")
             await interaction.edit_original_response(
@@ -722,10 +810,12 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                fixture_schedule = await asyncio.to_thread(load_persisted_fixture_schedule, config)
-                context = await asyncio.to_thread(
+                fixture_schedule = await bounded_context_load(deadline, load_persisted_fixture_schedule, config)
+                context = await bounded_context_load(
+                    deadline,
                     get_trade_context,
                     manager_id=EXPECTED_MANAGER_ID,
                     fixture_schedule=fixture_schedule,
@@ -734,10 +824,24 @@ def build_client(config: AppConfig) -> discord.Client:
                 if not isinstance(candidates, list) or not candidates:
                     await interaction.edit_original_response(content=no_viable_trade_package(context))
                     return
-                result = await asyncio.to_thread(
-                    run_trade_web_briefing,
+                result = await finalize_advisor_from_evidence(
                     config,
-                    live_context=context.as_json(),
+                    command="/trade propose",
+                    question="Choose the strongest current manual trade proposal for Los Blancos.",
+                    evidence=slash_evidence(
+                        context, capability="get_trade_context", arguments={"you_send": None, "you_receive": None}, source="Fantasy trade proposal context",
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=(
+                        "🛑 **No actionable trade proposal today**\n"
+                        "Current Fantasy package evidence was retrieved, but incoming players could not be publicly verified. HOLD rather than make an unverified offer."
+                    ),
+                    command_instructions=(
+                        "Choose only a candidate package supplied by the deterministic engine, or recommend no trade. "
+                        "Verify every incoming player’s current availability/injury and material role/minutes outlook before finalizing. "
+                        "Never invent a package, player, FAAB term, or claim a Sleeper trade occurred."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:
@@ -798,17 +902,31 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                context = await asyncio.to_thread(
+                context = await bounded_context_load(
+                    deadline,
                     get_gameweek_prepare_context,
                     manager_id=EXPECTED_MANAGER_ID,
                 )
-                result = await asyncio.to_thread(
-                    run_gameweek_web_briefing,
+                result = await finalize_advisor_from_evidence(
                     config,
-                    report_kind="prepare",
-                    live_context=context.as_json(),
+                    command="/gameweek prepare",
+                    question="Prepare my next gameweek lineup and key opponents.",
+                    evidence=slash_evidence(
+                        context, capability="get_gameweek_context", arguments={"mode": "prepare"}, source="Fantasy gameweek prepare context",
+                    ),
+                    mandatory_web=True,
+                    deadline=deadline,
+                    partial_text=(
+                        "🗓️ **Gameweek preparation · current Fantasy evidence retrieved**\n"
+                        "Current roster and fixture facts are available, but public team news could not be verified. Treat lineup advice as provisional; do not rely on unverified injury or role assumptions."
+                    ),
+                    command_instructions=(
+                        "Use only current Los Blancos roster players in start/bench guidance. "
+                        "Research material injury, availability, role, and team-news facts before presenting them as current."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:
@@ -827,17 +945,31 @@ def build_client(config: AppConfig) -> discord.Client:
         if not await ensure_private_user(interaction):
             return
         await interaction.response.defer()
+        deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                context = await asyncio.to_thread(
+                context = await bounded_context_load(
+                    deadline,
                     get_gameweek_recap_context,
                     manager_id=EXPECTED_MANAGER_ID,
                 )
-                result = await asyncio.to_thread(
-                    run_gameweek_web_briefing,
+                result = await finalize_advisor_from_evidence(
                     config,
-                    report_kind="recap",
-                    live_context=context.as_json(),
+                    command="/gameweek recap",
+                    question="Recap my latest completed gameweek and league standouts.",
+                    evidence=slash_evidence(
+                        context, capability="get_gameweek_context", arguments={"mode": "recap"}, source="Fantasy gameweek recap context",
+                    ),
+                    mandatory_web=False,
+                    deadline=deadline,
+                    partial_text=(
+                        "📬 **Gameweek recap · current Fantasy evidence retrieved**\n"
+                        "I couldn’t complete the recap synthesis right now. Please try again."
+                    ),
+                    command_instructions=(
+                        "Summarize only the supplied verified completed-gameweek data. Public research is optional and only needed for a material football explanation. "
+                        "Do not load prepare context or invent a current H2H matchup."
+                    ),
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:
@@ -919,6 +1051,13 @@ def build_client(config: AppConfig) -> discord.Client:
             return
         content = caption
         if not content:
+            return
+        # Discord may emit the rendered slash-command message through the DM
+        # message event as well as its interaction event.  The command handler
+        # is the authoritative route for these messages; letting this fallback
+        # continue would run the grounded freeform Advisor in parallel with a
+        # specialist command.
+        if content.startswith("/"):
             return
         if content.casefold() in {"!help", "help"}:
             await send_chunks(

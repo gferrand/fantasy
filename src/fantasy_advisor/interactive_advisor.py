@@ -609,6 +609,226 @@ about 12 position-filtered candidates even when the Owner asks to see only a few
 CURRENT_DATA_REFRESH_FAILURE = "I couldn’t refresh the current Fantasy data right now. Please try again."
 
 
+def current_evidence_envelope(context: Any, source: str) -> dict[str, Any]:
+    """Normalize one command-owned current report for the shared finalizer."""
+
+    retrieved_at = getattr(context, "retrieved_at", None) or getattr(
+        getattr(context, "stats_report", None), "retrieved_at", None,
+    )
+    return {
+        "status": "complete",
+        "data": getattr(context, "payload", context),
+        "limitations": [],
+        "sources": [{"source": source, "retrieved_at": retrieved_at, "stale": False}],
+    }
+
+
+TARGET_VERIFICATION_PREFIX = "<!-- ADVISOR_TARGET_VERIFICATION "
+TARGET_VERIFICATION_SUFFIX = " -->"
+
+
+def _target_verification(text: str) -> tuple[str, dict[str, Any]]:
+    """Remove and validate the finalizer's machine-readable target evidence.
+
+    The Advisor writes the comment as the final line, so it is never shown to
+    the Owner.  Treat malformed or incomplete action metadata as an unsafe
+    recommendation rather than trying to infer whether arbitrary prose was
+    adequately researched.
+    """
+
+    match = re.search(
+        rf"(?:^|\n){re.escape(TARGET_VERIFICATION_PREFIX)}(\{{.*\}}){re.escape(TARGET_VERIFICATION_SUFFIX)}\s*$",
+        text,
+        flags=re.DOTALL,
+    )
+    base = {
+        "recommended_targets": [],
+        "required_target_research_completed": False,
+        "target_verification_metadata_valid": False,
+    }
+    if match is None:
+        base["target_verification_error"] = "missing"
+        return text, base
+    visible = text[:match.start()].rstrip()
+    try:
+        metadata = _object(match.group(1))
+    except ValueError:
+        base["target_verification_error"] = "invalid_json"
+        return visible, base
+    actionable = metadata.get("actionable")
+    targets = metadata.get("recommended_targets")
+    if not isinstance(actionable, bool) or not isinstance(targets, list):
+        base["target_verification_error"] = "invalid_shape"
+        return visible, base
+    normalized: list[dict[str, Any]] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            base["target_verification_error"] = "invalid_target"
+            return visible, base
+        name = target.get("name")
+        sources = target.get("current_public_sources")
+        if not isinstance(name, str) or not name.strip() or not isinstance(sources, list) or not any(
+            isinstance(source, str) and source.strip() for source in sources
+        ):
+            base["target_verification_error"] = "invalid_target"
+            return visible, base
+        normalized.append({
+            "name": name.strip(),
+            "availability_injury_verified": target.get("availability_injury_verified") is True,
+            "role_minutes_verified": target.get("role_minutes_verified") is True,
+            "current_public_sources": [source.strip() for source in sources if isinstance(source, str) and source.strip()],
+        })
+    if not actionable and normalized:
+        base["target_verification_error"] = "targets_without_action"
+        return visible, base
+    complete = not actionable or bool(normalized) and all(
+        target["availability_injury_verified"] and target["role_minutes_verified"]
+        for target in normalized
+    )
+    return visible, {
+        "recommended_targets": normalized,
+        "required_target_research_completed": complete,
+        "target_verification_metadata_valid": True,
+        "target_verification_actionable": actionable,
+    }
+
+
+async def finalize_advisor_from_evidence(
+    config: AppConfig,
+    *,
+    command: str,
+    question: str,
+    evidence: dict[str, Any],
+    command_instructions: str,
+    mandatory_web: bool,
+    partial_text: str,
+    deadline: RequestDeadline | None = None,
+    client: Any = None,
+    request_id: str | None = None,
+) -> WebResult:
+    """Synthesize an explicit slash command after its deterministic retrieval.
+
+    Slash commands already express their Fantasy intent, so this deliberately
+    starts after retrieval: no grounding call, no private-tool catalog, and no
+    Codex fallback.  The same final Advisor contract used by ``run_advisor``
+    governs the web-qualified answer.
+    """
+
+    deadline = deadline or RequestDeadline.start()
+    started = time.monotonic()
+    request_id = request_id or uuid.uuid4().hex
+    trace: dict[str, Any] = {
+        "request_id": request_id,
+        "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+        "surface": "discord_slash",
+        "command": command,
+        "deterministic_capabilities": [evidence.get("capability")],
+        "capability_arguments": [evidence.get("arguments", {})],
+        "capability_statuses": [evidence.get("status")],
+        "source_timestamps": [source.get("retrieved_at") for source in evidence.get("sources", [])],
+        "cache_hits": evidence.get("cache_hits", []),
+        "web_search_used": False,
+        "codex_used": False,
+        "recommended_targets": [],
+        "required_target_research_completed": False,
+        "target_verification_metadata_valid": False,
+        "result_status": "failed",
+    }
+
+    def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
+        # Every fail-closed partial text supplied by a slash command is an
+        # explicitly non-actionable HOLD/inventory response.  Make that fact
+        # observable even when a model omitted its otherwise-required marker;
+        # never return the unmarked model prose.
+        if status == "partial" and not trace["target_verification_metadata_valid"]:
+            trace.update({
+                "recommended_targets": [],
+                "required_target_research_completed": True,
+                "target_verification_actionable": False,
+                "target_verification_fallback": "no_action",
+            })
+        trace["result_status"] = status
+        trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+        return WebResult(text=text, response_id=response_id, elapsed_seconds=trace["elapsed_seconds"], trace=trace)
+
+    if evidence.get("status") != "complete":
+        return finish(partial_text, "partial")
+    if not config.openai_api_key:
+        return finish(partial_text, "partial")
+
+    if client is None:
+        from openai import AsyncOpenAI
+        async with AsyncOpenAI(api_key=config.openai_api_key, max_retries=0) as owned_client:
+            return await finalize_advisor_from_evidence(
+                config, command=command, question=question, evidence=evidence,
+                command_instructions=command_instructions, mandatory_web=mandatory_web,
+                partial_text=partial_text, deadline=deadline, client=owned_client,
+                request_id=request_id,
+            )
+
+    budget = min(75, deadline.remaining(FINAL_RESERVE_SECONDS))
+    if budget <= 0:
+        return finish(partial_text, "partial")
+    payload = {
+        "slash_command": command,
+        "user_request": question,
+        "historical_discord_continuity_non_authoritative": "",
+        "current_time": datetime.now(timezone.utc).isoformat(),
+        "current_request_evidence": [{
+            key: value for key, value in evidence.items()
+            if key in {"status", "data", "limitations", "sources"}
+        }],
+    }
+    finalization = (
+        "This is an explicit slash command. The supplied current-request evidence is authoritative; "
+        "do not use historical conversation, invent a package/player, or imply a transaction occurred. "
+        "For every player you recommend acquiring or trading for, state the current public availability/role evidence "
+        "and include its source in the answer. If that verification is not available, return HOLD/no actionable recommendation "
+        "instead of naming an unverified target. "
+        "End every response with one exact machine-only HTML comment, after all user-facing prose: "
+        "<!-- ADVISOR_TARGET_VERIFICATION {\"actionable\":false,\"recommended_targets\":[]} -->. "
+        "Use actionable=true only when you recommend an acquisition or trade. When actionable=true, include every ultimately "
+        "recommended incoming target, including every incoming player in a multi-player trade, in recommended_targets. Each target "
+        "must contain name, availability_injury_verified=true, role_minutes_verified=true, and a non-empty current_public_sources "
+        "array naming the sources used. If a candidate is rejected and replaced, list only the final replacement and verify it. "
+        "Never claim actionable=true unless every listed target meets those checks. "
+        + command_instructions
+    )
+    try:
+        response = await asyncio.wait_for(
+            client.responses.create(
+                model=config.openai_web_model,
+                reasoning={"effort": config.openai_web_reasoning_effort},
+                instructions=final_advisor_instructions(
+                    advisor_reasoning(config), capability_contract(config), finalization,
+                ),
+                input=json.dumps(payload, ensure_ascii=False),
+                tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
+                tool_choice="required" if mandatory_web else "auto",
+                store=False,
+                timeout=budget,
+            ),
+            timeout=budget,
+        )
+    except Exception:
+        LOGGER.warning("Advisor slash finalization failed command=%s", command, exc_info=True)
+        return finish(partial_text, "partial")
+    trace["web_search_used"] = any(
+        getattr(item, "type", None) == "web_search_call" for item in getattr(response, "output", [])
+    )
+    if mandatory_web and not trace["web_search_used"]:
+        return finish(partial_text, "partial")
+    text = discord_answer_text(response)
+    if not text:
+        return finish(partial_text, "partial")
+    text, target_trace = _target_verification(text)
+    trace.update(target_trace)
+    if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
+        return finish(partial_text, "partial")
+    return finish(text, "complete", getattr(response, "id", None))
+
+
 def _function_calls(response: Any) -> list[Any]:
     return [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "function_call"]
 
