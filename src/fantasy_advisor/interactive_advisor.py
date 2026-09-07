@@ -645,7 +645,6 @@ FINALIZER_RESPONSE_SCHEMA: dict[str, Any] = {
                         "properties": {
                             "player_id": {"type": "string"},
                             "name": {"type": "string"},
-                            "action": {"type": "string", "enum": ["add", "trade_for"]},
                             "rationale": {"type": "string"},
                             "availability_injury_verified": {"type": "boolean"},
                             "role_minutes_verified": {"type": "boolean"},
@@ -664,7 +663,7 @@ FINALIZER_RESPONSE_SCHEMA: dict[str, Any] = {
                             },
                         },
                         "required": [
-                            "player_id", "name", "action", "rationale",
+                            "player_id", "name", "rationale",
                             "availability_injury_verified", "role_minutes_verified",
                             "current_public_sources",
                         ],
@@ -767,17 +766,16 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
     seen_ids: set[str] = set()
     for target in targets:
         if not isinstance(target, dict) or set(target) != {
-            "player_id", "name", "action", "rationale", "availability_injury_verified",
+            "player_id", "name", "rationale", "availability_injury_verified",
             "role_minutes_verified", "current_public_sources",
         }:
             base["target_verification_error"] = "invalid_target"
             return "", base
-        player_id, name, action = target["player_id"], target["name"], target["action"]
+        player_id, name = target["player_id"], target["name"]
         sources = target["current_public_sources"]
         if (
             not isinstance(player_id, str) or not player_id.strip() or player_id in seen_ids
-            or not isinstance(name, str) or not name.strip() or not isinstance(action, str)
-            or action not in {"add", "trade_for"} or not isinstance(target["rationale"], str)
+            or not isinstance(name, str) or not name.strip() or not isinstance(target["rationale"], str)
             or not target["rationale"].strip() or not isinstance(sources, list) or not sources
             or target["availability_injury_verified"] is not True or target["role_minutes_verified"] is not True
         ):
@@ -790,10 +788,8 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
         if record["on_your_team"]:
             base["target_verification_error"] = "target_already_on_your_team"
             return "", base
-        if record["rostered"] is None or (action == "add" and record["rostered"]) or (
-            action == "trade_for" and not record["rostered"]
-        ):
-            base["target_verification_error"] = "target_ownership_mismatch"
+        if record["rostered"] is None:
+            base["target_verification_error"] = "target_ownership_unknown"
             return "", base
         safe_sources: list[dict[str, str]] = []
         for source in sources:
@@ -810,7 +806,11 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
         normalized.append({
             "player_id": player_id,
             "name": name.strip(),
-            "action": action,
+            # The model picks the player; current deterministic ownership
+            # decides whether that player can be added or must be acquired in
+            # a trade.  This makes an ownership-incompatible action
+            # unrepresentable in the rendered recommendation.
+            "action": "trade_for" if record["rostered"] else "add",
             "rationale": target["rationale"].strip(),
             "availability_injury_verified": True,
             "role_minutes_verified": True,
@@ -947,10 +947,10 @@ async def finalize_advisor_from_evidence(
         "to tell the Owner to add, acquire, pursue, trade for, or make an offer for any player. The decision object is the "
         "only actionable recommendation and it is rendered directly to the Owner. Use actionable=false with no targets for "
         "HOLD/no action. Use actionable=true only when every ultimately recommended incoming player appears exactly once in "
-        "decision.targets. Each target needs its current deterministic player_id, exact current-evidence name, add or trade_for "
-        "action, current availability/injury verification, material role/minutes verification, and current public source URLs. "
-        "A player marked on_your_team in current evidence can never be an incoming acquisition or trade target. For add, the "
-        "current ownership must be unrostered; for trade_for, it must be rostered by another team. If a candidate is rejected "
+        "decision.targets. Each target needs its current deterministic player_id, exact current-evidence name, "
+        "current availability/injury verification, material role/minutes verification, and current public source URLs. "
+        "A player marked on_your_team in current evidence can never be an incoming acquisition or trade target. "
+        "The finalizer derives Add for current unrostered players and Trade for for players rostered by another team. If a candidate is rejected "
         "and replaced, list only the final replacement. If any final target cannot meet every condition, use HOLD/no action. "
         + command_instructions
     )

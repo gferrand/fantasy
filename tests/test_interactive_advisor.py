@@ -107,9 +107,9 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         return json.dumps({"analysis": analysis, "decision": {"actionable": False, "summary": summary, "targets": []}})
 
     @staticmethod
-    def target(player_id, name, action="add", *, verified=True):
+    def target(player_id, name, *, verified=True):
         return {
-            "player_id": player_id, "name": name, "action": action,
+            "player_id": player_id, "name": name,
             "rationale": "Current evidence supports the move.",
             "availability_injury_verified": verified,
             "role_minutes_verified": True,
@@ -199,8 +199,8 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             )]),
         ]
         payload = json.dumps({"analysis": "Package review.", "decision": {"actionable": True, "summary": "Offer it.", "targets": [
-            self.target("incoming", "Verified Incoming", "trade_for"),
-            self.target("unverified", "Unverified Incoming", "trade_for", verified=False),
+            self.target("incoming", "Verified Incoming"),
+            self.target("unverified", "Unverified Incoming", verified=False),
         ]}})
         client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text=payload))))
         response = await advisor.finalize_advisor_from_evidence(
@@ -242,7 +242,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             "actionable": True, "summary": "Act on all three.", "targets": [
                 self.target("strand", "Jørgen Strand Larsen"),
                 self.target("frimpong", "Jeremie Frimpong"),
-                self.target("incoming", "Verified Incoming", "trade_for"),
+                self.target("incoming", "Verified Incoming"),
             ],
         }})
         response = await self.finalizer([NS(type="web_search_call")], payload=payload)
@@ -264,7 +264,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             "actionable": True, "summary": "Make the three manual moves.", "targets": [
                 self.target("strand", "Jørgen Strand Larsen"),
                 self.target("frimpong", "Jeremie Frimpong"),
-                self.target("mateta-external", "Jean-Philippe Mateta", "trade_for"),
+                self.target("mateta-external", "Jean-Philippe Mateta"),
             ],
         }})
         client = NS(responses=NS(create=AsyncMock(return_value=NS(
@@ -282,7 +282,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_current_roster_player_cannot_be_an_incoming_target(self):
         payload = json.dumps({"analysis": "Mateta is injured.", "decision": {"actionable": True, "summary": "Buy low.", "targets": [
-            self.target("mateta", "Jean-Philippe Mateta", "trade_for"),
+            self.target("mateta", "Jean-Philippe Mateta"),
         ]}})
         response = await self.finalizer([NS(type="web_search_call")], payload=payload)
         self.assertEqual(response.trace["result_status"], "partial")
