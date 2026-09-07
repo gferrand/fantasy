@@ -18,10 +18,23 @@ from .watchlist_stats import WatchlistStatsReport, load_current_watchlist_stats
 
 
 def get_watchlist_stats(
-    watched: list[WatchlistPlayer], *, include_trends: bool = True, include_previous_season: bool = True
+    watched: list[WatchlistPlayer],
+    *,
+    client: SleeperClient | None = None,
+    include_trends: bool = True,
+    include_previous_season: bool = True,
 ) -> WatchlistStatsReport:
+    if client is None:
+        return load_current_watchlist_stats(
+            watched,
+            include_trends=include_trends,
+            include_previous_season=include_previous_season,
+        )
     return load_current_watchlist_stats(
-        watched, include_trends=include_trends, include_previous_season=include_previous_season
+        watched,
+        client=client,
+        include_trends=include_trends,
+        include_previous_season=include_previous_season,
     )
 
 

@@ -8,7 +8,7 @@ import tempfile
 import time
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from fantasy_advisor.automation import (
     AppConfig,
@@ -18,6 +18,8 @@ from fantasy_advisor.automation import (
 )
 from fantasy_advisor import interactive_advisor as advisor
 from fantasy_advisor.context_store import append_event, build_context_packet, DISCORD_USER_MESSAGE, PRIVATE_EVIDENCE
+from fantasy_advisor.watchlist import WatchlistPlayer
+from fantasy_advisor.watchlist_stats import WatchlistStat, WatchlistStatsReport
 
 ROOT = Path(__file__).parents[1]
 
@@ -102,12 +104,103 @@ class GuidanceTests(unittest.TestCase):
         self.assertNotIn("ADVISOR_INSTRUCTIONS =", source)
         self.assertNotIn("Optimize the roster, not the isolated player", source)
 
+    def test_named_product_tool_rejects_raw_or_unknown_access(self):
+        packet = advisor.execute_fantasy_tool(config(), "unknown", "{}", timeout=1)
+        self.assertEqual(packet["status"], "partial")
+        self.assertEqual(packet["limitations"][0]["field"], "requested_private_data")
+
+    def test_watchlist_action_requires_a_named_explicit_tool_call(self):
+        with patch.object(advisor, "LocalActions") as actions:
+            actions.return_value.add_to_watchlist.return_value = {"status": "success", "data": {"name": "Enciso"}, "detail": "Added"}
+            packet = advisor.execute_fantasy_tool(config(), "add_to_watchlist", json.dumps({"player_name": "Enciso"}), timeout=1)
+        self.assertEqual(packet["status"], "success")
+        actions.return_value.add_to_watchlist.assert_called_once_with("Enciso")
+
+    def test_named_catalog_routes_compact_league_and_market_requests(self):
+        packet = {"status": "complete", "data": {}, "limitations": [], "sources": []}
+        cases = (
+            ("get_league_context", "{}", "get_league_context", ()),
+            ("search_player_pool", '{"query":"Enciso","limit":5}', "search_player_pool", ("Enciso",)),
+            ("get_draft_context", '{"player_name":"Damsgaard"}', "get_draft_context", ("Damsgaard",)),
+            ("get_player_trends", '{"kind":"add","hours":24,"limit":8}', "get_player_trends", ()),
+        )
+        with patch.object(advisor, "DataCapabilities") as capabilities:
+            for name, arguments, method, expected_args in cases:
+                with self.subTest(name=name):
+                    getattr(capabilities.return_value, method).return_value = packet
+                    self.assertEqual(
+                        advisor.execute_fantasy_tool(config(), name, arguments, timeout=1),
+                        packet,
+                    )
+                    getattr(capabilities.return_value, method).assert_called()
+                    self.assertEqual(
+                        getattr(capabilities.return_value, method).call_args.args,
+                        expected_args,
+                    )
+        capabilities.return_value.search_player_pool.assert_called_with("Enciso", limit=5)
+        capabilities.return_value.get_player_trends.assert_called_with(
+            kind="add", hours=24, limit=8,
+        )
+
+    def test_watchlist_stats_tool_uses_the_shared_bounded_stats_engine(self):
+        watched = [WatchlistPlayer("enciso", "Julio Enciso", "IPS", ("M",), "2026-09-01T00:00:00+00:00")]
+        report = WatchlistStatsReport(
+            "2026", 3, "2026-09-07T12:00:00+00:00",
+            (WatchlistStat(watched[0], 12.0, 2.0, 1.0, 120.0, None, 1.0, None, None, None, None, True),),
+        )
+        with (
+            patch.object(advisor, "list_watchlist", return_value=watched),
+            patch.object(advisor, "get_watchlist_stats", return_value=report) as stats,
+        ):
+            packet = advisor.execute_fantasy_tool(config(), "get_watchlist_stats", "{}", timeout=1)
+        self.assertEqual(packet["status"], "complete")
+        self.assertEqual(packet["data"]["entries"][0]["player"]["name"], "Julio Enciso")
+        stats.assert_called_once_with(
+            watched,
+            client=ANY,
+            include_trends=False,
+            include_previous_season=False,
+        )
+
+    def test_named_intelligence_tools_return_provenanced_packets(self):
+        context = NS(
+            payload={"recommended_players": ["Enciso"]},
+            retrieved_at="2026-09-07T12:00:00+00:00",
+        )
+        with (
+            patch.object(advisor, "get_gameweek_prepare_context", return_value=context),
+            patch.object(advisor, "get_injury_opportunity_context", return_value=context),
+            patch.object(advisor, "load_persisted_fixture_schedule", return_value="schedule") as schedule,
+            patch.object(advisor, "get_rotation_context", return_value=context) as rotation,
+            patch.object(advisor, "get_trade_context", return_value=context) as trade,
+        ):
+            for name in (
+                "get_gameweek_context",
+                "get_injury_opportunity_context",
+                "get_rotation_context",
+                "get_trade_context",
+            ):
+                with self.subTest(name=name):
+                    packet = advisor.execute_fantasy_tool(config(), name, "{}", timeout=1)
+                    self.assertEqual(packet["status"], "complete")
+                    self.assertEqual(packet["data"], context.payload)
+                    self.assertFalse(packet["sources"][0]["stale"])
+        self.assertEqual(schedule.call_count, 2)
+        rotation.assert_called_once_with(
+            manager_id=advisor.EXPECTED_MANAGER_ID,
+            fixture_schedule="schedule",
+        )
+        trade.assert_called_once_with(
+            manager_id=advisor.EXPECTED_MANAGER_ID,
+            fixture_schedule="schedule",
+        )
+
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
         client = NS(responses=NS(create=AsyncMock(side_effect=responses)))
         with patch.object(advisor, "get_player_evaluation_context", return_value=evidence or player_evaluation_facts()) as player_retrieve, patch.object(advisor, "retrieve_private_data", return_value=evidence or facts()) as codex_retrieve, patch.object(advisor, "persist_advisor_context_event") as persist:
-            answer = await advisor.run_advisor(config(), "Should I make the swap?", context_packet=context, client=client, deadline=deadline)
+            answer = await advisor.run_advisor(config(), "Should I make the swap?", context_packet=context, client=client, deadline=deadline, legacy_planner=True)
         return answer, client.responses.create, player_retrieve, codex_retrieve, persist
 
     async def test_public_only_never_starts_codex(self):
@@ -126,6 +219,28 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(reasoning, calls.call_args_list[0].kwargs["instructions"])
         self.assertIn(reasoning, calls.call_args_list[1].kwargs["instructions"])
         self.assertIn("OpenAI researches public football evidence", calls.call_args_list[1].kwargs["instructions"])
+
+    async def test_normal_advisor_starts_with_named_tools_not_the_legacy_planner(self):
+        client = NS(responses=NS(create=AsyncMock(return_value=result("Direct answer"))))
+        answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)
+        self.assertEqual(answer.text, "Direct answer")
+        call = client.responses.create.call_args
+        self.assertNotIn("private_data_plan", call.kwargs["instructions"])
+        self.assertIn("get_player_context", [tool.get("name") for tool in call.kwargs["tools"] if tool["type"] == "function"])
+
+    async def test_normal_advisor_executes_named_tool_then_returns_openai_answer(self):
+        call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Tool-grounded answer")])) )
+        packet = {"status": "complete", "data": {"team": {"name": "Los Blancos"}}, "limitations": [], "sources": [{"source": "Sleeper league rosters", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}]}
+        with (
+            patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute,
+            patch.object(advisor, "persist_advisor_context_event") as persist,
+        ):
+            answer = await advisor.run_advisor(config(), "How is Los Blancos?", client=client)
+        self.assertEqual(answer.text, "Tool-grounded answer")
+        execute.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["metadata"]["source"], "advisor_tool:get_team_context")
+        self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
 
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
@@ -158,10 +273,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         codex_retrieve.assert_not_called()
         self.assertEqual(player_retrieve.call_args.args[1], "Julio Enciso")
         self.assertFalse(calls.call_args_list[1].kwargs["parallel_tool_calls"])
-        self.assertEqual(
-            [tool["type"] for tool in calls.call_args_list[1].kwargs["tools"]],
-            ["web_search_preview", "function"],
-        )
+        self.assertEqual(calls.call_args_list[1].kwargs["tools"][0]["type"], "web_search_preview")
+        self.assertGreaterEqual(len(calls.call_args_list[1].kwargs["tools"]), 2)
         final_payload = json.loads(calls.call_args_list[2].kwargs["input"])
         packet = final_payload["private_evidence"][0]["data"]["player_evaluation"]
         self.assertEqual(packet["target"]["positions"], ["M", "F"])
