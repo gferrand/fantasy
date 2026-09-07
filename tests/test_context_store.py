@@ -59,7 +59,7 @@ class ContextStoreTests(unittest.TestCase):
                 created_at="2026-08-24T22:00:00+00:00",
             )
 
-            packet = build_context_packet(database)
+            packet = build_context_packet(database, scheduled_reports=1)
 
             self.assertIn("RECENT DISCORD CONVERSATION", packet)
             self.assertIn("What did the latest recap say", packet)
@@ -74,13 +74,13 @@ class ContextStoreTests(unittest.TestCase):
             append_event(database, kind=SCHEDULED_REPORT, content="old report", task_id="old")
             append_event(database, kind=SCHEDULED_REPORT, content="LATEST_REPORT_MARKER " * 400, task_id="latest")
 
-            packet = build_context_packet(database, max_chars=1_500)
+            packet = build_context_packet(database, scheduled_reports=1, max_chars=1_500)
 
             self.assertLessEqual(len(packet), 1_500)
             self.assertIn("LATEST_REPORT_MARKER", packet)
             self.assertIn("SCHEDULED REPORT · latest", packet)
 
-    def test_default_packet_represents_each_of_the_latest_twenty_dm_messages(self):
+    def test_default_packet_represents_only_the_latest_eight_dm_messages(self):
         with tempfile.TemporaryDirectory() as temporary:
             database = Path(temporary) / "advisor_context.sqlite3"
             for number in range(24):
@@ -94,13 +94,13 @@ class ContextStoreTests(unittest.TestCase):
             packet = build_context_packet(database)
 
             self.assertLessEqual(len(packet), 32_000)
-            self.assertIn("up to 20 latest messages", packet)
-            for number in range(4, 24):
+            self.assertIn("up to 8 latest messages", packet)
+            for number in range(16, 24):
                 self.assertIn(f"TURN-{number:02d}", packet)
-            for number in range(4, 23):
+            for number in range(16, 23):
                 self.assertLess(packet.index(f"TURN-{number:02d}"), packet.index(f"TURN-{number + 1:02d}"))
             self.assertNotIn("TURN-00", packet)
-            self.assertNotIn("TURN-03", packet)
+            self.assertNotIn("TURN-15", packet)
 
     def test_interactive_prompt_accepts_context_but_scheduled_prompt_does_not(self):
         interactive = interactive_prompt(

@@ -41,6 +41,6 @@ def test_operational_watchlist_failure_is_not_mislabeled_as_not_found():
         with patch("fantasy_advisor.local_actions.load_local_player_catalog", side_effect=OSError("disk unavailable")):
             result = actions.add_to_watchlist("Enciso")
         assert result == {
-            "status": "failure", "data": {},
+            "status": "operational_failure", "data": {},
             "detail": "I couldn’t update the watchlist right now. Please try again.",
         }

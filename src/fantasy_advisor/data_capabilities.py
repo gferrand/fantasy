@@ -7,7 +7,10 @@ from datetime import datetime, timezone
 import time
 from typing import Any, Mapping
 
-from .automation import AppConfig, EXPECTED_LEAGUE_ID, load_local_player_catalog, load_registry
+from .automation import (
+    AppConfig, EXPECTED_LEAGUE_ID, SLEEPER_EPL_PLAYERS_URL,
+    load_local_player_catalog, load_registry,
+)
 from .deadline_guardian import active_events
 from .gameweek import latest_completed_gameweek
 from .player_evaluation import get_player_evaluation_context
@@ -32,6 +35,12 @@ def _local_source(name: str) -> dict[str, Any]:
     return {"source": name, "retrieved_at": None, "stale": True}
 
 
+def _current_local_source(name: str) -> dict[str, Any]:
+    """A local state read is authoritative now, even though it is local."""
+
+    return _source(name)
+
+
 def _limitation(field: str, detail: str) -> dict[str, str]:
     return {"kind": "temporarily_unavailable", "field": field, "detail": detail}
 
@@ -44,6 +53,10 @@ class DataCapabilities:
         self.deadline = time.monotonic() + max(0.0, timeout)
         self.client = client or SleeperClient(timeout=min(8.0, max(0.001, timeout)), retries=1)
         self.cache: dict[str, object] = {}
+        # Keep provenance beside a request-cache value.  A later capability
+        # must be able to prove that a cache hit originated in this request.
+        self.cache_sources: dict[str, list[dict[str, Any]]] = {}
+        self.cache_hits: list[str] = []
         self.sources: list[dict[str, Any]] = []
         self.limitations: list[dict[str, str]] = []
         self.operation_deadline = self.deadline
@@ -53,6 +66,7 @@ class DataCapabilities:
 
         self.sources = []
         self.limitations = []
+        self.cache_hits = []
         self.operation_deadline = min(self.deadline, time.monotonic() + max(0.0, timeout))
 
     def _remaining(self) -> float:
@@ -72,6 +86,8 @@ class DataCapabilities:
 
     def _get(self, key: str, url: str, expected: type) -> object | None:
         if key in self.cache:
+            self.sources.extend(dict(source) for source in self.cache_sources.get(key, []))
+            self.cache_hits.append(key)
             return self.cache[key]
         if self._remaining() <= 0:
             self.limitations.append(_limitation("packet_deadline", "Current league data could not be retrieved within this answer's time limit."))
@@ -84,8 +100,10 @@ class DataCapabilities:
         if self._remaining() <= 0 or not isinstance(value, expected):
             self.limitations.append(_limitation(key, "Current league data could not be processed."))
             return None
+        source = _source(f"Sleeper {key.replace('_', ' ')}")
         self.cache[key] = value
-        self.sources.append(_source(f"Sleeper {key.replace('_', ' ')}"))
+        self.cache_sources[key] = [source]
+        self.sources.append(source)
         return value
 
     def _result(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -107,10 +125,14 @@ class DataCapabilities:
     def _catalog(self) -> list[dict[str, Any]]:
         cached = self.cache.get("player_catalog")
         if isinstance(cached, list):
+            self.sources.extend(dict(source) for source in self.cache_sources.get("player_catalog", []))
+            self.cache_hits.append("player_catalog")
             return cached
         catalog = load_local_player_catalog(self.config)
         self.cache["player_catalog"] = catalog
-        self.sources.append(_local_source("Fantasy player catalog"))
+        source = _local_source("Fantasy player catalog")
+        self.cache_sources["player_catalog"] = [source]
+        self.sources.append(source)
         return catalog
 
     @staticmethod
@@ -125,6 +147,8 @@ class DataCapabilities:
     def _team_names(self) -> dict[str, str]:
         cached = self.cache.get("team_names")
         if isinstance(cached, dict):
+            self.sources.extend(dict(source) for source in self.cache_sources.get("team_names", []))
+            self.cache_hits.append("team_names")
             return cached
         users = self._get("league_users", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users", list)
         rosters = self._get("league_rosters", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters", list)
@@ -139,6 +163,12 @@ class DataCapabilities:
             for roster in rosters or [] if isinstance(roster, Mapping)
         }
         self.cache["team_names"] = names
+        # The two provider packets just used are the evidence for the derived
+        # team-name map as well; retain them for any later cache hit.
+        self.cache_sources["team_names"] = [
+            *[dict(source) for source in self.cache_sources.get("league_users", [])],
+            *[dict(source) for source in self.cache_sources.get("league_rosters", [])],
+        ]
         return names
 
     @staticmethod
@@ -155,8 +185,19 @@ class DataCapabilities:
         stats: object,
         scoring: Mapping[str, Any],
         starter: bool,
+        live_player: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         identity = self._player_identity(player_id, catalog)
+        if isinstance(live_player, Mapping):
+            metadata = live_player.get("metadata") if isinstance(live_player.get("metadata"), Mapping) else {}
+            live_name = live_player.get("full_name") or metadata.get("full_name")
+            live_positions = live_player.get("fantasy_positions")
+            if live_name:
+                identity["name"] = str(live_name)
+            if live_player.get("team_abbr"):
+                identity["club"] = str(live_player["team_abbr"])
+            if isinstance(live_positions, list) and live_positions:
+                identity["positions"] = [str(position) for position in live_positions]
         values = stats if isinstance(stats, Mapping) else {}
         points = custom_points_by_position(values, scoring, identity["positions"])
         games = self._number(values, "gp")
@@ -210,6 +251,7 @@ class DataCapabilities:
             f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular",
             list,
         ) if season else None
+        live_players = self._get("epl_players", SLEEPER_EPL_PLAYERS_URL, Mapping)
         try:
             catalog = self._catalog()
         except Exception:
@@ -223,13 +265,19 @@ class DataCapabilities:
         }
         starters = {str(value) for value in (roster.get("starters") or []) if str(value) != "0"}
         players = [
-            self._team_player_profile(str(player_id), catalog, stats_by_id.get(str(player_id), {}), scoring, str(player_id) in starters)
+            self._team_player_profile(
+                str(player_id), catalog, stats_by_id.get(str(player_id), {}), scoring,
+                str(player_id) in starters,
+                live_players.get(str(player_id)) if isinstance(live_players, Mapping) else None,
+            )
             for player_id in (roster.get("players") or [])
         ]
         return self._result({"team": {"name": label, "players": players}})
 
     def get_watchlist(self) -> dict[str, Any]:
         if "watchlist" in self.cache:
+            self.sources.extend(dict(source) for source in self.cache_sources.get("watchlist", []))
+            self.cache_hits.append("watchlist")
             return self._result({"watchlist": self.cache["watchlist"]})
         try:
             players = list_watchlist(self.config.repo_root / "data" / "automation" / "watchlist.sqlite3")
@@ -238,7 +286,9 @@ class DataCapabilities:
             return self._result({})
         data = [{"player_id": player.player_id, "name": player.name, "club": player.club, "positions": list(player.positions), "added_at": player.added_at} for player in players]
         self.cache["watchlist"] = data
-        self.sources.append(_local_source("Fantasy watchlist"))
+        source = _current_local_source("Fantasy watchlist")
+        self.cache_sources["watchlist"] = [source]
+        self.sources.append(source)
         return self._result({"watchlist": data})
 
     def get_league_activity(self, round_number: int | None = None) -> dict[str, Any]:
@@ -312,42 +362,60 @@ class DataCapabilities:
         catalog = self._catalog()
         return self._result({"kind": kind, "lookback_hours": hours, "trends": [{**self._player_identity(str(row.get("player_id") or ""), catalog), "count": row.get("count")} for row in rows if isinstance(row, Mapping)]} if rows is not None else {})
 
-    def get_waiver_context(self, *, manager_id: str) -> dict[str, Any]:
+    def get_waiver_context(self, *, manager_id: str, position: str, limit: int) -> dict[str, Any]:
         """Return the existing deterministic waiver engine's compact evidence."""
+
+        if position not in {"ANY", "F", "M", "D", "GK"} or not 1 <= limit <= 25:
+            return {
+                "status": "partial",
+                "data": {},
+                "limitations": [{
+                    "kind": "unsupported", "field": "waiver_request",
+                    "detail": "Position must be ANY, F, M, D, or GK and limit must be between 1 and 25.",
+                }],
+                "sources": [],
+            }
 
         league = self._get("league_settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", Mapping)
         state = self._get("epl_state", f"{API_BASE}/state/clubsoccer:epl", Mapping)
         rosters = self._get("league_rosters", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters", list)
+        live_players = self._get("epl_players", SLEEPER_EPL_PLAYERS_URL, Mapping)
         season = str(state.get("season") or "") if isinstance(state, Mapping) else ""
         stats_rows = self._get(
             "season_stats", f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular", list,
         ) if season else None
-        if not all((isinstance(league, Mapping), isinstance(rosters, list), isinstance(stats_rows, list))):
+        if not all((
+            isinstance(league, Mapping), isinstance(rosters, list),
+            isinstance(stats_rows, list), isinstance(live_players, Mapping),
+        )):
             return self._result({})
         scoring = league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {}
-        try:
-            players = {
-                str(player.get("player_id") or ""): {
-                    "player_id": str(player.get("player_id") or ""),
-                    "full_name": player.get("name"),
-                    "team_abbr": player.get("club"),
-                    "fantasy_positions": player.get("positions") or [],
-                    "competitions": player.get("competitions") or [],
-                    "active": player.get("active"),
-                    "status": player.get("status"),
-                    "metadata": {},
-                }
-                for player in self._catalog()
-                if str(player.get("player_id") or "")
+        players = {
+            str(raw.get("player_id") or raw_id): {
+                "player_id": str(raw.get("player_id") or raw_id),
+                "full_name": raw.get("full_name"),
+                "team_abbr": raw.get("team_abbr"),
+                "fantasy_positions": raw.get("fantasy_positions") or [],
+                "competitions": raw.get("competitions") or [],
+                "active": raw.get("active"),
+                "status": raw.get("status"),
+                "injury_status": raw.get("injury_status"),
+                "metadata": raw.get("metadata") if isinstance(raw.get("metadata"), Mapping) else {},
             }
-        except Exception:
-            self.limitations.append(_limitation("player_catalog", "Player identity data could not be accessed."))
-            return self._result({})
-        candidates = pickup_candidates(players, rosters, stats_rows, scoring, limit=12)
+            for raw_id, raw in live_players.items()
+            if isinstance(raw, Mapping) and str(raw.get("player_id") or raw_id)
+        }
+        # `players` is the complete eligible-player metadata universe.  Stats
+        # enrich/rank it but never determine who can be available.
+        candidates = pickup_candidates(
+            players, rosters, stats_rows, scoring, required_position=position, limit=limit,
+        )
         swaps = roster_swap_recommendations(
-            candidates, players, rosters, stats_rows, scoring, manager_id=manager_id, limit=6,
+            candidates, players, rosters, stats_rows, scoring, manager_id=manager_id, limit=min(6, limit),
         )
         return self._result({
+            "position": position,
+            "limit": limit,
             "available_candidates": candidates,
             "roster_swap_recommendations": swaps,
             "availability_note": "Sleeper does not distinguish an immediate add from pending waivers.",
@@ -400,7 +468,7 @@ class DataCapabilities:
         except Exception:
             self.limitations.append(_limitation("guardian", "Deadline Guardian state could not be accessed."))
             return self._result({})
-        self.sources.append(_local_source("Fantasy Deadline Guardian"))
+        self.sources.append(_current_local_source("Fantasy Deadline Guardian"))
         return self._result({"events": [{"event_id": event.event_id, "kickoff": event.kickoff.isoformat(), "home": event.home, "away": event.away, "acknowledged_at": event.acknowledged_at.isoformat() if event.acknowledged_at else None} for event in events]})
 
     def get_task_registry(self) -> dict[str, Any]:

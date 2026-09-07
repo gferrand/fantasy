@@ -246,12 +246,18 @@ class GuidanceTests(unittest.TestCase):
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_advisor_starts_with_named_tools_not_the_legacy_planner(self):
-        client = NS(responses=NS(create=AsyncMock(return_value=result("Direct answer"))))
-        answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)
-        self.assertEqual(answer.text, "Direct answer")
-        call = client.responses.create.call_args
-        self.assertNotIn("private_data_plan", call.kwargs["instructions"])
-        self.assertIn("get_player_context", [tool.get("name") for tool in call.kwargs["tools"] if tool["type"] == "function"])
+        call = NS(type="function_call", name="get_player_context", arguments='{"player_name":"Enciso"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Grounded answer")])))
+        packet = facts()
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet), patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)
+        self.assertEqual(answer.text, "Grounded answer")
+        first = client.responses.create.call_args_list[0]
+        self.assertNotIn("private_data_plan", first.kwargs["instructions"])
+        self.assertEqual(first.kwargs["tool_choice"], "required")
+        self.assertNotIn("web_search_preview", [tool["type"] for tool in first.kwargs["tools"]])
+        self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
+        self.assertIn("get_player_context", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
 
     async def test_normal_advisor_executes_named_tool_then_returns_openai_answer(self):
         call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))
@@ -265,10 +271,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, "Tool-grounded answer")
         execute.assert_called_once()
         self.assertEqual(persist.call_args.kwargs["metadata"]["source"], "advisor_tool:get_team_context")
-        self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
+        self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["current_request_evidence"][0], packet)
 
     async def test_best_waiver_request_can_use_one_compound_capability_without_codex(self):
-        call = NS(type="function_call", name="get_waiver_context", arguments="{}")
+        call = NS(type="function_call", name="get_waiver_context", arguments='{"position":"ANY","limit":12}')
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Add A, drop B")])) )
         packet = {"status": "complete", "data": {"available_candidates": [], "roster_swap_recommendations": []}, "limitations": [], "sources": [{"source": "test", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}]}
         with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
@@ -276,7 +282,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, "Add A, drop B")
         execute.assert_called_once()
         self.assertEqual(execute.call_args.args[1], "get_waiver_context")
-        self.assertNotIn("Codex", str(client.responses.create.call_args_list))
+        first_names = [tool.get("name") for tool in client.responses.create.call_args_list[0].kwargs["tools"] if tool["type"] == "function"]
+        self.assertNotIn("retrieve_missing_private_fact", first_names)
+
+    async def test_failed_required_target_research_never_falls_back_to_an_unverified_recommendation(self):
+        call = NS(type="function_call", name="get_waiver_context", arguments='{"position":"ANY","limit":12}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), asyncio.TimeoutError()])))
+        packet = {
+            "status": "complete", "data": {"available_candidates": []}, "limitations": [],
+            "sources": [{"source": "test", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}],
+        }
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet), patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "What waiver move should I make right now?", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertEqual(client.responses.create.await_count, 2)
 
     async def test_normal_advisor_can_iterate_named_tools_for_compound_request(self):
         calls = [
@@ -298,7 +317,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, "Compound answer")
         self.assertEqual(execute.call_count, 2)
         final_input = json.loads(client.responses.create.call_args.kwargs["input"])
-        self.assertEqual(len(final_input["private_evidence"]), 2)
+        self.assertEqual(len(final_input["current_request_evidence"]), 2)
 
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
@@ -313,8 +332,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_expired_deadline_starts_no_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
-        with self.assertRaisesRegex(AutomationError, "time limit"):
-            await advisor.run_advisor(config(), "hello", client=client, deadline=advisor.RequestDeadline(time.monotonic() - 1))
+        answer = await advisor.run_advisor(config(), "hello", client=client, deadline=advisor.RequestDeadline(time.monotonic() - 1))
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         client.responses.create.assert_not_awaited()
 
     async def test_transport_is_cancelled_at_deadline(self):
@@ -325,16 +344,17 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 cancelled.set()
         client = NS(responses=NS(create=hung))
-        with self.assertRaises(AutomationError):
-            await advisor.run_advisor(config(), "hello", client=client, deadline=advisor.RequestDeadline(time.monotonic() + 30.02))
+        answer = await advisor.run_advisor(config(), "hello", client=client, deadline=advisor.RequestDeadline(time.monotonic() + 30.02))
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         self.assertTrue(cancelled.is_set())
 
     async def test_codex_fallback_is_only_for_unsupported_private_facts(self):
         call = NS(type="function_call", name="retrieve_missing_private_fact", arguments=json.dumps({
             "request": {"kind": "codex_exploration", "codex_request": "Find an unsupported private fact"}, "reason": "No named tool covers it",
         }))
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Conditional answer")])))
-        with (patch.object(advisor, "retrieve_private_data", return_value=facts()) as retrieve, patch.object(advisor, "persist_advisor_context_event")):
+        ground = NS(type="function_call", name="get_league_context", arguments="{}")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("", [call]), result("Conditional answer")])))
+        with (patch.object(advisor, "retrieve_private_data", return_value=facts()) as retrieve, patch.object(advisor, "execute_fantasy_tool", return_value=facts()), patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "What unusual private fact applies?", client=client)
         self.assertEqual(answer.text, "Conditional answer")
         retrieve.assert_called_once()
@@ -352,11 +372,23 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         retry_tools = client.responses.create.call_args_list[1].kwargs["tools"]
         self.assertIn("remove_from_watchlist", [tool.get("name") for tool in retry_tools if tool["type"] == "function"])
 
+    async def test_late_external_retrieval_window_does_not_hide_authenticated_remove(self):
+        call = NS(type="function_call", name="remove_from_watchlist", arguments='{"player_name":"Santos"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[asyncio.TimeoutError(), result("", [call]), result("Removed Santos.")])))
+        packet = {"status": "success", "data": {"name": "Santos"}, "detail": "Removed", "limitations": [], "sources": []}
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(
+                config(), "Remove Santos from my watchlist.", client=client, requester_id="123",
+                deadline=advisor.RequestDeadline(time.monotonic() + 29),
+            )
+        self.assertEqual(answer.text, "Removed Santos from your watchlist.")
+        execute.assert_called_once()
+
     async def test_slow_first_pass_does_not_mutate_for_watchlist_advice(self):
         client = NS(responses=NS(create=AsyncMock(side_effect=[asyncio.TimeoutError(), result("Here is advice only.")])))
         with (patch.object(advisor, "execute_fantasy_tool") as execute, patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "Should I remove Santos from my watchlist?", client=client, requester_id="123")
-        self.assertEqual(answer.text, "Here is advice only.")
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         execute.assert_not_called()
 
     async def test_completed_local_action_is_not_offered_for_a_same_request_retry(self):
@@ -374,33 +406,67 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_current_waiver_request_uses_a_fresh_compound_capability(self):
-        call = NS(type="function_call", name="get_waiver_context", arguments="{}")
+        call = NS(type="function_call", name="get_waiver_context", arguments='{"position":"ANY","limit":12}')
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Fresh waiver answer.")])))
         packet = {"status": "complete", "data": {"available_candidates": []}, "limitations": [], "sources": []}
         with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
             await advisor.run_advisor(config(), "Look at my team and tell me the best waiver move I should make right now.", context_packet="recent conversation only", client=client)
         execute.assert_called_once()
         self.assertEqual(execute.call_args.args[1], "get_waiver_context")
-        self.assertNotIn("PRIVATE_EVIDENCE", client.responses.create.call_args_list[0].kwargs["input"])
-        self.assertEqual(
-            client.responses.create.call_args_list[0].kwargs["tool_choice"],
-            {"type": "function", "name": "get_waiver_context"},
-        )
+        self.assertNotIn("RETAINED PRIVATE EVIDENCE", client.responses.create.call_args_list[0].kwargs["input"])
+        self.assertEqual(client.responses.create.call_args_list[0].kwargs["tool_choice"], "required")
         final_tools = client.responses.create.call_args_list[1].kwargs["tools"]
         self.assertNotIn(
             "get_waiver_context",
             [tool.get("name") for tool in final_tools if tool["type"] == "function"],
         )
 
-    def test_only_current_waiver_decisions_force_live_waiver_context(self):
-        self.assertTrue(advisor.requires_fresh_waiver_context(
-            "Look at my team and tell me the best waiver move I should make right now."
-        ))
-        self.assertTrue(advisor.requires_fresh_waiver_context(
-            "Which available players should I add today?"
-        ))
-        self.assertFalse(advisor.requires_fresh_waiver_context("Should I remove Santos from my watchlist?"))
-        self.assertFalse(advisor.requires_fresh_waiver_context("What is a waiver?"))
+    async def test_grounding_noop_is_exclusive_and_public_only_uses_no_private_data(self):
+        no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Tel update.")])))
+        answer = await advisor.run_advisor(config(), "What’s the latest on Mathys Tel’s role at Tottenham?", client=client)
+        self.assertEqual(answer.text, "Tel update.")
+        self.assertEqual(answer.trace["grounding"][0]["calls"][0]["name"], "no_private_fantasy_data_needed")
+        self.assertEqual(answer.trace["tools"][0]["status"], "no_op")
+        second_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertEqual([tool["type"] for tool in second_tools], ["web_search_preview"])
+
+    async def test_invalid_grounding_retries_once_then_never_answers_from_history(self):
+        no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"bad batch"}')
+        private = NS(type="function_call", name="get_player_context", arguments='{"player_name":"Julio Enciso"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op, private]), result("Plain answer")])))
+        answer = await advisor.run_advisor(config(), "Who owns Julio Enciso right now?", context_packet="Enciso is unrostered", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertEqual(client.responses.create.await_count, 2)
+        self.assertEqual(answer.trace["grounding"][0]["error"], "The no-private-data function must be the sole grounding call.")
+
+    async def test_grounding_calls_share_the_four_call_budget(self):
+        ground = [
+            NS(type="function_call", name="get_team_context", arguments='{"team_name":"Los Blancos"}'),
+            NS(type="function_call", name="get_watchlist", arguments="{}"),
+        ]
+        later = [
+            NS(type="function_call", name="get_player_context", arguments='{"player_name":"Julio Enciso"}'),
+            NS(type="function_call", name="get_league_context", arguments="{}"),
+            NS(type="function_call", name="get_rotation_context", arguments="{}"),
+        ]
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", ground), result("", later)])))
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=facts()) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Assess my roster and watchlist", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertEqual(execute.call_count, 2)
+
+    async def test_advice_never_mutates_when_grounding_selects_fresh_read(self):
+        ground = NS(type="function_call", name="get_watchlist", arguments="{}")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("Keep Santos for now.")])))
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=facts()) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Should I remove Santos from my watchlist?", client=client, requester_id="123")
+        self.assertEqual(answer.text, "Keep Santos for now.")
+        self.assertEqual(execute.call_args.args[1], "get_watchlist")
+        self.assertNotEqual(answer.trace["local_action"], {"name": "remove_from_watchlist"})
+
+    def test_runtime_has_no_phrase_based_waiver_router(self):
+        self.assertNotIn("requires_fresh_waiver_context", Path(advisor.__file__).read_text())
 
     def test_current_player_and_unrostered_guidance_requires_fresh_evidence_and_web_research(self):
         instructions = advisor.ADVISOR_RUNTIME_INSTRUCTIONS
@@ -489,8 +555,9 @@ class RetrievalTests(unittest.TestCase):
             self.assertIn("roster_count", packet)
             self.assertIn(value["sources"][0]["retrieved_at"], packet)
             self.assertLessEqual(len(packet), 32000)
-            for i in range(20):
+            for i in range(12, 20):
                 self.assertIn(f"turn-{i:02}", packet)
+            self.assertNotIn("turn-11", packet)
 
 
 class TransportAndPresentationTests(unittest.TestCase):

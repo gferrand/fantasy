@@ -27,9 +27,12 @@ from .sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 
 MAX_PLAYERS_PER_PACKAGE = 2
 MAX_PLAYERS_IN_TRADE = 3
-# Six per roster keeps the legal-lineup search bounded for an on-demand Discord
-# command while still covering the leading current-market assets on each team.
-MAX_CANDIDATES_PER_TEAM = 6
+# Three per roster keeps the legal-lineup search inside the interactive Advisor
+# deadline while still evaluating the leading current-market assets on every
+# team.  The product returns only the best few legal, mutually viable offers,
+# so expanding this pool has sharply diminishing user value but an expensive
+# combinatorial cost.
+MAX_CANDIDATES_PER_TEAM = 3
 FORECAST_FIXTURE_HORIZON = 6
 FORECAST_SHRINKAGE_MINUTES = 540.0
 INACTIVE_INJURY_STATUSES = {"IR", "IR+", "O", "OUT", "SUSP"}

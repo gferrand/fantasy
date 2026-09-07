@@ -44,7 +44,7 @@ class LocalActions:
             return {"status": "not_found", "data": {}, "detail": str(exc)}
         except Exception:
             LOGGER.exception("Watchlist add failed")
-            return {"status": "failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
+            return {"status": "operational_failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
         return {"status": "success" if added else "no_op", "data": {"player_id": saved.player_id, "name": saved.name, "club": saved.club, "positions": list(saved.positions)}, "detail": "Added to watchlist." if added else "Already on watchlist."}
 
     def remove_from_watchlist(self, player_query: str) -> dict[str, Any]:
@@ -57,7 +57,7 @@ class LocalActions:
             return {"status": "not_found", "data": {}, "detail": str(exc)}
         except Exception:
             LOGGER.exception("Watchlist removal failed")
-            return {"status": "failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
+            return {"status": "operational_failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
         if removed is None:
             return {"status": "not_found", "data": {}, "detail": "That player is no longer on the watchlist."}
         return {"status": "success", "data": {"player_id": removed.player_id, "name": removed.name}, "detail": "Removed from watchlist."}
@@ -69,5 +69,5 @@ class LocalActions:
             events = acknowledge_active_events(self.config, now=now)
         except Exception:
             LOGGER.exception("Guardian acknowledgement failed")
-            return {"status": "failure", "data": {}, "detail": "I couldn’t update Deadline Guardian right now. Please try again."}
+            return {"status": "operational_failure", "data": {}, "detail": "I couldn’t update Deadline Guardian right now. Please try again."}
         return {"status": "success" if events else "no_op", "data": {"acknowledged_event_ids": [event.event_id for event in events]}, "detail": "Guardian alerts acknowledged." if events else "No active Guardian alerts needed acknowledgement."}

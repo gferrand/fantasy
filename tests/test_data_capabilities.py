@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import time
 
-from fantasy_advisor.automation import AppConfig, EXPECTED_LEAGUE_ID
+from fantasy_advisor.automation import AppConfig, EXPECTED_LEAGUE_ID, SLEEPER_EPL_PLAYERS_URL
 from fantasy_advisor.data_capabilities import DataCapabilities
 from fantasy_advisor.sleeper import API_BASE
 from fantasy_advisor.sleeper import SleeperClient
@@ -39,7 +39,10 @@ def test_cached_data_does_not_leak_evidence_or_limitations_between_operations():
         second = capabilities.get_league_context()
         assert first["sources"]
         assert second["status"] == "complete"
-        assert second["sources"] == []
+        # A request-cache hit remains current evidence and retains the
+        # retrieval provenance from the provider call made in this request.
+        assert second["sources"] == first["sources"]
+        assert capabilities.cache_hits == ["league_settings", "epl_state"]
         assert second["limitations"] == []
         assert len(client.urls) == 2
 
@@ -65,6 +68,7 @@ def test_team_and_watchlist_are_product_level_results():
             f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"scoring_settings": {"pos_m_g": 5, "pos_f_g": 4}},
             f"{API_BASE}/state/clubsoccer:epl": {"season": "2026", "display_week": 7},
             f"https://api.sleeper.com/stats/clubsoccer:epl/2026?season_type=regular": [{"player_id": "x", "stats": {"gp": 2, "gs": 1, "min": 120, "pos_m_g": 1, "pos_f_g": 1}}],
+            SLEEPER_EPL_PLAYERS_URL: {"x": {"player_id": "x", "full_name": "Player", "team_abbr": "IPS", "fantasy_positions": ["M", "F"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}},
         })
         capabilities = DataCapabilities(app, timeout=10, client=client)
         profile = capabilities.get_team_context("Los Blancos")["data"]["team"]["players"][0]
@@ -151,3 +155,47 @@ def test_whole_operation_deadline_stops_after_the_first_slow_provider_read():
         assert len(calls) == 1
         assert calls[0] <= 0.03
         assert time.monotonic() - started < 0.08
+
+
+def test_waiver_context_uses_live_full_population_and_filters_position_before_limit():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        client = FakeSleeper({
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"scoring_settings": {"pos_m_g": 5, "pos_f_g": 4}},
+            f"{API_BASE}/state/clubsoccer:epl": {"season": "2026", "display_week": 7},
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "other", "players": ["owned"]}],
+            f"https://api.sleeper.com/stats/clubsoccer:epl/2026?season_type=regular": [
+                {"player_id": "mid", "stats": {"gp": 3, "pos_m_g": 3}},
+                {"player_id": "forward", "stats": {"gp": 3, "pos_f_g": 8}},
+            ],
+            SLEEPER_EPL_PLAYERS_URL: {
+                "owned": {"player_id": "owned", "full_name": "Owned Mid", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"},
+                "mid": {"player_id": "mid", "full_name": "Mid Only", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"},
+                "hybrid": {"player_id": "hybrid", "full_name": "Mid Forward", "team_abbr": "IPS", "fantasy_positions": ["M", "F"], "competitions": ["epl"], "active": True, "status": "ACTIVE", "injury_status": "GTD"},
+                "zero": {"player_id": "zero", "full_name": "Zero Minute Mid", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"},
+                "forward": {"player_id": "forward", "full_name": "Forward Only", "team_abbr": "IPS", "fantasy_positions": ["F"], "competitions": ["epl"], "active": True, "status": "ACTIVE"},
+            },
+        })
+        packet = DataCapabilities(config(root), timeout=10, client=client).get_waiver_context(
+            manager_id="mine", position="M", limit=3,
+        )
+        candidates = packet["data"]["available_candidates"]
+        names = {candidate["name"] for candidate in candidates}
+        assert "Owned Mid" not in names
+        assert "Forward Only" not in names
+        assert "Zero Minute Mid" in names
+        assert all("M" in candidate["positions"] for candidate in candidates)
+        assert next(candidate for candidate in candidates if candidate["name"] == "Mid Forward")["injury_status"] == "GTD"
+
+
+def test_waiver_context_rejects_invalid_position_or_limit_and_local_reads_are_fresh():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        add_watchlist_player(root / "data/automation/watchlist.sqlite3", {"player_id": "x", "name": "Player", "club": "IPS", "positions": ["M"]})
+        capabilities = DataCapabilities(config(root), timeout=10)
+        invalid = capabilities.get_waiver_context(manager_id="mine", position="MID", limit=26)
+        assert invalid["status"] == "partial"
+        assert invalid["limitations"][0]["field"] == "waiver_request"
+        watchlist = capabilities.get_watchlist()
+        assert watchlist["sources"][0]["stale"] is False
+        assert watchlist["sources"][0]["retrieved_at"] is not None

@@ -8,8 +8,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
 import logging
+import os
 import re
 import time
+import uuid
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -35,6 +37,9 @@ from .watchlist import WatchlistError, list_watchlist
 LOGGER = logging.getLogger(__name__)
 MAX_RESULT_CHARS = 16_000
 FINAL_RESERVE_SECONDS = 30
+GROUNDING_TIMEOUT_SECONDS = 15
+TARGET_RESEARCH_TIMEOUT_SECONDS = 45
+MAX_PRIVATE_TOOL_CALLS = 4
 
 
 @dataclass(frozen=True)
@@ -71,20 +76,20 @@ FOLLOWUP_TOOL = {
 # Product-level tool catalog: no provider URLs, SQL, filesystem, or raw task execution.
 FANTASY_TOOLS = (
     {"type": "function", "name": "get_league_context", "description": "Current league scoring, roster-slot, season, and round context from Sleeper. Use for any exact Kick & Run scoring or league-rules question; it is a live snapshot.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_player_context", "description": "Fresh current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player. Use in this request when current roster value, watchlist value, add/drop, trade, start/bench, role, minutes, or appearances materially affect the answer.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
-    {"type": "function", "name": "search_player_pool", "description": "Small, current local player-catalog search with current Sleeper ownership. Use to resolve a named player or a short name fragment; it does not provide a full waiver ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["query", "limit"]}},
+    {"type": "function", "name": "get_player_context", "description": "Fresh current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player. Use only for a decision about this Fantasy league—roster value, watchlist value, add/drop, trade, start/bench, or Fantasy fit. Do not use for a public-only question about a player’s club role, news, or availability.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
+    {"type": "function", "name": "search_player_pool", "description": "Small local player-catalog search for an ambiguous or partial name only. Do not use it for a full-name ownership, player-value, role, or watchlist decision; use get_player_context for those current Fantasy facts. It does not provide a full waiver ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["query", "limit"]}},
     {"type": "function", "name": "get_team_context", "description": "Current roster and starters for one named league team.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"team_name": {"type": "string"}}, "required": ["team_name"]}},
     {"type": "function", "name": "get_draft_context", "description": "Observed current-league draft position and a compact nearby-picks window for one named player. Returns a truthful limitation when the draft is unavailable.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "get_player_trends", "description": "Current bounded Sleeper add or drop trend list. Use as one waiver-market signal, not as a deterministic player ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"kind": {"type": "string", "enum": ["add", "drop"]}, "hours": {"type": "integer", "minimum": 1, "maximum": 168}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["kind", "hours", "limit"]}},
     {"type": "function", "name": "get_watchlist", "description": "Saved Fantasy watchlist only; does not change it.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_watchlist_stats", "description": "Current-season Sleeper stats for the saved watchlist using the same deterministic statistics engine as /watch stats. It omits longer trend and prior-season reads to stay within an interactive answer deadline.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_league_activity", "description": "Bounded, human-readable completed league transactions. Send round_number as null for the latest verified completed round; use an integer only for a historical round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": ["integer", "null"], "minimum": 1}}, "required": ["round_number"]}},
-    {"type": "function", "name": "get_waiver_context", "description": "One fresh compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for every current best-waiver-move or available-players-versus-bench question in this request. Unrostered means unrostered; only immediate-add versus waiver processing is unknown.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_waiver_context", "description": "One fresh compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for every current best-waiver-move or available-players-versus-bench question in this request. Position filters the complete current eligible EPL universe before ranking and limit. For a recommendation, request a research pool of about 12 candidates even when the final answer lists fewer. Unrostered means unrostered; only immediate-add versus waiver processing is unknown.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"position": {"type": "string", "enum": ["ANY", "F", "M", "D", "GK"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["position", "limit"]}},
     {"type": "function", "name": "add_to_watchlist", "description": "Add one named player to the saved watchlist. Use only when the owner explicitly asks to add the player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "remove_from_watchlist", "description": "Remove one named player from the saved watchlist. Use only when the owner explicitly asks to remove that player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "get_guardian_status", "description": "Read active Deadline Guardian alerts without changing them.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "acknowledge_guardian_alerts", "description": "Acknowledge active Deadline Guardian alerts only when the owner clearly states that the Guardian alert has been handled or their lineup is fixed. Never use for discussion, advice, or ambiguity.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_gameweek_context", "description": "Deterministic gameweek context. Select prepare for an upcoming gameweek or recap for the latest completed gameweek; call only the needed mode.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["prepare", "recap"]}}, "required": ["mode"]}},
+    {"type": "function", "name": "get_gameweek_context", "description": "Deterministic next-gameweek prepare or latest-gameweek recap context. Use for a specific gameweek lineup/recap question, not a multi-fixture rotation question; select only the needed mode.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"mode": {"type": "string", "enum": ["prepare", "recap"]}}, "required": ["mode"]}},
     {"type": "function", "name": "get_injury_opportunity_context", "description": "Current deterministic Sleeper injury inventory and candidate beneficiaries; public injury research remains separate.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_rotation_context", "description": "Deterministic protected-core, rotation candidates, and fixture context for Los Blancos.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_trade_context", "description": "Deterministic legal trade packages and current scoring context; recommendation remains model judgment.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
@@ -165,7 +170,7 @@ def execute_fantasy_tool(
             "data": asdict(report),
             "limitations": [],
             "sources": [
-                {"source": "Fantasy watchlist", "retrieved_at": None, "stale": True},
+                {"source": "Fantasy watchlist", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False},
                 {"source": "Sleeper current watchlist statistics", "retrieved_at": report.retrieved_at, "stale": False},
             ],
         }
@@ -190,10 +195,26 @@ def execute_fantasy_tool(
         )
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
-    if name == "get_waiver_context" and not payload:
-        result = capabilities.get_waiver_context(manager_id=EXPECTED_MANAGER_ID)
+    if name == "get_waiver_context" and (
+        payload.get("position") in {"ANY", "F", "M", "D", "GK"}
+        and isinstance(payload.get("limit"), int)
+        and 1 <= payload["limit"] <= 25
+    ):
+        result = capabilities.get_waiver_context(
+            manager_id=EXPECTED_MANAGER_ID,
+            position=payload["position"],
+            limit=payload["limit"],
+        )
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
+    if name == "get_waiver_context":
+        return {
+            "status": "partial", "data": {}, "sources": [],
+            "limitations": [{
+                "kind": "unsupported", "field": "waiver_request",
+                "detail": "Position must be ANY, F, M, D, or GK and limit must be between 1 and 25.",
+            }],
+        }
     if name in {"add_to_watchlist", "remove_from_watchlist"} and isinstance(payload.get("player_name"), str):
         actions = LocalActions(config, requester_id=requester_id or "")
         result = (
@@ -494,64 +515,154 @@ def discord_answer_text(response: Any) -> str:
     return "\n\n".join(blocks).strip() if blocks else str(getattr(response, "output_text", "") or "").strip()
 
 
-def requires_fresh_waiver_context(question: str) -> bool:
-    """Identify the narrow current-waiver decision that cannot use stale evidence.
+NO_PRIVATE_FANTASY_DATA_NEEDED = {
+    "type": "function",
+    "name": "no_private_fantasy_data_needed",
+    "description": "Select only when the question needs no private Fantasy data. It is exclusive: do not combine it with any other function.",
+    "strict": True,
+    "parameters": {
+        "type": "object", "additionalProperties": False,
+        "properties": {"reason": {"type": "string", "minLength": 1, "maxLength": 240}},
+        "required": ["reason"],
+    },
+}
 
-    This is a tool-selection guard, not an action router: OpenAI still chooses
-    all mutations and performs the recommendation after the live packet exists.
-    """
-    text = question.casefold()
-    current = any(marker in text for marker in ("right now", "current", "today", "recent"))
-    waiver = any(marker in text for marker in ("waiver", "available player", "available players", "add/drop", "add drop"))
-    roster_move = "best move" in text and any(marker in text for marker in ("my team", "my roster", "bench"))
-    return current and (waiver or roster_move)
+GROUNDING_INSTRUCTIONS = """You are the Fantasy Advisor evidence selector. Do not answer the Owner.
+Your sole task is to select the current evidence needed for this request. Call one
+or more named deterministic Fantasy capabilities, approved local actions, or the
+exclusive no_private_fantasy_data_needed function. Do not write prose, do not use
+web research, and do not request Codex. For any current roster, ownership, waiver,
+team, activity, scoring, gameweek, rotation, trade, watchlist, Guardian, or named
+player decision, select the appropriate named capability. For a public-only
+question, call only no_private_fantasy_data_needed. A question solely about a
+player's club role, injury/news, or real-world availability is public-only even
+when it names a player; do not use a private player capability unless the Owner
+asks for a Fantasy-league decision. This is a short routing turn,
+not analysis or a final response. A question about who to rotate out across the
+next few fixtures must select get_rotation_context, not get_gameweek_context.
+For "Who owns <full player name> right now?", select get_player_context for
+that name, never search_player_pool. For a named other-team roster question,
+select get_team_context for that team. For a current available-player or best
+waiver request, select get_waiver_context.
+For a waiver recommendation, normally request
+about 12 position-filtered candidates even when the Owner asks to see only a few.
+"""
+
+CURRENT_DATA_REFRESH_FAILURE = "I couldn’t refresh the current Fantasy data right now. Please try again."
+
+
+def _function_calls(response: Any) -> list[Any]:
+    return [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "function_call"]
+
+
+def _grounding_calls(response: Any, allowed: set[str]) -> tuple[list[Any], str | None]:
+    """Validate the function-only evidence decision before any retrieval runs."""
+
+    calls = _function_calls(response)
+    messages = [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "message"]
+    if messages or not calls or any(getattr(call, "name", None) not in allowed for call in calls):
+        return [], "Grounding must return only named function calls."
+    no_op_calls = [call for call in calls if call.name == NO_PRIVATE_FANTASY_DATA_NEEDED["name"]]
+    if no_op_calls:
+        if len(calls) != 1:
+            return [], "The no-private-data function must be the sole grounding call."
+        try:
+            reason = _object(no_op_calls[0].arguments).get("reason")
+        except ValueError:
+            reason = None
+        if not isinstance(reason, str) or not reason.strip():
+            return [], "The no-private-data function needs a concise reason."
+    return calls, None
 
 
 async def run_advisor(
     config: AppConfig, question: str, *, context_packet: str | None = None,
     deadline: RequestDeadline | None = None, client: Any = None, requester_id: str | None = None,
+    request_id: str | None = None, retain_evidence: bool = True,
 ) -> WebResult:
+    """Run one bounded Advisor request with mandatory current-evidence grounding."""
+
     deadline = deadline or RequestDeadline.start()
     started = time.monotonic()
+    request_id = request_id or uuid.uuid4().hex
+    trace: dict[str, Any] = {
+        "request_id": request_id,
+        "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+        "grounding": [], "tools": [], "web_search_used": False,
+        "codex_used": False, "local_action": None,
+    }
     if not config.openai_api_key:
         raise AutomationError("OpenAI advisor is not configured")
     if client is None:
         from openai import AsyncOpenAI
         async with AsyncOpenAI(api_key=config.openai_api_key, max_retries=0) as owned_client:
-            return await run_advisor(config, question, context_packet=context_packet, deadline=deadline, client=owned_client, requester_id=requester_id)
+            return await run_advisor(
+                config, question, context_packet=context_packet, deadline=deadline,
+                client=owned_client, requester_id=requester_id, request_id=request_id,
+                retain_evidence=retain_evidence,
+            )
     contract = capability_contract(config)
     reasoning_standard = advisor_reasoning(config)
     evidence: list[dict[str, Any]] = []
-    capabilities = DataCapabilities(
-        config,
-        timeout=deadline.remaining(FINAL_RESERVE_SECONDS),
-    )
-    payload = {
+    capabilities = DataCapabilities(config, timeout=deadline.remaining(FINAL_RESERVE_SECONDS))
+    payload: dict[str, Any] = {
         "user_request": question,
-        "recent_context_and_retained_evidence": context_packet or "",
+        "historical_discord_continuity_non_authoritative": context_packet or "",
         "current_time": datetime.now(timezone.utc).isoformat(),
-        "private_evidence": evidence,
+        "current_request_evidence": evidence,
     }
+    local_action_names = {"add_to_watchlist", "remove_from_watchlist", "acknowledge_guardian_alerts"}
+    deterministic_names = {tool["name"] for tool in FANTASY_TOOLS}
+    web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
+    executed_actions: set[tuple[str, str]] = set()
+    used_deterministic_names: set[str] = set()
+    tool_calls = 0
 
-    async def response(*, instructions: str, budget: float, **kwargs: Any) -> Any:
+    def finish_failure() -> WebResult:
+        trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        LOGGER.warning("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+        return WebResult(
+            text=CURRENT_DATA_REFRESH_FAILURE, response_id=None,
+            elapsed_seconds=trace["elapsed_seconds"], trace=trace,
+        )
+
+    def finish_local_action(name: str, result: dict[str, Any]) -> WebResult:
+        """Return a deterministic confirmation when the final-answer reserve is closed."""
+
+        status = str(result.get("status") or "operational_failure")
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        player_name = str(data.get("name") or "that player")
+        if status == "success" and name == "add_to_watchlist":
+            text = f"Added {player_name} to your watchlist."
+        elif status == "success" and name == "remove_from_watchlist":
+            text = f"Removed {player_name} from your watchlist."
+        elif status in {"success", "no_op", "forbidden", "not_found", "operational_failure"}:
+            text = str(result.get("detail") or "I couldn’t complete that local action right now. Please try again.")
+        else:
+            text = "I couldn’t complete that local action right now. Please try again."
+        trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+        return WebResult(text=text, response_id=None, elapsed_seconds=trace["elapsed_seconds"], trace=trace)
+
+    async def response(*, instructions: str, budget: float, phase: str, **kwargs: Any) -> Any:
         if budget <= 0:
             raise AutomationError("The advisor reached its response time limit. Please try again.")
         try:
-            return await asyncio.wait_for(client.responses.create(
+            result = await asyncio.wait_for(client.responses.create(
                 model=config.openai_web_model, reasoning={"effort": config.openai_web_reasoning_effort},
                 instructions=instructions, input=json.dumps(payload, ensure_ascii=False),
                 store=False, timeout=budget, **kwargs,
             ), timeout=budget)
         except Exception as exc:
-            # The owner sees only the generic AutomationError below, but retain
-            # the provider's safe request-validation detail in the local log.
-            # Without it a 400 quietly triggers the final-answer fallback and
-            # can make a current-data answer look like a successful retrieval.
-            LOGGER.warning("Advisor Responses request failed: %s", exc)
+            LOGGER.warning("Advisor Responses request failed phase=%s: %s", phase, exc)
             raise AutomationError("The OpenAI advisor could not complete that answer. Please try again.") from exc
+        if any(getattr(item, "type", None) == "web_search_call" for item in getattr(result, "output", [])):
+            trace["web_search_used"] = True
+        return result
 
     async def retain_private_evidence(facts: dict[str, Any], *, source: str) -> None:
-        """Best-effort, bounded audit retention that never delays a DM answer."""
+        if not retain_evidence:
+            return
         try:
             await asyncio.wait_for(asyncio.to_thread(
                 persist_advisor_context_event, config, kind=PRIVATE_EVIDENCE,
@@ -559,152 +670,240 @@ async def run_advisor(
                 metadata={"source": source},
             ), timeout=min(2, deadline.remaining()))
         except (TimeoutError, AutomationError):
-            LOGGER.warning(
-                "Private evidence could not be retained; current answer still has the retrieved facts"
+            LOGGER.warning("Private evidence could not be retained; current answer still has the retrieved facts")
+
+    last_action_name: str | None = None
+    last_action_result: dict[str, Any] | None = None
+
+    async def execute_calls(calls: list[Any], *, grounding: bool) -> bool:
+        """Execute selected data/actions exactly once and record compact provenance."""
+
+        nonlocal tool_calls, last_action_name, last_action_result
+        retrievals = [call for call in calls if call.name != NO_PRIVATE_FANTASY_DATA_NEEDED["name"]]
+        if tool_calls + len(retrievals) > MAX_PRIVATE_TOOL_CALLS:
+            return False
+        if not retrievals:
+            trace["tools"].append({"name": NO_PRIVATE_FANTASY_DATA_NEEDED["name"], "status": "no_op"})
+            return True
+        budget = min(45, deadline.remaining(FINAL_RESERVE_SECONDS + 3)) / len(retrievals)
+        if budget <= 0 and any(call.name not in local_action_names for call in retrievals):
+            return False
+        for call in retrievals:
+            action_key = (call.name, call.arguments)
+            if call.name in local_action_names and action_key in executed_actions:
+                return False
+            # Local SQLite actions remain executable after external retrieval
+            # closes, provided there is enough time to safely return their
+            # result.  Private retrievals share the remaining external budget.
+            operation_budget = (
+                min(3.0, deadline.remaining())
+                if call.name in local_action_names
+                else budget
             )
-
-    async def retrieve(request: PrivateRequest, cap: float) -> None:
-        budget = min(cap, deadline.remaining(FINAL_RESERVE_SECONDS + 6))
-        if budget < 2:
-            facts = unavailable("No retrieval time remains; answer conditionally from available evidence.")
-        else:
-            facts = await asyncio.to_thread(retrieve_private_data, config, request.value, timeout=budget)
-        evidence.append(facts)
-        await retain_private_evidence(facts, source="private_retrieval")
-
-    fresh_waiver_request = requires_fresh_waiver_context(question)
-    can_retrieve = deadline.remaining() > 45
-    local_actions_available = deadline.remaining() > FINAL_RESERVE_SECONDS + 1
-    web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
-    local_action_names = {"add_to_watchlist", "remove_from_watchlist", "acknowledge_guardian_alerts"}
-    local_action_tools = [tool for tool in FANTASY_TOOLS if tool["name"] in local_action_names]
-    tools = [web_tool]
-    if can_retrieve:
-        tools.extend(FANTASY_TOOLS)
-        tools.append(FOLLOWUP_TOOL)  # narrow unsupported-private fallback only
-    elif local_actions_available:
-        tools.extend(local_action_tools)
-    max_tool_calls = 4
-    try:
-        answer_kwargs: dict[str, Any] = {"tools": tools}
-        if can_retrieve:
-            answer_kwargs["parallel_tool_calls"] = True
-            if fresh_waiver_request:
-                # A current waiver recommendation is explicitly time-sensitive;
-                # do not permit a web-only first pass to skip its live league
-                # ownership and roster-comparison evidence.
-                answer_kwargs["tool_choice"] = {
-                    "type": "function", "name": "get_waiver_context",
+            if operation_budget <= 0:
+                return False
+            try:
+                if call.name == FOLLOWUP_TOOL["name"]:
+                    # Codex never appears in the grounding catalog and is only a
+                    # bounded later fallback for an unsupported private fact.
+                    try:
+                        followup = _object(call.arguments)
+                        followup_request = _request(followup["request"])
+                    except (KeyError, ValueError):
+                        return False
+                    trace["codex_used"] = True
+                    facts = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            retrieve_private_data, config, followup_request.value,
+                            timeout=max(0.01, operation_budget),
+                        ),
+                        timeout=operation_budget,
+                    )
+                else:
+                    facts = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            execute_fantasy_tool, config, call.name, call.arguments,
+                            timeout=max(0.01, operation_budget), capabilities=capabilities,
+                            requester_id=requester_id,
+                        ),
+                        timeout=operation_budget,
+                    )
+                    used_deterministic_names.add(call.name)
+            except TimeoutError:
+                if call.name in local_action_names:
+                    facts = {
+                        "status": "operational_failure", "data": {},
+                        "detail": "I couldn’t update the watchlist right now. Please try again.",
+                    }
+                else:
+                    facts = unavailable("Current Fantasy data could not be retrieved within this answer's time limit.")
+            evidence.append(facts)
+            await retain_private_evidence(facts, source=f"advisor_tool:{call.name}")
+            trace_entry = {
+                "name": call.name,
+                "arguments": call.arguments,
+                "status": facts.get("status"),
+                "sources": facts.get("sources", []),
+                "cache_hits": list(capabilities.cache_hits),
+                "grounding": grounding,
+            }
+            trace["tools"].append(trace_entry)
+            if call.name in local_action_names:
+                executed_actions.add(action_key)
+                last_action_name = call.name
+                last_action_result = facts
+                trace["local_action"] = {
+                    "name": call.name, "status": facts.get("status"),
+                    "detail": facts.get("detail"),
                 }
-        answer = await response(
-            instructions=final_advisor_instructions(reasoning_standard, contract),
-            budget=min(30, deadline.remaining(35)) if can_retrieve else deadline.remaining(),
-            **answer_kwargs,
-        )
-    except AutomationError:
-        if not can_retrieve or deadline.remaining() < 1:
-            raise
-        # A slow intermediate pass must not consume the final-answer reserve.
-        can_retrieve = False
-        local_actions_available = deadline.remaining() > FINAL_RESERVE_SECONDS + 1
-        tools = [web_tool] + (local_action_tools if local_actions_available else [])
-        answer = await response(
-            instructions=final_advisor_instructions(
-                reasoning_standard,
-                contract,
-                "No further retrieval time remains. Give the strongest answer supported by available evidence.",
-            ),
-            budget=deadline.remaining(), tools=tools,
-        )
-    calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
-    tool_calls = 0
-    names = {tool["name"] for tool in FANTASY_TOOLS} | {FOLLOWUP_TOOL["name"]}
-    while calls:
-        performed_local_action = any(call.name in local_action_names for call in calls)
-        remaining_calls = max_tool_calls - tool_calls
-        if (
-            not remaining_calls
-            or len(calls) > remaining_calls
-            or any(getattr(call, "name", None) not in names for call in calls)
-            or any(
-                call.name not in local_action_names
-                for call in calls
-            ) and not can_retrieve
-            or (any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1)
-        ):
-            raise AutomationError("The advisor returned an invalid additional-data request")
-        tool_budget = min(45, deadline.remaining(FINAL_RESERVE_SECONDS + 3)) / len(calls)
-        for call in calls:
-            if call.name == FOLLOWUP_TOOL["name"]:
-                try:
-                    followup = _object(call.arguments)
-                    followup_request = _request(followup["request"])
-                except (KeyError, ValueError):
-                    raise AutomationError("The advisor returned an invalid additional-data request") from None
-                await retrieve(followup_request, tool_budget)
-            else:
-                facts = await asyncio.to_thread(
-                    execute_fantasy_tool,
-                    config,
-                    call.name,
-                    call.arguments,
-                    timeout=max(0.01, tool_budget),
-                    capabilities=capabilities,
-                    requester_id=requester_id,
-                )
-                evidence.append(facts)
-                await retain_private_evidence(facts, source=f"advisor_tool:{call.name}")
-        tool_calls += len(calls)
-        # Keep public research as untrusted context without repeating it.
-        prior_public_research = payload.setdefault("prior_public_research", [])
-        prior_public_research.extend(
-            item.model_dump(mode="json") for item in getattr(answer, "output", [])
-            if getattr(item, "type", None) == "message" and hasattr(item, "model_dump")
-        )
-        # The compound waiver packet is the bounded private evidence for this
-        # request. Finalize from it instead of inviting duplicate waiver/team
-        # calls that burn the four-call budget. Public web research and the
-        # explicit local-action tools remain available in the final pass.
-        if (
-            (fresh_waiver_request and tool_calls >= 1)
-            or performed_local_action
-            or tool_calls == max_tool_calls
-            or deadline.remaining() <= FINAL_RESERVE_SECONDS
-        ):
-            # An approved local action is idempotent at the storage boundary,
-            # but a semantic retry must not invoke it repeatedly in one Owner
-            # request. Its result is already in current-request evidence.
-            final_tools = [web_tool] if performed_local_action else (
-                [web_tool] + (local_action_tools if local_actions_available else [])
-            )
-            answer = await response(
-                instructions=final_advisor_instructions(
-                    reasoning_standard,
-                    contract,
-                    "No further private retrievals are available. Produce the final answer now.",
+        tool_calls += len(retrievals)
+        return True
+
+    # The normal path reserves final-response time before beginning any private
+    # evidence work.  A late request still gets an action-only semantic pass so
+    # an approved fast local action never disappears with external retrieval.
+    can_retrieve = deadline.remaining(FINAL_RESERVE_SECONDS) > 0
+    local_actions_available = deadline.remaining() > 1
+    local_action_tools = [tool for tool in FANTASY_TOOLS if tool["name"] in local_action_names]
+    grounding_tools = list(FANTASY_TOOLS if can_retrieve else local_action_tools)
+    grounding_tools.append(NO_PRIVATE_FANTASY_DATA_NEEDED)
+    grounding_allowed = {tool["name"] for tool in grounding_tools}
+    allow_late_action_grounding = not can_retrieve and local_actions_available
+
+    grounded_calls: list[Any] | None = None
+    for attempt in (1, 2):
+        # No web or Codex tool is in this catalog.  It is intentionally cheap:
+        # it can spend at most fifteen seconds and never borrows final reserve.
+        budget = min(GROUNDING_TIMEOUT_SECONDS, deadline.remaining(FINAL_RESERVE_SECONDS))
+        if budget <= 0 and allow_late_action_grounding:
+            budget = min(2, deadline.remaining())
+        if budget <= 0:
+            return finish_failure()
+        try:
+            candidate = await response(
+                instructions=GROUNDING_INSTRUCTIONS if attempt == 1 else (
+                    GROUNDING_INSTRUCTIONS + "\nYour previous grounding response was invalid. Return function calls only."
                 ),
-                budget=deadline.remaining(), tools=final_tools,
+                budget=budget, phase="grounding", tools=grounding_tools,
+                tool_choice="required", parallel_tool_calls=True,
             )
-            calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
-            if not calls:
-                break
-            if any(call.name not in local_action_names for call in calls):
-                raise AutomationError("The advisor exceeded the private-data retrieval limit")
-            can_retrieve = False
-            continue
-        answer = await response(
-            instructions=final_advisor_instructions(
-                reasoning_standard,
-                contract,
-                "Request another named capability only if it is material to the Owner's question; otherwise produce the final answer now.",
-            ),
-            budget=min(30, deadline.remaining(FINAL_RESERVE_SECONDS + 3)),
-            tools=tools,
-            parallel_tool_calls=True,
+            calls, invalid = _grounding_calls(candidate, grounding_allowed)
+        except AutomationError as exc:
+            calls, invalid = [], str(exc)
+        trace["grounding"].append({
+            "attempt": attempt,
+            "calls": [{"name": getattr(call, "name", None), "arguments": getattr(call, "arguments", None)} for call in calls],
+            "error": invalid,
+        })
+        if invalid is None:
+            grounded_calls = calls
+            break
+    if grounded_calls is None:
+        return finish_failure()
+    if not await execute_calls(grounded_calls, grounding=True):
+        return finish_failure()
+
+    grounded_no_op = grounded_calls[0].name == NO_PRIVATE_FANTASY_DATA_NEEDED["name"]
+    performed_local_action = any(call.name in local_action_names for call in grounded_calls)
+    if performed_local_action and deadline.remaining(FINAL_RESERVE_SECONDS) <= 0:
+        return finish_local_action(last_action_name or "", last_action_result or {})
+    target_research_capabilities = {"get_waiver_context", "get_trade_context"}
+    compound_context_capabilities = {
+        "get_waiver_context", "get_gameweek_context", "get_rotation_context", "get_trade_context",
+    }
+    private_context_sufficient = bool(
+        compound_context_capabilities.intersection(used_deterministic_names)
+    )
+    answer: Any | None = None
+    while answer is None:
+        remaining_calls = MAX_PRIVATE_TOOL_CALLS - tool_calls
+        external_tools: list[dict[str, Any]] = [web_tool]
+        must_research_final_target = bool(
+            target_research_capabilities.intersection(used_deterministic_names)
+            and not trace["web_search_used"]
         )
-        calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
+        if (
+            not must_research_final_target and not private_context_sufficient
+            and not grounded_no_op and not performed_local_action and can_retrieve and remaining_calls
+        ):
+            external_tools.extend(
+                tool for tool in FANTASY_TOOLS
+                if tool["name"] not in used_deterministic_names
+            )
+            external_tools.append(FOLLOWUP_TOOL)
+        finalization = (
+            "Produce the final answer now using only current-request evidence. "
+            "For an acquisition or trade target you actually recommend, use current public web research for material availability/injury and role facts; if that research changes the target, verify the replacement before finalizing."
+            if not remaining_calls or private_context_sufficient or grounded_no_op or performed_local_action or not can_retrieve
+            else "Use public web research when material, and request another named capability only if it is necessary. Current-request evidence outranks historical continuity."
+        )
+        if must_research_final_target:
+            finalization = (
+                "Use public web research now to verify current injury, availability, and role for the acquisition or trade target you will recommend. "
+                "Do not give a final recommendation before that research; if it changes the target, research the replacement too."
+            )
+        try:
+            reasoning_kwargs: dict[str, Any] = {
+                "instructions": final_advisor_instructions(reasoning_standard, contract, finalization),
+                "budget": (
+                    min(
+                        TARGET_RESEARCH_TIMEOUT_SECONDS if must_research_final_target else 30,
+                        deadline.remaining(FINAL_RESERVE_SECONDS),
+                    )
+                    if can_retrieve else deadline.remaining()
+                ),
+                "phase": "reasoning", "tools": external_tools,
+                "parallel_tool_calls": True,
+            }
+            if must_research_final_target:
+                # The selected acquisition/trade target cannot be finalized
+                # from Sleeper scoring alone. Limit this turn to public web
+                # research so the model verifies material role/availability.
+                reasoning_kwargs["tool_choice"] = "required"
+            answer = await response(
+                **reasoning_kwargs,
+            )
+        except AutomationError:
+            # A target recommendation is unsafe without its required current
+            # public availability and role check.  Do not turn a failed web
+            # research pass into an unverified recommendation from Sleeper
+            # evidence alone.
+            if must_research_final_target:
+                return finish_failure()
+            if evidence:
+                answer = None
+                try:
+                    answer = await response(
+                        instructions=final_advisor_instructions(reasoning_standard, contract, "Produce the final answer now from the current evidence already retrieved."),
+                        budget=deadline.remaining(), phase="final", tools=[web_tool],
+                    )
+                except AutomationError:
+                    return finish_failure()
+            else:
+                return finish_failure()
+        calls = _function_calls(answer)
+        if not calls:
+            break
+        allowed_later = deterministic_names | {FOLLOWUP_TOOL["name"]}
+        if any(call.name not in allowed_later for call in calls):
+            return finish_failure()
+        if grounded_no_op or performed_local_action or not can_retrieve:
+            return finish_failure()
+        if any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1:
+            return finish_failure()
+        if not await execute_calls(calls, grounding=False):
+            return finish_failure()
+        if any(call.name in local_action_names for call in calls):
+            performed_local_action = True
+            if deadline.remaining(FINAL_RESERVE_SECONDS) <= 0:
+                return finish_local_action(last_action_name or "", last_action_result or {})
+        answer = None
     text = discord_answer_text(answer)
     if not text:
-        raise AutomationError("The OpenAI advisor completed without an answer")
-    LOGGER.info("Interactive advisor completed: retrievals=%d elapsed=%.2fs", len(evidence), time.monotonic() - started)
-    return WebResult(text=text, response_id=getattr(answer, "id", None), elapsed_seconds=round(time.monotonic() - started, 2))
+        return finish_failure()
+    trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+    LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+    return WebResult(
+        text=text, response_id=getattr(answer, "id", None),
+        elapsed_seconds=trace["elapsed_seconds"], trace=trace,
+    )
