@@ -541,6 +541,11 @@ async def run_advisor(
                 store=False, timeout=budget, **kwargs,
             ), timeout=budget)
         except Exception as exc:
+            # The owner sees only the generic AutomationError below, but retain
+            # the provider's safe request-validation detail in the local log.
+            # Without it a 400 quietly triggers the final-answer fallback and
+            # can make a current-data answer look like a successful retrieval.
+            LOGGER.warning("Advisor Responses request failed: %s", exc)
             raise AutomationError("The OpenAI advisor could not complete that answer. Please try again.") from exc
 
     async def retain_private_evidence(facts: dict[str, Any], *, source: str) -> None:
