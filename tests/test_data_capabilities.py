@@ -1,9 +1,11 @@
 from pathlib import Path
 import tempfile
+import time
 
 from fantasy_advisor.automation import AppConfig, EXPECTED_LEAGUE_ID
 from fantasy_advisor.data_capabilities import DataCapabilities
 from fantasy_advisor.sleeper import API_BASE
+from fantasy_advisor.sleeper import SleeperClient
 from fantasy_advisor.player_catalog import refresh_player_catalog
 from fantasy_advisor.watchlist import add_watchlist_player
 
@@ -75,3 +77,20 @@ def test_trends_are_bounded_and_never_presented_as_availability():
         client = FakeSleeper({url: [{"player_id": "x", "count": 3}]})
         packet = DataCapabilities(config(Path(directory)), timeout=10, client=client).get_player_trends(kind="add", limit=2)
         assert packet["data"] == {"kind": "add", "lookback_hours": 24, "trends": [{"player_id": "x", "count": 3}]}
+
+
+def test_whole_operation_deadline_stops_after_the_first_slow_provider_read():
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_): return False
+        def read(self): return b"{}"
+    calls = []
+    def slow(_, *, timeout):
+        calls.append(timeout); time.sleep(timeout + 0.01); return Response()
+    with tempfile.TemporaryDirectory() as directory:
+        started = time.monotonic()
+        packet = DataCapabilities(config(Path(directory)), timeout=0.03, client=SleeperClient(timeout=8, retries=1, opener=slow)).get_league_context()
+        assert packet["status"] == "partial"
+        assert len(calls) == 1
+        assert calls[0] <= 0.03
+        assert time.monotonic() - started < 0.08
