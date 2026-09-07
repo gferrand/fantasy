@@ -927,7 +927,10 @@ async def finalize_advisor_from_evidence(
                 request_id=request_id,
             )
 
-    budget = min(75, deadline.remaining(FINAL_RESERVE_SECONDS))
+    # This call is the terminal model operation for a deterministically routed
+    # slash command.  There is no later reasoning pass to protect with the
+    # normal final-answer reserve, so use the remaining hard request budget.
+    budget = min(75, deadline.remaining())
     if budget <= 0:
         return finish(partial_text, "partial")
     payload = {
