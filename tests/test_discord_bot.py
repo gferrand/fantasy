@@ -139,3 +139,108 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        from contextlib import ExitStack
+        from types import SimpleNamespace as NS
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.advisor = self.stack.enter_context(patch.object(discord_bot, "run_advisor", new_callable=AsyncMock, return_value=NS(text="OpenAI final answer")))
+        self.legacy = self.stack.enter_context(patch.object(discord_bot, "run_interactive_task", return_value=NS(text="Legacy waiver report", thread_id=None)))
+        self.stack.enter_context(patch.object(discord_bot, "persist_discord_channel_id"))
+        self.stack.enter_context(patch.object(discord_bot, "persist_advisor_context_event"))
+        self.stack.enter_context(patch.object(discord_bot, "load_advisor_context", return_value="recent context"))
+        self.stack.enter_context(patch.object(discord_bot, "claim_discord_message", return_value=True))
+        self.client = build_client(_test_config())
+
+    def message(self, content="Should I bench him?", attachments=None, author_id=123):
+        from types import SimpleNamespace as NS
+        from unittest.mock import Mock
+        channel = Mock(spec=discord_bot.discord.DMChannel)
+        channel.id = 1234
+        channel.send = AsyncMock()
+        return NS(content=content, attachments=attachments or [], author=NS(bot=False, id=author_id), guild=None, channel=channel, id=12345)
+
+    async def test_plain_message_goes_to_openai_with_one_ack_and_answer(self):
+        message = self.message()
+        await self.client.on_message(message)
+        self.advisor.assert_awaited_once()
+        self.legacy.assert_not_called()
+        self.assertEqual(message.channel.send.await_count, 2)
+        self.assertIn("OpenAI final answer", message.channel.send.call_args.args[0])
+        self.assertNotIn("Web briefing", message.channel.send.call_args.args[0])
+        self.assertIn("recent context", self.advisor.call_args.kwargs["context_packet"])
+        self.assertIsNotNone(self.advisor.call_args.kwargs["deadline"])
+
+    async def test_ask_command_goes_to_unified_advisor(self):
+        from types import SimpleNamespace as NS
+        interaction = NS(user=NS(id=123), channel=NS(id=1234), response=NS(defer=AsyncMock()), edit_original_response=AsyncMock(), followup=NS(send=AsyncMock()))
+        command = self.client._fantasy_command_tree.get_command("ask")
+        await command.callback(interaction, "Should I bench him?")
+        self.advisor.assert_awaited_once()
+        self.legacy.assert_not_called()
+        self.assertIn("OpenAI final answer", interaction.edit_original_response.call_args.kwargs["content"])
+
+    async def test_waiver_command_keeps_legacy_route(self):
+        from types import SimpleNamespace as NS
+        from fantasy_advisor.advisor_router import RouteDecision, AdvisorRoute, LeagueDataScope
+        interaction = NS(user=NS(id=123), channel=NS(id=1234), response=NS(defer=AsyncMock()), edit_original_response=AsyncMock(), followup=NS(send=AsyncMock()))
+        command = self.client._fantasy_command_tree.get_command("analyze-waivers")
+        with patch.object(discord_bot, "route_interactive_request", return_value=RouteDecision(AdvisorRoute.CODEX, "waiver", LeagueDataScope.LEAGUE_ROSTERS)):
+            await command.callback(interaction)
+        self.advisor.assert_not_awaited()
+        self.legacy.assert_called_once()
+        self.assertTrue(self.legacy.call_args.kwargs["waiver_analysis"])
+
+    async def test_attachments_use_same_pipeline_and_remove_temporary_files(self):
+        from types import SimpleNamespace as NS
+        from fantasy_advisor.attachment_intake import NormalizedAttachment
+        for kind, filename, content_type in (("pdf", "test.pdf", "application/pdf"), ("text", "test.txt", "text/plain"), ("audio", "test.ogg", "audio/ogg")):
+            with self.subTest(kind=kind):
+                paths = []
+                async def save(path):
+                    paths.append(path)
+                    path.write_bytes(b"sample")
+                attachment = NS(filename=filename, content_type=content_type, size=6, save=save)
+                message = self.message(content="", attachments=[attachment])
+                with patch.object(discord_bot, "normalize_attachment_async", new_callable=AsyncMock, return_value=NormalizedAttachment("Explain midfielder scoring", filename, kind, content_type)) as normalize:
+                    await self.client.on_message(message)
+                self.assertEqual(message.channel.send.await_count, 2)
+                self.assertIn("Explain midfielder scoring", self.advisor.call_args.args[1])
+                self.assertTrue(all(not path.exists() for path in paths))
+                self.assertIs(normalize.call_args.kwargs["deadline"], self.advisor.call_args.kwargs["deadline"])
+
+    async def test_attachment_failure_cleans_up_and_does_not_start_advisor(self):
+        from types import SimpleNamespace as NS
+        paths = []
+        async def save(path):
+            paths.append(path)
+            path.write_bytes(b"bad")
+        message = self.message(attachments=[NS(filename="test.pdf", content_type="application/pdf", size=3, save=save)])
+        with patch.object(discord_bot, "normalize_attachment_async", side_effect=discord_bot.AttachmentIntakeError("Unreadable")):
+            await self.client.on_message(message)
+        self.advisor.assert_not_awaited()
+        self.assertTrue(all(not path.exists() for path in paths))
+        self.assertIn("Unreadable", message.channel.send.call_args.args[0])
+
+    async def test_nonowner_and_guild_requests_are_ignored(self):
+        for message in (self.message(author_id=999), self.message()):
+            if message.author.id == 123:
+                message.guild = object()
+            await self.client.on_message(message)
+            message.channel.send.assert_not_awaited()
+        self.advisor.assert_not_awaited()
+
+    async def test_whole_request_timeout_returns_visible_error(self):
+        import asyncio
+        import time
+        from fantasy_advisor.interactive_advisor import RequestDeadline
+        async def hung(*args, **kwargs):
+            await asyncio.sleep(10)
+        self.advisor.side_effect = hung
+        message = self.message()
+        with patch.object(discord_bot.RequestDeadline, "start", return_value=RequestDeadline(time.monotonic() + .02)):
+            await self.client.on_message(message)
+        self.assertIn("time limit", message.channel.send.call_args.args[0])

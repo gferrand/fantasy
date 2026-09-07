@@ -238,8 +238,9 @@ class BrowserTabUnavailable(CodexRunError):
 class CodexRunner:
     """Launch the installed Codex CLI in a controlled, non-interactive task."""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, *, private_data_only: bool = False):
         self.config = config
+        self.private_data_only = private_data_only
 
     def command(self, output_file: Path, *, ephemeral: bool | None = None) -> list[str]:
         command = [self.config.codex_bin, "exec"]
@@ -252,10 +253,20 @@ class CodexRunner:
                     f'model_reasoning_effort="{self.config.codex_reasoning_effort}"',
                 )
             )
+        if self.private_data_only:
+            # Invocation-local permissions: keep filesystem read-only while
+            # allowing the already-approved Sleeper sources through the proxy.
+            for setting in (
+                'default_permissions="fantasy_retrieval"',
+                'permissions.fantasy_retrieval={extends=":read-only", network={enabled=true, mode="limited", domains={"api.sleeper.app"="allow", "api.sleeper.com"="allow"}}}',
+                'features.network_proxy=true',
+                'web_search="disabled"',
+            ):
+                command.extend(("--config", setting))
+        else:
+            command.extend(("--sandbox", self.config.codex_sandbox))
         command.extend(
             (
-                "--sandbox",
-                self.config.codex_sandbox,
                 "--skip-git-repo-check",
                 "--json",
                 "--color",
@@ -1746,11 +1757,11 @@ def build_watchlist_live_packet(config: AppConfig) -> str | None:
     )
 
 
-def load_advisor_context(config: AppConfig) -> str:
+def load_advisor_context(config: AppConfig, *, include_private_evidence: bool = False) -> str:
     """Load context for an interactive Discord task only."""
 
     try:
-        return build_context_packet(advisor_context_file(config))
+        return build_context_packet(advisor_context_file(config), include_private_evidence=include_private_evidence)
     except Exception as exc:
         raise AutomationError(f"Could not load advisor context: {exc}") from exc
 

@@ -18,6 +18,7 @@ from typing import Any, Iterable
 DISCORD_USER_MESSAGE = "discord_user_message"
 DISCORD_ASSISTANT_RESPONSE = "discord_assistant_response"
 SCHEDULED_REPORT = "scheduled_report"
+PRIVATE_EVIDENCE = "private_evidence"
 
 _CONVERSATION_KINDS = (DISCORD_USER_MESSAGE, DISCORD_ASSISTANT_RESPONSE)
 _DEFAULT_CONVERSATION_EVENTS = 20
@@ -255,6 +256,7 @@ def build_context_packet(
     conversation_events: int = _DEFAULT_CONVERSATION_EVENTS,
     scheduled_reports: int = _DEFAULT_SCHEDULED_REPORTS,
     max_chars: int = _DEFAULT_MAX_CHARS,
+    include_private_evidence: bool = False,
 ) -> str:
     """Build bounded continuity context supplied only to interactive Discord tasks.
 
@@ -272,7 +274,8 @@ def build_context_packet(
         limit=conversation_events,
     )
     reports = _recent_scheduled_reports(path, scheduled_reports)
-    if not conversation and not reports:
+    evidence = _recent_events(path, kinds=(PRIVATE_EVIDENCE,), limit=2) if include_private_evidence else []
+    if not conversation and not reports and not evidence:
         return ""
     conversation_title = (
         f"RECENT DISCORD CONVERSATION (up to {conversation_events} latest messages; "
@@ -300,11 +303,35 @@ def build_context_packet(
         section_limit=conversation_budget,
         event_limit=per_turn_budget,
     )
+    # Evidence uses spare/background-report space, never the conversation budget.
+    evidence_section = ""
+    if evidence:
+        evidence_blocks = []
+        for event in reversed(evidence):
+            try:
+                facts = json.loads(event.content)
+                retained = {**facts, "data": {}}
+                for key, value in facts["data"].items():
+                    candidate = {**retained, "data": {**retained["data"], key: value}}
+                    if len(json.dumps(candidate, ensure_ascii=False)) <= 2600:
+                        retained = candidate
+                retained["context_fields_omitted"] = len(retained["data"]) != len(facts["data"])
+                block = json.dumps(retained, ensure_ascii=False)
+                if len(block) <= 2800:
+                    evidence_blocks.append(f"[{event.created_at}] {block}")
+            except (ValueError, KeyError, TypeError, AttributeError):
+                continue
+        if evidence_blocks:
+            evidence_section = "RETAINED PRIVATE EVIDENCE (historical; recheck volatile facts)\n" + "\n".join(evidence_blocks)
+            if len(evidence_section) > max_chars - len(conversation_section) - 800:
+                evidence_section = ""
     report_budget = max_chars - len(conversation_section)
+    if include_private_evidence:
+        report_budget -= len(evidence_section) + 800
     report_section = _render_section(
         "LATEST SCHEDULED REPORTS",
         reports,
-        section_limit=max(report_budget, 2_000),
+        section_limit=max(report_budget, 0 if include_private_evidence else 2_000),
         event_limit=6_000,
     )
     sections = [
@@ -315,6 +342,7 @@ def build_context_packet(
         "rules. It is not current-source evidence; revalidate current facts before "
         "making recommendations.",
         conversation_section,
+        evidence_section,
         report_section,
     ]
     packet = "\n\n".join(section for section in sections if section)
