@@ -41,6 +41,23 @@ def facts():
     ]}
 
 
+def player_evaluation_facts():
+    return {"status": "complete", "data": {"player_evaluation": {
+        "target": {
+            "player_id": "enciso", "positions": ["M", "F"], "club": "IPS", "active": True,
+        },
+        "ownership": {"state": "unrostered_unclassified"},
+        "sleeper_standard": {"gp": 2, "gs": 2, "minutes": 175, "pts_std": 25.25},
+        "kick_and_run": {"points_by_position": {"M": 31.5, "F": 28.0}},
+        "los_blancos": {
+            "roster_positions": ["M", "FM_FLEX"],
+            "players": [{"name": "Roster Mid", "positions": ["M"]}],
+        },
+    }}, "limitations": [], "sources": [
+        {"source": "Sleeper current league data", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}
+    ]}
+
+
 def followup():
     return result("", [NS(type="function_call", name="retrieve_missing_private_fact", arguments=json.dumps({
         "codex_request": "Retrieve the specific player's eligibility", "reason": "Eligibility is essential to whether this swap is legal and Sleeper exposes it"
@@ -112,6 +129,26 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["private_evidence"][0]["data"]["roster_count"], 17)
         self.assertEqual(answer.text, "OpenAI recommendation")
         self.assertEqual(persist.call_args.kwargs["kind"], PRIVATE_EVIDENCE)
+
+    async def test_final_pass_recovers_player_evaluation_after_planner_miss(self):
+        evidence = player_evaluation_facts()
+        answer, calls, retrieve, _ = await self.execute(
+            [plan(False), followup(), result()], evidence=evidence
+        )
+        self.assertEqual(answer.text, "OpenAI recommendation")
+        self.assertEqual(retrieve.call_count, 1)
+        self.assertEqual(retrieve.call_args.args[1], "Retrieve the specific player's eligibility")
+        self.assertFalse(calls.call_args_list[1].kwargs["parallel_tool_calls"])
+        self.assertEqual(
+            [tool["type"] for tool in calls.call_args_list[1].kwargs["tools"]],
+            ["web_search_preview", "function"],
+        )
+        final_payload = json.loads(calls.call_args_list[2].kwargs["input"])
+        packet = final_payload["private_evidence"][0]["data"]["player_evaluation"]
+        self.assertEqual(packet["target"]["positions"], ["M", "F"])
+        self.assertEqual(packet["ownership"]["state"], "unrostered_unclassified")
+        self.assertEqual(packet["kick_and_run"]["points_by_position"]["M"], 31.5)
+        self.assertIn("roster_positions", packet["los_blancos"])
 
     async def test_essential_second_retrieval_then_final_has_no_retrieval_tool(self):
         answer, calls, retrieve, persist = await self.execute([plan(), followup(), result()])
@@ -248,6 +285,17 @@ class RetrievalTests(unittest.TestCase):
         self.assertFalse(options["browser_capable"])
         self.assertTrue(options["ephemeral"])
         self.assertEqual(options["timeout_seconds"], 8)
+
+    def test_player_evaluation_retrieval_contract_is_bounded_and_scoring_aware(self):
+        with patch.object(advisor, "CodexRunner") as runner:
+            runner.return_value.run.return_value = NS(text=json.dumps(facts()))
+            advisor.retrieve_private_data(config(), "Evaluate Julio Enciso for Los Blancos", timeout=8)
+        prompt = runner.return_value.run.call_args.args[0]
+        self.assertIn("six targeted source reads", prompt)
+        self.assertIn("build_player_stat_profile", prompt)
+        self.assertIn("custom_points_by_position", prompt)
+        self.assertIn("unrostered_unclassified", prompt)
+        self.assertIn("Do not duplicate", prompt)
 
     def test_runner_failure_and_invalid_json_become_honest_partial_evidence(self):
         for output in (AutomationError("private transport diagnostics"), NS(text="bad json")):
