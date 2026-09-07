@@ -40,14 +40,15 @@ from .automation import (
 )
 from .attachment_intake import (
     AttachmentIntakeError,
-    normalize_attachment,
+    normalize_attachment_async,
+    classify_attachment,
+    validate_attachment_size,
 )
 from .context_store import DISCORD_ASSISTANT_RESPONSE, DISCORD_USER_MESSAGE
+from .interactive_advisor import RequestDeadline, run_advisor
 from .sleeper import SleeperDataError
 from .discord_presentation import (
     advisor_header,
-    attachment_processing,
-    attachment_ready,
     error_card,
     help_menu,
     private_advisor_only,
@@ -196,8 +197,9 @@ def build_client(config: AppConfig) -> discord.Client:
         context_packet: str | None = None,
         waiver_analysis: bool = False,
         has_attachment: bool = False,
+        deadline: RequestDeadline | None = None,
     ) -> tuple[str, bool, str | None, AdvisorRoute | None]:
-        if content.startswith("!task "):
+        if content.startswith("!task ") and not has_attachment:
             task_id = content[6:].strip()
             registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
             task = registry.get(task_id)
@@ -208,6 +210,10 @@ def build_client(config: AppConfig) -> discord.Client:
                 deliver=False,
             )
             return build_report_header(task, result) + result.text, False, result.thread_id, None
+
+        if not waiver_analysis:
+            result = await run_advisor(config, content, context_packet=context_packet, deadline=deadline)
+            return advisor_header() + "\n\n" + result.text, True, None, None
 
         decision = await asyncio.to_thread(
             route_interactive_request,
@@ -280,31 +286,36 @@ def build_client(config: AppConfig) -> discord.Client:
             metadata={"source": "discord_dm", **({"route": route.value} if route else {})},
         )
 
-    async def run_and_reply(
-        message: discord.Message,
-        content: str,
-        *,
-        user_metadata: dict | None = None,
-    ) -> None:
+    async def run_and_reply(message: discord.Message, content: str) -> None:
         remember_dm_channel(message.channel)
         async with run_lock:
-            await message.channel.send(
-                working_card(),
-                allowed_mentions=discord.AllowedMentions.none(),
-            )
+            await message.channel.send(working_card(), allowed_mentions=discord.AllowedMentions.none())
+            deadline = RequestDeadline.start()
             try:
-                # Build context before recording the current prompt so the
-                # request is supplied exactly once to the new Codex task.
-                context_packet = "" if content.startswith("!task ") else load_advisor_context(config)
-                remember_user_message(content, metadata=user_metadata)
-                report, is_interactive, thread_id, route = await report_for_content(
-                    content,
-                    context_packet=context_packet,
-                    has_attachment=user_metadata is not None,
-                )
-                if is_interactive:
-                    remember_advisor_response(report, thread_id, route=route)
+                async with asyncio.timeout(None if content.startswith("!task ") and not message.attachments else deadline.remaining()):
+                    attachment_input = await normalize_discord_attachment(message, deadline)
+                    user_metadata = None
+                    if attachment_input:
+                        kind, user_metadata, text = attachment_input
+                        source = user_metadata["attachment"]
+                        # A voice note without a caption is the owner's request.
+                        if kind == "audio" and not content:
+                            content = text
+                        else:
+                            content = f"{content}\n\nAttachment ({kind}; {source['filename']}):\n{text}"
+                    context_packet = "" if content.startswith("!task ") and not user_metadata else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=True)
+                    await asyncio.to_thread(remember_user_message, content, metadata=user_metadata)
+                    report, is_interactive, thread_id, route = await report_for_content(
+                        content, context_packet=context_packet,
+                        has_attachment=user_metadata is not None, deadline=deadline,
+                    )
+                    if is_interactive:
+                        await asyncio.to_thread(remember_advisor_response, report, thread_id, route=route)
                 await send_chunks(message.channel, report)
+            except AttachmentIntakeError as exc:
+                await send_chunks(message.channel, error_card("I couldn’t read that attachment", str(exc)))
+            except TimeoutError:
+                await send_chunks(message.channel, error_card("I couldn’t complete that task", "The advisor reached its response time limit. Please try again."))
             except (AutomationError, RoutingError) as exc:
                 LOGGER.exception("Advisor request failed for Discord message")
                 await send_chunks(message.channel, error_card("I couldn’t complete that task", str(exc)))
@@ -312,11 +323,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 LOGGER.exception("Unexpected Discord task failure")
                 await send_chunks(message.channel, error_card("I couldn’t complete that task", "Please try again shortly."))
 
-    async def normalize_discord_attachment(
-        message: discord.Message,
-    ) -> tuple[str, dict, str] | None:
-        """Download one attachment privately, normalize it, and remove it immediately."""
-
+    async def normalize_discord_attachment(message: discord.Message, deadline: RequestDeadline) -> tuple[str, dict, str] | None:
         attachments = list(message.attachments)
         if not attachments:
             return None
@@ -325,32 +332,20 @@ def build_client(config: AppConfig) -> discord.Client:
         attachment = attachments[0]
         filename = Path(attachment.filename or "attachment").name
         content_type = attachment.content_type
-        await message.channel.send(
-            attachment_processing(),
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
+        validate_attachment_size(classify_attachment(filename, content_type), attachment.size)
         with tempfile.TemporaryDirectory(prefix="fantasy-discord-input-") as temporary:
             destination = Path(temporary) / filename
             try:
-                await attachment.save(destination)
+                await asyncio.wait_for(attachment.save(destination), timeout=min(15, deadline.remaining(30)))
             except Exception as exc:
                 raise AttachmentIntakeError("I couldn’t download that Discord attachment. Please try again.") from exc
-            normalized = await asyncio.to_thread(
-                normalize_attachment,
-                destination,
-                filename=filename,
-                content_type=content_type,
+            normalized = await normalize_attachment_async(
+                destination, filename=filename, content_type=content_type,
                 api_key=config.openai_api_key or "",
                 audio_model=config.openai_audio_transcription_model,
-                document_model=config.openai_document_model,
+                document_model=config.openai_document_model, deadline=deadline,
             )
-        metadata = {
-            "attachment": {
-                "filename": normalized.filename,
-                "kind": normalized.kind,
-                "content_type": normalized.content_type,
-            }
-        }
+        metadata = {"attachment": {"filename": normalized.filename, "kind": normalized.kind, "content_type": normalized.content_type}}
         return normalized.kind, metadata, normalized.text
 
     async def handle_watchlist_dm(message: discord.Message, action: str, player: str | None) -> None:
@@ -407,15 +402,17 @@ def build_client(config: AppConfig) -> discord.Client:
         await interaction.response.defer()
         async with run_lock:
             try:
-                context_packet = "" if content.startswith("!task ") else load_advisor_context(config)
-                remember_user_message(content)
-                report, is_interactive, thread_id, route = await report_for_content(
-                    content,
-                    context_packet=context_packet,
-                    waiver_analysis=waiver_analysis,
-                )
-                if is_interactive:
-                    remember_advisor_response(report, thread_id, route=route)
+                normal = not waiver_analysis and not content.startswith("!task ")
+                deadline = RequestDeadline.start() if normal else None
+                async with asyncio.timeout(deadline.remaining() if deadline else None):
+                    context_packet = "" if content.startswith("!task ") else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=normal)
+                    await asyncio.to_thread(remember_user_message, content)
+                    report, is_interactive, thread_id, route = await report_for_content(
+                        content, context_packet=context_packet,
+                        waiver_analysis=waiver_analysis, deadline=deadline,
+                    )
+                    if is_interactive:
+                        await asyncio.to_thread(remember_advisor_response, report, thread_id, route=route)
                 chunks = split_discord_message(report, limit=1900)
                 # User-installed interactions have a bounded follow-up budget.
                 # Keep the response complete for normal reports and make an
@@ -950,30 +947,10 @@ def build_client(config: AppConfig) -> discord.Client:
             LOGGER.exception("Could not claim Discord message %s", message.id)
             return
         caption = message.content.strip()
-        attachment_metadata: dict | None = None
-        try:
-            attachment_input = await normalize_discord_attachment(message)
-        except AttachmentIntakeError as exc:
-            await send_chunks(message.channel, error_card("I couldn’t read that attachment", str(exc)))
+        if message.attachments:
+            await run_and_reply(message, caption)
             return
-        if attachment_input is not None:
-            attachment_kind, attachment_metadata, attachment_text = attachment_input
-            if attachment_kind in {"pdf", "text"} and not caption:
-                source = attachment_metadata["attachment"]
-                context_text = f"Attachment ({source['kind']}; {source['filename']}):\n{attachment_text}"
-                remember_user_message(context_text, metadata=attachment_metadata)
-                await send_chunks(
-                    message.channel,
-                    attachment_ready(),
-                )
-                return
-            if attachment_kind == "audio" and not caption:
-                content = attachment_text
-            else:
-                display = attachment_metadata["attachment"]
-                content = f"{caption}\n\nAttachment ({display['kind']}; {display['filename']}):\n{attachment_text}"
-        else:
-            content = caption
+        content = caption
         if not content:
             return
         guardian_intent = parse_guardian_intent(content)
@@ -1008,7 +985,7 @@ def build_client(config: AppConfig) -> discord.Client:
             except AutomationError as exc:
                 await send_chunks(message.channel, error_card("I couldn’t load your reports", str(exc)))
             return
-        await run_and_reply(message, content, user_metadata=attachment_metadata)
+        await run_and_reply(message, content)
 
     return client
 

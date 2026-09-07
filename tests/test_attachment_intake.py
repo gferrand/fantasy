@@ -75,3 +75,44 @@ class AttachmentIntakeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AsyncIntakeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pdf_is_inline_and_audio_is_deadline_bound(self):
+        from types import SimpleNamespace as NS
+        from unittest.mock import AsyncMock
+        from fantasy_advisor.attachment_intake import normalize_attachment_async
+        from fantasy_advisor.interactive_advisor import RequestDeadline
+        client = Mock()
+        client.responses.create = AsyncMock(return_value=NS(output_text="Extracted figures"))
+        client.audio.transcriptions.create = AsyncMock(return_value=NS(text="Spoken question"))
+        manager = AsyncMock()
+        manager.__aenter__.return_value = client
+        factory = Mock(return_value=manager)
+        with tempfile.TemporaryDirectory() as temp:
+            for filename, expected in (("test.pdf", "Extracted figures"), ("test.ogg", "Spoken question")):
+                path = Path(temp) / filename
+                path.write_bytes(b"test")
+                result = await normalize_attachment_async(path, filename=filename, content_type=None, api_key="test", audio_model="audio", document_model="pdf", deadline=RequestDeadline.start(), client_factory=factory)
+                self.assertEqual(result.text, expected)
+        client.files.create.assert_not_called()
+        self.assertEqual(factory.call_args.kwargs["max_retries"], 0)
+        self.assertLessEqual(factory.call_args.kwargs["timeout"], 45)
+        request = client.responses.create.call_args.kwargs
+        self.assertFalse(request["store"])
+        self.assertTrue(request["input"][0]["content"][1]["file_data"].startswith("data:application/pdf;base64,"))
+
+    async def test_text_needs_no_provider_and_expired_budget_fails(self):
+        import time
+        from fantasy_advisor.attachment_intake import normalize_attachment_async
+        from fantasy_advisor.interactive_advisor import RequestDeadline
+        factory = Mock()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "test.txt"
+            path.write_text("Sample request")
+            kwargs = dict(filename="test.txt", content_type=None, api_key="", audio_model="audio", document_model="pdf", client_factory=factory)
+            result = await normalize_attachment_async(path, deadline=RequestDeadline.start(), **kwargs)
+            self.assertEqual(result.text, "Sample request")
+            with self.assertRaises(AttachmentIntakeError):
+                await normalize_attachment_async(path, deadline=RequestDeadline(time.monotonic()), **kwargs)
+        factory.assert_not_called()

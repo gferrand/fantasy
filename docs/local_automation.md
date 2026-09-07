@@ -28,12 +28,12 @@ local `codex exec`. When the task finishes, the runner closes the created tab
 with `infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id
 TAB_ID`. The same close cleanup runs after success, failure, or timeout.
 
-Private Discord
-questions are routed by the data they need: public current-events and transfer
-questions use an OpenAI Responses API web-research briefing, while Sleeper,
-roster, waiver, player-fit, fixture, and scoring questions use local Codex
-with the validated league packet. Both paths remain read-only; neither makes
-or simulates a Sleeper transaction.
+Normal `/ask` and plain Discord messages use OpenAI as the final advisor,
+with optional bounded read-only Codex retrieval of private facts. PDFs, text
+attachments, and voice notes share the same pipeline and 120-second deadline.
+Codex retrieval does not create a browser tab or produce the displayed advice.
+See [interactive advisor flow](discord-request-routing.md) for budgets,
+freshness, evidence continuity, and the unchanged specialized workflows.
 
 Legitimate non-browser Fantasy analysis is permanently pinned in application
 code to `gpt-5.6-luna` with `medium` reasoning. Public web briefings use `gpt-5.6-terra` with

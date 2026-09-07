@@ -73,7 +73,16 @@ ordered chunks, avoiding both truncation and file attachments.
 
 ### 5. Conversation layer
 
-Browser-capable recurring and Discord-request analysis creates a task tab with
+Normal `/ask`, plain messages, and supported attachments use an OpenAI-first
+private-data planner. Optional ephemeral Codex retrieval returns bounded facts;
+OpenAI produces every final advisory answer with public web-search access.
+At most one additional essential private-fact retrieval is allowed. These
+retrieval tasks use no browser. The existing context SQLite database retains
+separate timestamped private-evidence events alongside recent conversation.
+See [interactive advisor flow](discord-request-routing.md) and
+[data capabilities](advisor/DATA_CAPABILITIES.md).
+
+Browser-capable specialized and recurring analysis creates a task tab with
 `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose
 SAFE_PURPOSE` before launching local `codex exec`. The complete request reaches
 Codex unchanged. When the task finishes, the runner closes the created tab with
