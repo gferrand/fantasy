@@ -114,6 +114,39 @@ class GuidanceTests(unittest.TestCase):
         self.assertEqual(packet["status"], "success")
         actions.return_value.add_to_watchlist.assert_called_once_with("Enciso")
 
+    def test_named_intelligence_tools_return_provenanced_packets(self):
+        context = NS(
+            payload={"recommended_players": ["Enciso"]},
+            retrieved_at="2026-09-07T12:00:00+00:00",
+        )
+        with (
+            patch.object(advisor, "get_gameweek_prepare_context", return_value=context),
+            patch.object(advisor, "get_injury_opportunity_context", return_value=context),
+            patch.object(advisor, "load_persisted_fixture_schedule", return_value="schedule") as schedule,
+            patch.object(advisor, "get_rotation_context", return_value=context) as rotation,
+            patch.object(advisor, "get_trade_context", return_value=context) as trade,
+        ):
+            for name in (
+                "get_gameweek_context",
+                "get_injury_opportunity_context",
+                "get_rotation_context",
+                "get_trade_context",
+            ):
+                with self.subTest(name=name):
+                    packet = advisor.execute_fantasy_tool(config(), name, "{}", timeout=1)
+                    self.assertEqual(packet["status"], "complete")
+                    self.assertEqual(packet["data"], context.payload)
+                    self.assertFalse(packet["sources"][0]["stale"])
+        self.assertEqual(schedule.call_count, 2)
+        rotation.assert_called_once_with(
+            manager_id=advisor.EXPECTED_MANAGER_ID,
+            fixture_schedule="schedule",
+        )
+        trade.assert_called_once_with(
+            manager_id=advisor.EXPECTED_MANAGER_ID,
+            fixture_schedule="schedule",
+        )
+
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
@@ -151,10 +184,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Tool-grounded answer")])) )
         packet = {"status": "complete", "data": {"team": {"name": "Los Blancos"}}, "limitations": [], "sources": [{"source": "Sleeper league rosters", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}]}
-        with patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute:
+        with (
+            patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute,
+            patch.object(advisor, "persist_advisor_context_event") as persist,
+        ):
             answer = await advisor.run_advisor(config(), "How is Los Blancos?", client=client)
         self.assertEqual(answer.text, "Tool-grounded answer")
         execute.assert_called_once()
+        self.assertEqual(persist.call_args.kwargs["metadata"]["source"], "advisor_tool:get_team_context")
         self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
 
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
