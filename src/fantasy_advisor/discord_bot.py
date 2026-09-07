@@ -13,7 +13,7 @@ import tempfile
 import discord
 from discord import app_commands
 
-from .advisor_router import AdvisorRoute, LeagueDataScope, RoutingError, route_interactive_request
+from .advisor_router import AdvisorRoute, RoutingError
 from .automation import (
     AppConfig,
     AutomationError,
@@ -26,12 +26,10 @@ from .automation import (
     persist_discord_ready_state,
     persist_advisor_context_event,
     load_registry,
-    run_interactive_task,
     run_gameweek_web_briefing,
     run_injury_web_briefing,
     run_rotation_web_briefing,
     run_trade_web_briefing,
-    run_web_briefing,
     run_watchlist_web_briefing,
     run_scheduled_task,
     split_discord_message,
@@ -56,7 +54,6 @@ from .discord_presentation import (
     task_menu,
     player_catalog_updated,
     waiver_header,
-    web_briefing_header,
     watchlist_card,
     watchlist_change,
     watchlist_empty,
@@ -228,55 +225,6 @@ def build_client(config: AppConfig) -> discord.Client:
             requester_id=requester_id,
         )
         return waiver_header() + "\n\n" + result.text, True, None, None
-
-        decision = await asyncio.to_thread(
-            route_interactive_request,
-            content,
-            api_key=config.openai_api_key,
-            model=config.openai_web_model,
-            reasoning_effort=config.openai_web_reasoning_effort,
-            context_packet=context_packet,
-            waiver_analysis=waiver_analysis,
-            has_attachment=has_attachment,
-        )
-        LOGGER.info("Routing Discord advisor request through %s: %s", decision.route.value, decision.reason)
-        if decision.route is AdvisorRoute.CODEX:
-            result = await asyncio.to_thread(
-                run_interactive_task,
-                config,
-                content,
-                context_packet=context_packet,
-                waiver_analysis=waiver_analysis,
-                league_wide=decision.league_data_scope is LeagueDataScope.LEAGUE_ROSTERS,
-            )
-        else:
-            result = await asyncio.to_thread(
-                run_web_briefing,
-                config,
-                content,
-                context_packet=context_packet,
-            )
-        if waiver_analysis:
-            return (
-                waiver_header() + "\n\n"
-                f"{result.text}",
-                True,
-                result.thread_id,
-                decision.route,
-            )
-        if decision.route is AdvisorRoute.CHAT:
-            return (
-                web_briefing_header() + f"\n\n{result.text}",
-                True,
-                None,
-                decision.route,
-            )
-        return (
-            advisor_header() + f"\n\n{result.text}",
-            True,
-            result.thread_id,
-            decision.route,
-        )
 
     def remember_user_message(content: str, *, metadata: dict | None = None) -> None:
         persist_advisor_context_event(

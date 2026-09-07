@@ -18,7 +18,6 @@ from .automation import (
     EXPECTED_LEAGUE_ID, EXPECTED_MANAGER_ID,
 )
 from .context_store import PRIVATE_EVIDENCE
-from .player_evaluation import get_player_evaluation_context
 from .data_capabilities import DataCapabilities
 from .local_actions import LocalActions
 from .intelligence_capabilities import (
@@ -53,15 +52,14 @@ class RequestDeadline:
 PRIVATE_REQUEST_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "properties": {
-        "kind": {"type": "string", "enum": ["player_evaluation", "codex_exploration"]},
-        "player_name": {"type": ["string", "null"]},
+        "kind": {"type": "string", "enum": ["codex_exploration"]},
         "codex_request": {"type": ["string", "null"]},
     },
-    "required": ["kind", "player_name", "codex_request"],
+    "required": ["kind", "codex_request"],
 }
 FOLLOWUP_TOOL = {
     "type": "function", "name": "retrieve_missing_private_fact",
-    "description": "One compact essential private Fantasy evidence retrieval. Use player_evaluation for a named player's value or roster fit; use codex_exploration only for unusual private facts with no named product capability.",
+    "description": "One compact essential private Fantasy evidence retrieval. Use codex_exploration only for an unusual unsupported private fact with no named product capability. Named player evaluation must use get_player_context.",
     "strict": True,
     "parameters": {
         "type": "object", "additionalProperties": False,
@@ -109,6 +107,7 @@ def execute_fantasy_tool(
         return unavailable("The requested Fantasy capability arguments were invalid.")
     started = time.monotonic()
     capabilities = capabilities or DataCapabilities(config, timeout=timeout)
+    capabilities.begin_operation(timeout)
 
     def context_packet(context: Any, source: str) -> dict[str, Any]:
         result = {
@@ -123,6 +122,12 @@ def execute_fantasy_tool(
             round((time.monotonic() - started) * 1000),
             result["status"],
         )
+        return result
+
+    def context_failure(field: str) -> dict[str, Any]:
+        LOGGER.exception("advisor_tool name=%s failed while loading %s", name, field)
+        result = capabilities.unavailable(field, "Current league data could not be accessed.")
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result["status"])
         return result
     if name == "get_player_context" and isinstance(payload.get("player_name"), str):
         result = capabilities.get_player_context(payload["player_name"])
@@ -205,22 +210,31 @@ def execute_fantasy_tool(
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
     if name == "get_gameweek_context" and payload.get("mode") in {"prepare", "recap"}:
-        context = (
-            get_gameweek_prepare_context(manager_id=EXPECTED_MANAGER_ID, client=capabilities.bounded_client())
-            if payload["mode"] == "prepare"
-            else get_gameweek_recap_context(manager_id=EXPECTED_MANAGER_ID, client=capabilities.bounded_client())
-        )
+        try:
+            context = (
+                get_gameweek_prepare_context(manager_id=EXPECTED_MANAGER_ID, client=capabilities.bounded_client())
+                if payload["mode"] == "prepare"
+                else get_gameweek_recap_context(manager_id=EXPECTED_MANAGER_ID, client=capabilities.bounded_client())
+            )
+        except Exception:
+            return context_failure("gameweek")
         return context_packet(context, "Fantasy gameweek context")
     if name == "get_injury_opportunity_context" and not payload:
-        context = get_injury_opportunity_context(client=capabilities.bounded_client())
+        try:
+            context = get_injury_opportunity_context(client=capabilities.bounded_client())
+        except Exception:
+            return context_failure("injury_opportunities")
         return context_packet(context, "Fantasy injury context")
     if name in {"get_rotation_context", "get_trade_context"} and not payload:
-        schedule = load_persisted_fixture_schedule(config)
-        context = (
-            get_rotation_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
-            if name == "get_rotation_context"
-            else get_trade_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
-        )
+        try:
+            schedule = load_persisted_fixture_schedule(config)
+            context = (
+                get_rotation_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
+                if name == "get_rotation_context"
+                else get_trade_context(manager_id=EXPECTED_MANAGER_ID, fixture_schedule=schedule, client=capabilities.bounded_client())
+            )
+        except Exception:
+            return context_failure("rotation" if name == "get_rotation_context" else "trade")
         return context_packet(context, f"Fantasy {name}")
     return unavailable("The requested Fantasy capability is unsupported or invalid.")
 
@@ -232,8 +246,8 @@ identifiers and context out of web queries. Prefer the named deterministic
 Fantasy tools whenever one covers the requested fact; use at most four total
 private tool calls. The optional private-fact function is a fallback only for
 an unusual fact with no named product capability. For a named player-value or
-roster-fit decision, request the typed player_evaluation packet; it is
-application evidence, not a request for the owner to look up Sleeper. Treat
+roster-fit decision, use get_player_context; it is application evidence, not
+a request for the owner to look up Sleeper. Treat
 partial packets as evidence for a conditional answer and never relabel Sleeper
 standard `pts_std` as Kick & Run scoring.
 For a compound request, gather each materially requested private context before
@@ -303,17 +317,12 @@ class PrivateRequest:
 
 
 def _request(payload: object) -> PrivateRequest:
-    if not isinstance(payload, dict) or set(payload) != {"kind", "player_name", "codex_request"}:
+    if not isinstance(payload, dict) or set(payload) != {"kind", "codex_request"}:
         raise ValueError("Invalid retrieval request")
     kind = payload.get("kind")
-    player_name = payload.get("player_name")
     codex_request = payload.get("codex_request")
-    if kind == "player_evaluation" and isinstance(player_name, str) and 1 <= len(player_name.strip()) <= 240:
-        if codex_request is None:
-            return PrivateRequest(kind, player_name.strip())
     if kind == "codex_exploration" and isinstance(codex_request, str) and 1 <= len(codex_request.strip()) <= 2400:
-        if player_name is None:
-            return PrivateRequest(kind, codex_request.strip())
+        return PrivateRequest(kind, codex_request.strip())
     raise ValueError("Invalid retrieval request")
 
 
@@ -528,10 +537,6 @@ async def run_advisor(
         budget = min(cap, deadline.remaining(FINAL_RESERVE_SECONDS + 6))
         if budget < 2:
             facts = unavailable("No retrieval time remains; answer conditionally from available evidence.")
-        elif request.kind == "player_evaluation":
-            facts = await asyncio.to_thread(
-                get_player_evaluation_context, config, request.value, timeout=budget,
-            )
         else:
             facts = await asyncio.to_thread(retrieve_private_data, config, request.value, timeout=budget)
         evidence.append(facts)

@@ -28,6 +28,32 @@ def test_league_reads_are_reused_with_typed_provenance():
         assert len(client.urls) == 2
 
 
+def test_cached_data_does_not_leak_evidence_or_limitations_between_operations():
+    with tempfile.TemporaryDirectory() as directory:
+        client = FakeSleeper({
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"name": "Kick & Run", "season": "2026", "scoring_settings": {}, "roster_positions": []},
+            f"{API_BASE}/state/clubsoccer:epl": {"season": "2026", "display_week": 7},
+        })
+        capabilities = DataCapabilities(config(Path(directory)), timeout=10, client=client)
+        first = capabilities.get_league_context()
+        second = capabilities.get_league_context()
+        assert first["sources"]
+        assert second["status"] == "complete"
+        assert second["sources"] == []
+        assert second["limitations"] == []
+        assert len(client.urls) == 2
+
+
+def test_each_operation_deadline_is_clamped_by_the_tool_budget():
+    with tempfile.TemporaryDirectory() as directory:
+        capabilities = DataCapabilities(config(Path(directory)), timeout=10)
+        started = time.monotonic()
+        capabilities.begin_operation(0.02)
+        client = capabilities.bounded_client()
+        assert client.deadline <= started + 0.03
+        assert client.timeout <= 0.03
+
+
 def test_team_and_watchlist_are_product_level_results():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory); app = config(root)
