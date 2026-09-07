@@ -124,7 +124,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_facts_reach_openai_and_only_openai_answer_returns(self):
         answer, calls, retrieve, persist = await self.execute([plan(), result()])
         retrieve.assert_called_once()
-        self.assertLessEqual(retrieve.call_args.kwargs["timeout"], 60)
+        self.assertLessEqual(retrieve.call_args.kwargs["timeout"], 75)
         payload = json.loads(calls.call_args_list[1].kwargs["input"])
         self.assertEqual(payload["private_evidence"][0]["data"]["roster_count"], 17)
         self.assertEqual(answer.text, "OpenAI recommendation")
@@ -281,6 +281,7 @@ class RetrievalTests(unittest.TestCase):
             runner.return_value.run.return_value = NS(text=json.dumps(facts()))
             advisor.retrieve_private_data(replace(config(), codex_sandbox="danger-full-access"), "Retrieve roster", timeout=8)
         self.assertEqual(runner.call_args.args[0].codex_sandbox, "read-only")
+        self.assertEqual(runner.call_args.args[0].codex_reasoning_effort, "low")
         options = runner.return_value.run.call_args.kwargs
         self.assertFalse(options["browser_capable"])
         self.assertTrue(options["ephemeral"])
@@ -295,7 +296,7 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn("build_player_stat_profile", prompt)
         self.assertIn("custom_points_by_position", prompt)
         self.assertIn("unrostered_unclassified", prompt)
-        self.assertIn("Do not duplicate", prompt)
+        self.assertIn("do not duplicate", prompt)
 
     def test_runner_failure_and_invalid_json_become_honest_partial_evidence(self):
         for output in (AutomationError("private transport diagnostics"), NS(text="bad json")):

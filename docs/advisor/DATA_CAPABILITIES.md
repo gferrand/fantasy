@@ -27,6 +27,9 @@ smallest useful player-evaluation packet rather than evaluating the player in
 isolation. Public research and private Fantasy facts are complementary. This is
 semantic guidance, not keyword routing, and a pure public-football question
 such as a manager's injury comment normally needs no private retrieval.
+In particular, a question such as "I'm interested in Julio Enciso—should I be?"
+is a player-value evaluation, not public news: plan the compact private packet
+even when it does not mention Sleeper, a roster, or scoring.
 
 For player evaluation, request a compact packet with the resolved Sleeper ID,
 positions, club/active/injury metadata, ownership (including the owning team
