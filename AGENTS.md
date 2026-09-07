@@ -96,6 +96,8 @@ Standards should be strict where mistakes are dangerous and lightweight where ex
 - **Any browser work, authentication, saved-login flow, or Discord smoke test:** `docs/engineering/BROWSER_AUTH.md`
 - **When current system structure matters:** `docs/architecture.md`
 
+For an authenticated Discord smoke-test DM, send a drafted message by pressing `Return` once. Never use `Shift+Return`: it inserts a newline instead of sending. Confirm the message appears in the DM before doing anything else.
+
 Read only what is relevant to the task, but when a document applies, follow it fully.
 
 ## KISS

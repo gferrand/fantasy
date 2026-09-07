@@ -82,6 +82,8 @@ The authenticated Owner has standing, action-time authorization for Discord smok
 * Visible test messages may remain in the Owner DM unless the Owner asks for removal.
 * If an external platform imposes a genuinely non-bypassable confirmation that supported test tooling cannot satisfy, report that exact platform limitation. Do not claim the Owner failed to authorize the test.
 
+To send a drafted test message, press `Return` once. Do not use `Shift+Return`; it creates a newline rather than sending. Confirm the message appears in the DM before continuing.
+
 ## Discord saved-password login
 
 For Discord, use the general saved-login rules above plus this exact procedure:
