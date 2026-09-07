@@ -2,7 +2,7 @@ import unittest
 
 from fantasy_advisor.sleeper import API_BASE, STATS_BASE, SleeperDataError
 from fantasy_advisor.watchlist import WatchlistPlayer
-from fantasy_advisor.watchlist_stats import load_current_watchlist_stats
+from fantasy_advisor.watchlist_stats import build_player_stat_profile, load_current_watchlist_stats
 
 
 class _SleeperClient:
@@ -19,6 +19,29 @@ class _SleeperClient:
 
 
 class WatchlistStatsTests(unittest.TestCase):
+    def test_profile_helper_accepts_an_arbitrary_resolved_player_without_io(self):
+        player = WatchlistPlayer("candidate", "Candidate", "ARS", ("M",), "now")
+
+        profile = build_player_stat_profile(
+            player,
+            {
+                "player_id": "candidate",
+                "stats": {"pts_std": 12, "gp": 2, "gs": 1, "min": 135, "g": 1, "a": 2},
+                "player": {"injury_status": "GTD"},
+            },
+        )
+
+        self.assertEqual(profile.player, player)
+        self.assertEqual(
+            (profile.points, profile.games, profile.starts, profile.minutes),
+            (12.0, 2.0, 1.0, 135.0),
+        )
+        self.assertEqual(
+            (profile.goals, profile.assists, profile.injury_status),
+            (1.0, 2.0, "GTD"),
+        )
+        self.assertEqual(profile.points_per_game, 6.0)
+
     def test_current_stats_use_saved_ids_and_one_stats_snapshot(self):
         state_url = f"{API_BASE}/state/clubsoccer:epl"
         stats_url = f"{STATS_BASE}/clubsoccer:epl/2026?season_type=regular"

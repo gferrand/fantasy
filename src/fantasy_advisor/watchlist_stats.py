@@ -152,7 +152,7 @@ def _trend(
     return "flat"
 
 
-def _player_stat(
+def build_player_stat_profile(
     player: WatchlistPlayer,
     row: object,
     *,
@@ -160,6 +160,11 @@ def _player_stat(
     previous_rows: Iterable[object] = (),
     recent_rows: Iterable[object] = (),
 ) -> WatchlistStat:
+    """Build stat signals for any resolved player from already-fetched rows.
+
+    The caller supplies the player identity, so this remains useful outside the
+    persisted watchlist without causing I/O or changing watchlist state.
+    """
     previous_season_points_per_minute = _season_points_per_minute(previous_season_row)
     if not isinstance(row, Mapping):
         return WatchlistStat(
@@ -349,7 +354,7 @@ def build_watchlist_stats_report(
         week=week,
         retrieved_at=timestamp,
         entries=tuple(
-            _player_stat(
+            build_player_stat_profile(
                 player,
                 by_id.get(player.player_id),
                 previous_season_row=previous_season_by_id.get(player.player_id),
