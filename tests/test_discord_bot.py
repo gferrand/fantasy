@@ -92,7 +92,7 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
         long_report = "\n\n".join(["x" * 1800] * 6)
         with (
-            patch("fantasy_advisor.discord_bot.load_injury_opportunities_context", return_value=fake_context),
+            patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
             patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=long_report),
         ):
@@ -126,7 +126,7 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
         fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
         report = "🩺 **Injury opportunities**\nNo current injuries."
         with (
-            patch("fantasy_advisor.discord_bot.load_injury_opportunities_context", return_value=fake_context),
+            patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
             patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=report),
         ):
