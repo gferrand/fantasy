@@ -147,6 +147,16 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("private_data_plan", call.kwargs["instructions"])
         self.assertIn("get_player_context", [tool.get("name") for tool in call.kwargs["tools"] if tool["type"] == "function"])
 
+    async def test_normal_advisor_executes_named_tool_then_returns_openai_answer(self):
+        call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Tool-grounded answer")])) )
+        packet = {"status": "complete", "data": {"team": {"name": "Los Blancos"}}, "limitations": [], "sources": [{"source": "Sleeper league rosters", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}]}
+        with patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute:
+            answer = await advisor.run_advisor(config(), "How is Los Blancos?", client=client)
+        self.assertEqual(answer.text, "Tool-grounded answer")
+        execute.assert_called_once()
+        self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
+
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
         with tempfile.TemporaryDirectory() as temp:
