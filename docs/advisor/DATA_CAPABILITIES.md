@@ -25,8 +25,15 @@ Team, trend, draft, and activity responses use player names and canonical team
 names. Owner and provider identifiers are internal plumbing. Team profiles
 include each eligible position's distinct Kick & Run points and rate, plus
 starts and minutes; standard Sleeper points are never mislabeled as Kick & Run.
-An unrostered player is not necessarily immediately addable because Sleeper
-does not expose pending-waiver state.
+When a fresh roster read establishes that a player is unrostered, say so
+directly. Sleeper only leaves one separate question unresolved: whether that
+unrostered player will process as an immediate Add or through waivers.
+
+For a current named-player decision involving roster or watchlist value,
+add/drop, trade, start/bench, role, minutes, or appearances, obtain fresh
+current evidence in the same request with `get_player_context` and the relevant
+compound capability. Use public research for material current real-world facts
+that private statistics do not establish when they are reasonably retrievable.
 
 Watchlist and Guardian mutations are local only and require an explicit tool
 call selected from a clear owner request. A direct request to add or remove a

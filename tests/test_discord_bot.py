@@ -1,7 +1,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 
 ROOT = Path(__file__).parents[1]
@@ -150,7 +150,7 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.advisor = self.stack.enter_context(patch.object(discord_bot, "run_advisor", new_callable=AsyncMock, return_value=NS(text="OpenAI final answer")))
         self.stack.enter_context(patch.object(discord_bot, "persist_discord_channel_id"))
         self.stack.enter_context(patch.object(discord_bot, "persist_advisor_context_event"))
-        self.stack.enter_context(patch.object(discord_bot, "load_advisor_context", return_value="recent context"))
+        self.context = self.stack.enter_context(patch.object(discord_bot, "load_advisor_context", return_value="recent context"))
         self.stack.enter_context(patch.object(discord_bot, "claim_discord_message", return_value=True))
         self.client = build_client(_test_config())
 
@@ -171,6 +171,7 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Web briefing", message.channel.send.call_args.args[0])
         self.assertIn("recent context", self.advisor.call_args.kwargs["context_packet"])
         self.assertIsNotNone(self.advisor.call_args.kwargs["deadline"])
+        self.context.assert_called_once_with(ANY, include_private_evidence=False)
 
     async def test_watchlist_action_and_advice_both_use_the_semantic_tool_path(self):
         for text in ("Remove Enciso from my watchlist.", "Should I remove Enciso from my watchlist?"):
@@ -187,6 +188,7 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         command = self.client._fantasy_command_tree.get_command("ask")
         await command.callback(interaction, "Should I bench him?")
         self.advisor.assert_awaited_once()
+        self.context.assert_called_once_with(ANY, include_private_evidence=False)
         self.assertIn("OpenAI final answer", interaction.edit_original_response.call_args.kwargs["content"])
 
     async def test_waiver_command_uses_the_shared_tool_capable_advisor(self):
@@ -196,6 +198,7 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         command = self.client._fantasy_command_tree.get_command("analyze-waivers")
         await command.callback(interaction)
         self.advisor.assert_awaited_once()
+        self.context.assert_called_once_with(ANY, include_private_evidence=False)
 
     async def test_attachments_use_same_pipeline_and_remove_temporary_files(self):
         from types import SimpleNamespace as NS
