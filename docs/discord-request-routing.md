@@ -39,6 +39,8 @@ observations are accepted only when explicitly marked stale. Current public
 news requires publication-date and event-year verification before it is called
 current or latest.
 
+The first retrieval may use up to 60 seconds, capped by the remaining shared
+budget after reserving final-answer and cleanup time; a second uses at most 20.
 One 120-second deadline starts when processing begins after queue acquisition
 and acknowledgment. Download and attachment normalization count toward it.
 Planner calls are capped at 15 seconds, first retrieval at 45 seconds, and a

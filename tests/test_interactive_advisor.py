@@ -65,7 +65,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_facts_reach_openai_and_only_openai_answer_returns(self):
         answer, calls, retrieve, persist = await self.execute([plan(), result()])
         retrieve.assert_called_once()
-        self.assertLessEqual(retrieve.call_args.kwargs["timeout"], 45)
+        self.assertLessEqual(retrieve.call_args.kwargs["timeout"], 60)
         payload = json.loads(calls.call_args_list[1].kwargs["input"])
         self.assertEqual(payload["private_evidence"][0]["data"]["roster_count"], 17)
         self.assertEqual(answer.text, "OpenAI recommendation")
@@ -104,6 +104,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         retrieve.assert_not_called()
         self.assertIn("No retrieval time remains", calls.call_args.kwargs["input"])
         self.assertLessEqual(calls.call_args.kwargs["timeout"], 34)
+
+    async def test_retrieval_is_capped_by_shared_deadline_after_attachment_work(self):
+        _, calls, retrieve, _ = await self.execute(
+            [plan(), result()], deadline=advisor.RequestDeadline(time.monotonic() + 50),
+        )
+        self.assertLessEqual(retrieve.call_args.kwargs["timeout"], 14)
+        self.assertGreater(retrieve.call_args.kwargs["timeout"], 0)
+        self.assertLessEqual(calls.call_args.kwargs["timeout"], 50)
 
     async def test_intermediate_timeout_uses_reserved_final_pass(self):
         answer, calls, retrieve, _ = await self.execute([plan(), asyncio.TimeoutError(), result("Limited answer")])
