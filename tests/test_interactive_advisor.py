@@ -466,6 +466,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         self.assertEqual(execute.call_count, 2)
 
+    async def test_team_and_league_context_are_sufficient_for_scoring_interpretation(self):
+        ground = [
+            NS(type="function_call", name="get_team_context", arguments='{"team_name":"Los Blancos"}'),
+            NS(type="function_call", name="get_league_context", arguments="{}"),
+        ]
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", ground), result("Custom scoring answer.")])))
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=facts()), patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(
+                config(), "Which player on Los Blancos benefits most from custom scoring?", client=client,
+            )
+        self.assertEqual(answer.text, "Custom scoring answer.")
+        final_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertEqual([tool["type"] for tool in final_tools], ["web_search_preview"])
+
     async def test_advice_never_mutates_when_grounding_selects_fresh_read(self):
         ground = NS(type="function_call", name="get_watchlist", arguments="{}")
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("Keep Santos for now.")])))

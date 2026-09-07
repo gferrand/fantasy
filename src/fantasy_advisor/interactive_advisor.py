@@ -811,9 +811,13 @@ async def run_advisor(
     compound_context_capabilities = {
         "get_waiver_context", "get_gameweek_context", "get_rotation_context", "get_trade_context",
     }
+    # A current team packet plus current league settings is sufficient for
+    # league-specific roster/scoring interpretation. Do not expose a broad
+    # follow-up catalog merely because neither is a compound report: the model
+    # can otherwise over-select tools and exhaust the four-call ceiling.
     private_context_sufficient = bool(
         compound_context_capabilities.intersection(used_deterministic_names)
-    )
+    ) or {"get_team_context", "get_league_context"}.issubset(used_deterministic_names)
     answer: Any | None = None
     while answer is None:
         remaining_calls = MAX_PRIVATE_TOOL_CALLS - tool_calls
