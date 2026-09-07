@@ -703,6 +703,7 @@ def _target_inventory(evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
                 inventory[player_id] = {
                     "name": name.strip(),
                     "rostered": ownership.get("rostered") if isinstance(ownership.get("rostered"), bool) else None,
+                    "team": ownership.get("team") if isinstance(ownership.get("team"), str) and ownership.get("team").strip() else None,
                     "on_your_team": ownership.get("on_your_team") is True or player_id in your_ids,
                 }
             for nested in value.values():
@@ -722,6 +723,28 @@ def _render_target_sources(sources: list[dict[str, str]]) -> str:
         parsed = urlsplit(url)
         links.append(f"[{title}](<{url}>)" if parsed.scheme in {"http", "https"} and parsed.netloc else title)
     return " · ".join(links)
+
+
+def _target_availability(record: dict[str, Any]) -> str:
+    """Render the one authoritative league-availability statement."""
+
+    if not record["rostered"]:
+        return "Current Fantasy availability: unrostered in Kick & Run."
+    team = record.get("team")
+    return f"Current Fantasy availability: rostered by {team}." if team else "Current Fantasy availability: rostered in Kick & Run."
+
+
+def _has_conflicting_ownership_claim(text: str, *, rostered: bool) -> bool:
+    """Reject an action rationale that contradicts deterministic ownership.
+
+    This is a narrow consistency check, not intent routing: ownership and the
+    Add-versus-Trade verb always come exclusively from current evidence.
+    """
+
+    normalized = text.casefold()
+    if rostered:
+        return "unrostered" in normalized
+    return any(term in normalized for term in ("rostered", "owned by", "trade for"))
 
 
 def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -791,6 +814,9 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
         if record["rostered"] is None:
             base["target_verification_error"] = "target_ownership_unknown"
             return "", base
+        if _has_conflicting_ownership_claim(target["rationale"], rostered=record["rostered"]):
+            base["target_verification_error"] = "target_ownership_claim_mismatch"
+            return "", base
         safe_sources: list[dict[str, str]] = []
         for source in sources:
             if not isinstance(source, dict) or set(source) != {"title", "url"}:
@@ -811,6 +837,7 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
             # a trade.  This makes an ownership-incompatible action
             # unrepresentable in the rendered recommendation.
             "action": "trade_for" if record["rostered"] else "add",
+            "availability": _target_availability(record),
             "rationale": target["rationale"].strip(),
             "availability_injury_verified": True,
             "role_minutes_verified": True,
@@ -827,6 +854,7 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
             verb = "Add" if target["action"] == "add" else "Trade for"
             actions.append(
                 f"{len(actions) + 1}. **{verb} {target['name']}** — {target['rationale']}\n"
+                f"   {target['availability']}\n"
                 f"   Sources: {_render_target_sources(target['current_public_sources'])}"
             )
         rendered = f"{analysis}\n\n## Recommended manual move(s)\n" + "\n".join(actions)
@@ -953,7 +981,7 @@ async def finalize_advisor_from_evidence(
         "decision.targets. Each target needs its current deterministic player_id, exact current-evidence name, "
         "current availability/injury verification, material role/minutes verification, and current public source URLs. "
         "A player marked on_your_team in current evidence can never be an incoming acquisition or trade target. "
-        "The finalizer derives Add for current unrostered players and Trade for for players rostered by another team. If a candidate is rejected "
+        "Do not state league ownership in a target rationale: the finalizer renders the current deterministic availability and derives Add for current unrostered players and Trade for players rostered by another team. If a candidate is rejected "
         "and replaced, list only the final replacement. If any final target cannot meet every condition, use HOLD/no action. "
         + command_instructions
     )

@@ -280,6 +280,29 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         ])
         self.assertIn("Trade for Jean-Philippe Mateta", response.text)
 
+    async def test_target_rationale_cannot_contradict_deterministic_ownership(self):
+        payload = json.dumps({"analysis": "One current target is worth considering.", "decision": {
+            "actionable": True, "summary": "Act.", "targets": [
+                {
+                    **self.target("incoming", "Verified Incoming"),
+                    "rationale": "Currently unrostered with a clear role.",
+                },
+            ],
+        }})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertEqual(response.trace["result_status"], "partial")
+        self.assertEqual(response.trace["target_verification_error"], "target_ownership_claim_mismatch")
+
+    async def test_rendered_target_availability_comes_from_current_evidence(self):
+        payload = json.dumps({"analysis": "One current target is worth considering.", "decision": {
+            "actionable": True, "summary": "Act.", "targets": [
+                self.target("incoming", "Verified Incoming"),
+            ],
+        }})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertIn("Current Fantasy availability: rostered in Kick & Run.", response.text)
+        self.assertEqual(response.trace["recommended_targets"][0]["action"], "trade_for")
+
     async def test_current_roster_player_cannot_be_an_incoming_target(self):
         payload = json.dumps({"analysis": "Mateta is injured.", "decision": {"actionable": True, "summary": "Buy low.", "targets": [
             self.target("mateta", "Jean-Philippe Mateta"),
