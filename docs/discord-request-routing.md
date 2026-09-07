@@ -30,7 +30,12 @@ permission profile extends `:read-only` and enables the network proxy for only
 network destinations remain blocked. It changes no global Codex settings.
 This requires a Codex CLI supporting named permission profiles and the network
 proxy; unsupported runtimes fail visibly without weakening the sandbox.
-It receives only the requested facts, not the complete conversation.
+It receives only the requested facts and a compact source/identity map, not the
+complete conversation. Known sources do not require repeated document discovery.
+Fresh source timestamps must fall within the current retrieval window; old
+observations are accepted only when explicitly marked stale. Current public
+news requires publication-date and event-year verification before it is called
+current or latest.
 
 One 120-second deadline starts when processing begins after queue acquisition
 and acknowledgment. Download and attachment normalization count toward it.

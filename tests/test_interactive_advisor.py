@@ -254,3 +254,22 @@ class TransportAndPresentationTests(unittest.TestCase):
         rendered = advisor.discord_answer_text(response)
         self.assertIn(text, rendered)
         self.assertIn('[Club update](<https://example.com/news>)', rendered)
+
+
+class FreshnessRegressionTests(unittest.TestCase):
+    def test_prior_observation_cannot_be_labeled_fresh_in_current_retrieval(self):
+        value = facts()
+        value['sources'][0]['retrieved_at'] = '2026-01-01T00:00:00+00:00'
+        with self.assertRaisesRegex(ValueError, 'predates'):
+            advisor.parse_retrieval(json.dumps(value), not_before=time.time())
+        value['sources'][0]['stale'] = True
+        self.assertTrue(advisor.parse_retrieval(json.dumps(value), not_before=time.time())['sources'][0]['stale'])
+
+    def test_new_retrieval_timestamp_is_accepted(self):
+        self.assertEqual(advisor.parse_retrieval(json.dumps(facts()), not_before=time.time())['status'], 'complete')
+
+    def test_unsupported_complete_status_is_rejected(self):
+        value = facts()
+        value['status'] = 'ok'
+        with self.assertRaisesRegex(ValueError, 'status'):
+            advisor.parse_retrieval(json.dumps(value))
