@@ -8,8 +8,9 @@ and reputable analysis. Public search cannot see the owner's private Fantasy
 state. Do not send private roster, league identifiers, or conversation text to
 web search; use public player/club questions only.
 
-Codex can retrieve facts from approved Fantasy repository data, local SQLite
-records, and read-only Sleeper endpoints: Los Blancos roster, Kick & Run league
+The application directly retrieves routine named-player evaluation facts from
+approved Fantasy repository data, local SQLite records, and read-only Sleeper
+endpoints: Los Blancos roster, Kick & Run league
 settings and custom scoring, positions, league state, player IDs and metadata,
 stats, ownership, other league rosters, unrostered players, saved watchlist,
 and maintained fixtures/projections. Request only facts needed for this answer.
@@ -31,7 +32,7 @@ In particular, a question such as "I'm interested in Julio Enciso—should I be?
 is a player-value evaluation, not public news: plan the compact private packet
 even when it does not mention Sleeper, a roster, or scoring.
 
-For player evaluation, request a compact packet with the resolved Sleeper ID,
+For player evaluation, request the typed `player_evaluation` packet with the resolved Sleeper ID,
 positions, club/active/injury metadata, ownership (including the owning team
 when rostered), current GP/GS/minutes and useful event totals/rates, distinct
 Sleeper standard-stat signals, per-position Kick & Run points/rates, relevant
@@ -49,8 +50,10 @@ outlook and likely starts require public research. Never infer an unsupported
 capability or invent missing data. Distinguish unsupported, temporarily
 unavailable, and not found. Label stale snapshots with their original timestamp.
 
-Codex retrieves facts only: no fantasy advice, public research, transactions,
-file/database writes, credentials, browser use, or unrelated account access.
+Routine player evaluation is deterministic and read-only: no fantasy advice,
+public research, transactions, file/database writes, credentials, browser use,
+or unrelated account access. Codex remains available only for unusual private
+facts without an existing application accessor.
 OpenAI owns reasoning and the final response, including conditional advice when
 facts are missing. Ask the user only if unresolved ambiguity could materially
 change the decision. A second retrieval is allowed only for a specific missing,
