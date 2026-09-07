@@ -333,7 +333,19 @@ class DataCapabilities:
             catalog = self._catalog()
         except Exception:
             return {"status": "partial", "data": {}, "limitations": [_limitation("player_catalog", "Player identity data could not be accessed.")], "sources": []}
-        matches = [row for row in catalog if str(row.get("name") or "").casefold() == player_name.casefold().strip()]
+        # Discord owners naturally use a surname for well-known players (for
+        # example, "Damsgaard").  Keep the strict exact-name lookup first,
+        # then accept a single unambiguous name-token match.  Do not guess
+        # when a token identifies multiple catalog players.
+        requested = player_name.casefold().strip()
+        matches = [row for row in catalog if str(row.get("name") or "").casefold() == requested]
+        if not matches and requested:
+            matches = [
+                row for row in catalog
+                if requested in {
+                    token for token in str(row.get("name") or "").casefold().split()
+                }
+            ]
         if len(matches) != 1:
             return {"status": "partial", "data": {}, "limitations": [{"kind": "not_found", "field": "player", "detail": "The requested player could not be uniquely resolved."}], "sources": [_local_source("Fantasy player catalog")]}
         league = self._get("league_settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", Mapping)

@@ -247,7 +247,9 @@ class GuidanceTests(unittest.TestCase):
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_advisor_starts_with_named_tools_not_the_legacy_planner(self):
         call = NS(type="function_call", name="get_player_context", arguments='{"player_name":"Enciso"}')
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Grounded answer")])))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[
+            result("", [call]), result("Grounded answer", [NS(type="web_search_call")]),
+        ])))
         packet = facts()
         with (patch.object(advisor, "execute_fantasy_tool", return_value=packet), patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)
@@ -258,6 +260,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("web_search_preview", [tool["type"] for tool in first.kwargs["tools"]])
         self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
         self.assertIn("get_player_context", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
+        self.assertEqual(
+            [tool["type"] for tool in client.responses.create.call_args_list[1].kwargs["tools"]],
+            ["web_search_preview"],
+        )
 
     async def test_normal_advisor_executes_named_tool_then_returns_openai_answer(self):
         call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))
@@ -348,17 +354,19 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         self.assertTrue(cancelled.is_set())
 
-    async def test_codex_fallback_is_only_for_unsupported_private_facts(self):
+    async def test_later_reasoning_does_not_expose_codex_after_named_capability(self):
         call = NS(type="function_call", name="retrieve_missing_private_fact", arguments=json.dumps({
             "request": {"kind": "codex_exploration", "codex_request": "Find an unsupported private fact"}, "reason": "No named tool covers it",
         }))
         ground = NS(type="function_call", name="get_league_context", arguments="{}")
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("", [call]), result("Conditional answer")])))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("", [call])])))
         with (patch.object(advisor, "retrieve_private_data", return_value=facts()) as retrieve, patch.object(advisor, "execute_fantasy_tool", return_value=facts()), patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "What unusual private fact applies?", client=client)
-        self.assertEqual(answer.text, "Conditional answer")
-        retrieve.assert_called_once()
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        retrieve.assert_not_called()
         self.assertNotIn("player_evaluation", json.dumps(client.responses.create.call_args_list[0].kwargs["tools"]))
+        later_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in later_tools if tool["type"] == "function"])
 
     async def test_slow_first_pass_still_allows_one_explicit_authenticated_remove(self):
         call = NS(type="function_call", name="remove_from_watchlist", arguments='{"player_name":"Santos"}')
@@ -421,15 +429,25 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             [tool.get("name") for tool in final_tools if tool["type"] == "function"],
         )
 
-    async def test_grounding_noop_is_exclusive_and_public_only_uses_no_private_data(self):
+    async def test_grounding_noop_requires_public_web_research_before_answering(self):
         no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Tel update.")])))
+        web = NS(type="web_search_call")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Tel update.", [web])])))
         answer = await advisor.run_advisor(config(), "What’s the latest on Mathys Tel’s role at Tottenham?", client=client)
         self.assertEqual(answer.text, "Tel update.")
         self.assertEqual(answer.trace["grounding"][0]["calls"][0]["name"], "no_private_fantasy_data_needed")
         self.assertEqual(answer.trace["tools"][0]["status"], "no_op")
+        self.assertTrue(answer.trace["web_search_used"])
         second_tools = client.responses.create.call_args_list[1].kwargs["tools"]
         self.assertEqual([tool["type"] for tool in second_tools], ["web_search_preview"])
+        self.assertEqual(client.responses.create.call_args_list[1].kwargs["tool_choice"], "required")
+
+    async def test_public_only_plain_text_without_web_research_fails_safely(self):
+        no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Unresearched Tel update.")])))
+        answer = await advisor.run_advisor(config(), "What’s the latest on Mathys Tel’s role at Tottenham?", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertFalse(answer.trace["web_search_used"])
 
     async def test_invalid_grounding_retries_once_then_never_answers_from_history(self):
         no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"bad batch"}')
@@ -456,6 +474,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
         self.assertEqual(execute.call_count, 2)
 
+    async def test_team_and_league_context_are_sufficient_for_scoring_interpretation(self):
+        ground = [
+            NS(type="function_call", name="get_team_context", arguments='{"team_name":"Los Blancos"}'),
+            NS(type="function_call", name="get_league_context", arguments="{}"),
+        ]
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", ground), result("Custom scoring answer.")])))
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=facts()), patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(
+                config(), "Which player on Los Blancos benefits most from custom scoring?", client=client,
+            )
+        self.assertEqual(answer.text, "Custom scoring answer.")
+        final_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertEqual([tool["type"] for tool in final_tools], ["web_search_preview"])
+
     async def test_advice_never_mutates_when_grounding_selects_fresh_read(self):
         ground = NS(type="function_call", name="get_watchlist", arguments="{}")
         client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [ground]), result("Keep Santos for now.")])))
@@ -477,6 +509,16 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("immediate Add or through waivers", instructions)
         self.assertIn("Fresh current", player_tool["description"])
         self.assertIn("Unrostered means unrostered", waiver_tool["description"])
+
+    def test_runtime_forbids_lineup_advice_for_a_player_absent_from_current_roster(self):
+        self.assertIn("cannot start that player in\nthis league", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)
+
+    def test_watchlist_contract_requires_the_canonical_read_before_stats_enrichment(self):
+        watchlist = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_watchlist")
+        stats = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_watchlist_stats")
+        self.assertIn("Always use this tool", watchlist["description"])
+        self.assertIn("never substitute it", stats["description"])
+        self.assertIn("call get_watchlist", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)
 
 
 class RetrievalTests(unittest.TestCase):

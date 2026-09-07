@@ -81,8 +81,8 @@ FANTASY_TOOLS = (
     {"type": "function", "name": "get_team_context", "description": "Current roster and starters for one named league team.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"team_name": {"type": "string"}}, "required": ["team_name"]}},
     {"type": "function", "name": "get_draft_context", "description": "Observed current-league draft position and a compact nearby-picks window for one named player. Returns a truthful limitation when the draft is unavailable.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "get_player_trends", "description": "Current bounded Sleeper add or drop trend list. Use as one waiver-market signal, not as a deterministic player ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"kind": {"type": "string", "enum": ["add", "drop"]}, "hours": {"type": "integer", "minimum": 1, "maximum": 168}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["kind", "hours", "limit"]}},
-    {"type": "function", "name": "get_watchlist", "description": "Saved Fantasy watchlist only; does not change it.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_watchlist_stats", "description": "Current-season Sleeper stats for the saved watchlist using the same deterministic statistics engine as /watch stats. It omits longer trend and prior-season reads to stay within an interactive answer deadline.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_watchlist", "description": "Canonical current saved Fantasy watchlist; does not change it. Always use this tool when the owner asks about their watchlist, including a compound roster/watchlist/waiver question.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_watchlist_stats", "description": "Optional current-season Sleeper stat enrichment for players already supplied by get_watchlist. Use only in addition to get_watchlist when the owner specifically needs scoring/stat analysis of saved watchlist players; never substitute it for get_watchlist.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_league_activity", "description": "Bounded, human-readable completed league transactions. Send round_number as null for the latest verified completed round; use an integer only for a historical round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": ["integer", "null"], "minimum": 1}}, "required": ["round_number"]}},
     {"type": "function", "name": "get_waiver_context", "description": "One fresh compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for every current best-waiver-move or available-players-versus-bench question in this request. Position filters the complete current eligible EPL universe before ranking and limit. For a recommendation, request a research pool of about 12 candidates even when the final answer lists fewer. Unrostered means unrostered; only immediate-add versus waiver processing is unknown.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"position": {"type": "string", "enum": ["ANY", "F", "M", "D", "GK"]}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["position", "limit"]}},
     {"type": "function", "name": "add_to_watchlist", "description": "Add one named player to the saved watchlist. Use only when the owner explicitly asks to add the player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
@@ -277,6 +277,9 @@ For a compound request, gather each materially requested private context before
 finalizing (for example, roster, watchlist, activity, and league scoring), up
 to that four-call limit. Do not claim an available context was absent if you
 did not request its named capability.
+For any request that asks about the saved watchlist, call get_watchlist. Use
+get_watchlist_stats only as optional enrichment after get_watchlist, never as
+a substitute for the canonical watchlist read.
 For a current named-player decision about roster value, watchlist value,
 add/drop, trade, start/bench, role, minutes, or appearances, obtain fresh
 current evidence in this request with get_player_context and the relevant
@@ -287,6 +290,10 @@ absent private field as proof that the fact is unverified. When fresh waiver
 evidence says a player is unrostered, state that as fact. The only distinct
 limitation is whether Sleeper will process that unrostered player as an
 immediate Add or through waivers.
+For a start/bench question, if the current roster evidence says the named
+player is not on Los Blancos, say that the owner cannot start that player in
+this league. Do not offer conditional or counterfactual lineup advice for a
+player the current roster does not contain.
 
 Reply for a private Discord DM: use short paragraphs and bold player names; do
 not use tables, code blocks, backend names, task IDs, planner text, or retrieval
@@ -811,35 +818,58 @@ async def run_advisor(
     compound_context_capabilities = {
         "get_waiver_context", "get_gameweek_context", "get_rotation_context", "get_trade_context",
     }
-    private_context_sufficient = bool(
-        compound_context_capabilities.intersection(used_deterministic_names)
-    )
+    def private_context_is_sufficient() -> bool:
+        """Return whether the evidence already supports final reasoning."""
+
+        # A current team packet plus current league settings is sufficient for
+        # league-specific roster/scoring interpretation. Do not expose a broad
+        # follow-up catalog merely because neither is a compound report: the
+        # model can otherwise over-select tools and exhaust the four-call cap.
+        return bool(compound_context_capabilities.intersection(used_deterministic_names)) or {
+            "get_team_context", "get_league_context",
+        }.issubset(used_deterministic_names)
     answer: Any | None = None
     while answer is None:
         remaining_calls = MAX_PRIVATE_TOOL_CALLS - tool_calls
+        private_context_sufficient = private_context_is_sufficient()
         external_tools: list[dict[str, Any]] = [web_tool]
+        # A public-only grounding decision deliberately excludes private Fantasy
+        # data. It is still a current-information request, so the following
+        # turn must use the public web rather than answer from model knowledge.
+        must_research_public_only = grounded_no_op and not trace["web_search_used"]
         must_research_final_target = bool(
             target_research_capabilities.intersection(used_deterministic_names)
             and not trace["web_search_used"]
         )
+        # Player-context requests are current player decisions. A current
+        # public role/availability read is inexpensive and prevents the model
+        # from treating private scoring data as proof of current club status.
+        must_research_named_player = bool(
+            "get_player_context" in used_deterministic_names
+            and not trace["web_search_used"]
+        )
         if (
-            not must_research_final_target and not private_context_sufficient
+            not must_research_named_player and not must_research_final_target and not private_context_sufficient
             and not grounded_no_op and not performed_local_action and can_retrieve and remaining_calls
         ):
             external_tools.extend(
                 tool for tool in FANTASY_TOOLS
                 if tool["name"] not in used_deterministic_names
             )
-            external_tools.append(FOLLOWUP_TOOL)
         finalization = (
             "Produce the final answer now using only current-request evidence. "
             "For an acquisition or trade target you actually recommend, use current public web research for material availability/injury and role facts; if that research changes the target, verify the replacement before finalizing."
             if not remaining_calls or private_context_sufficient or grounded_no_op or performed_local_action or not can_retrieve
             else "Use public web research when material, and request another named capability only if it is necessary. Current-request evidence outranks historical continuity."
         )
-        if must_research_final_target:
+        if must_research_public_only:
             finalization = (
-                "Use public web research now to verify current injury, availability, and role for the acquisition or trade target you will recommend. "
+                "Use public web research now before answering this public-only current-information request. "
+                "Do not produce a final answer until that research has run."
+            )
+        elif must_research_named_player or must_research_final_target:
+            finalization = (
+                "Use public web research now to verify current injury, availability, and role for the named player decision or acquisition/trade target. "
                 "Do not give a final recommendation before that research; if it changes the target, research the replacement too."
             )
         try:
@@ -847,7 +877,7 @@ async def run_advisor(
                 "instructions": final_advisor_instructions(reasoning_standard, contract, finalization),
                 "budget": (
                     min(
-                        TARGET_RESEARCH_TIMEOUT_SECONDS if must_research_final_target else 30,
+                        TARGET_RESEARCH_TIMEOUT_SECONDS if (must_research_named_player or must_research_final_target) else 30,
                         deadline.remaining(FINAL_RESERVE_SECONDS),
                     )
                     if can_retrieve else deadline.remaining()
@@ -855,20 +885,19 @@ async def run_advisor(
                 "phase": "reasoning", "tools": external_tools,
                 "parallel_tool_calls": True,
             }
-            if must_research_final_target:
-                # The selected acquisition/trade target cannot be finalized
-                # from Sleeper scoring alone. Limit this turn to public web
-                # research so the model verifies material role/availability.
+            if must_research_public_only or must_research_named_player or must_research_final_target:
+                # A public-only current request and a selected acquisition or
+                # trade target cannot be finalized from model knowledge or
+                # Sleeper scoring alone. Limit this turn to public web research.
                 reasoning_kwargs["tool_choice"] = "required"
             answer = await response(
                 **reasoning_kwargs,
             )
         except AutomationError:
-            # A target recommendation is unsafe without its required current
-            # public availability and role check.  Do not turn a failed web
-            # research pass into an unverified recommendation from Sleeper
-            # evidence alone.
-            if must_research_final_target:
+            # A public-only current answer or target recommendation is unsafe
+            # without required public research. Do not turn a failed web pass
+            # into an answer from stale model knowledge.
+            if must_research_public_only or must_research_named_player or must_research_final_target:
                 return finish_failure()
             if evidence:
                 answer = None
@@ -882,14 +911,18 @@ async def run_advisor(
             else:
                 return finish_failure()
         calls = _function_calls(answer)
+        if (must_research_public_only or must_research_named_player) and not trace["web_search_used"]:
+            return finish_failure()
         if not calls:
             break
-        allowed_later = deterministic_names | {FOLLOWUP_TOOL["name"]}
+        # Product capabilities are the complete normal Advisor catalog. Do not
+        # offer the Codex escape hatch after a named capability has supplied a
+        # partial result; a narrow partial answer is safer than unsupported
+        # private retrieval and keeps ordinary Fantasy questions on this path.
+        allowed_later = deterministic_names
         if any(call.name not in allowed_later for call in calls):
             return finish_failure()
         if grounded_no_op or performed_local_action or not can_retrieve:
-            return finish_failure()
-        if any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1:
             return finish_failure()
         if not await execute_calls(calls, grounding=False):
             return finish_failure()

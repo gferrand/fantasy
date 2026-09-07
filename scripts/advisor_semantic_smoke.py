@@ -37,6 +37,8 @@ def grounding_passes(prompt: str, trace: dict | None, required: set[str]) -> tup
         return False, f"required grounding {sorted(required)}; got {sorted(names)}"
     if "no_private_fantasy_data_needed" in names and names != {"no_private_fantasy_data_needed"}:
         return False, "public-only no-op was not exclusive"
+    if "no_private_fantasy_data_needed" in names and not (trace or {}).get("web_search_used"):
+        return False, "public-only current question completed without web research"
     if "get_waiver_context" in names:
         waiver = next(call for call in calls if call.get("name") == "get_waiver_context")
         try:
