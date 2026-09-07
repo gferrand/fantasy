@@ -71,7 +71,7 @@ class InjuryContextTests(unittest.TestCase):
         context = context_fixture()
         injuries = context.payload["injured_players"]
         self.assertEqual([item["player_id"] for item in injuries], ["1", "2", "8"])
-        self.assertEqual(injuries[0]["ownership"], {"rostered": True, "team": "Team One"})
+        self.assertEqual(injuries[0]["ownership"], {"rostered": True, "team": "Team One", "on_your_team": False})
         self.assertEqual([item["player_id"] for item in context.payload["beneficiary_candidates"]], ["4", "5"])
         self.assertEqual(context.payload["beneficiary_candidates"][0]["minutes"], 120.0)
         self.assertEqual(context.payload["beneficiary_candidates"][0]["custom_points"], 20.0)

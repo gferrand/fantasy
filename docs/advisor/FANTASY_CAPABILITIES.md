@@ -77,6 +77,7 @@ Discord /ask, normal DM, or /analyze-waivers
 Specialist analytical slash commands
   → command-selected deterministic context builder (no grounding)
   → shared Advisor finalizer with current evidence and bounded public research
+  → structured actionable-target rendering and trace from the same records
 ```
 
 - OpenAI is already the final voice for normal `run_advisor`; its Responses API has web search. Attachments use bounded local normalization/transcription.

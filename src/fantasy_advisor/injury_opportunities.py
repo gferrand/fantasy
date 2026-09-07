@@ -262,6 +262,7 @@ def build_injury_opportunities_context(
     rosters: object,
     users: object,
     stats_rows: object,
+    manager_id: str | None = None,
     retrieved_at: str | None = None,
 ) -> InjuryOpportunitiesContext:
     """Normalize complete Sleeper injury flags and affected-club candidates."""
@@ -277,6 +278,13 @@ def build_injury_opportunities_context(
     user_rows = _array(users, "league users")
     stat_rows = _array(stats_rows, "current season stats")
     owners = _ownership(roster_rows, user_rows)
+    owner_roster = next(
+        (row for row in roster_rows if manager_id is not None and str(row.get("owner_id")) == str(manager_id)),
+        None,
+    )
+    your_player_ids = {
+        str(player_id) for player_id in (owner_roster.get("players") or [])
+    } if isinstance(owner_roster, Mapping) else set()
     stats_by_id: dict[str, Mapping[str, Any]] = {}
     for row in stat_rows:
         player_id = str(row.get("player_id") or "")
@@ -304,7 +312,11 @@ def build_injury_opportunities_context(
             "name": _name(player_id, player),
             "club": str(player.get("team_abbr") or "").upper(),
             "positions": positions,
-            "ownership": {"rostered": owner is not None, "team": owner},
+            "ownership": {
+                "rostered": owner is not None,
+                "team": owner,
+                "on_your_team": player_id in your_player_ids,
+            },
             "starts": _number(stats, "gs"),
             "minutes": _number(stats, "min"),
             "points": _number(stats, "pts_std"),
@@ -345,12 +357,17 @@ def build_injury_opportunities_context(
         "retrieved_at": timestamp,
         "injured_players": injuries,
         "beneficiary_candidates": candidates,
+        # This is current deterministic ownership evidence, not an inference
+        # from player names. The shared finalizer uses it to reject an
+        # impossible recommendation to acquire someone already on the team.
+        "your_roster_player_ids": sorted(your_player_ids),
     }
     return InjuryOpportunitiesContext(season, gameweek, timestamp, payload)
 
 
 def load_injury_opportunities_context(
-    *, client: SleeperClient | None = None, retrieved_at: str | None = None
+    *, client: SleeperClient | None = None, manager_id: str | None = None,
+    retrieved_at: str | None = None,
 ) -> InjuryOpportunitiesContext:
     """Fetch one complete, read-only Sleeper snapshot for the command."""
 
@@ -364,6 +381,7 @@ def load_injury_opportunities_context(
         rosters=sleeper.get_json(f"{API_BASE}/league/{LEAGUE_ID}/rosters"),
         users=sleeper.get_json(f"{API_BASE}/league/{LEAGUE_ID}/users"),
         stats_rows=sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular"),
+        manager_id=manager_id,
         retrieved_at=retrieved_at,
     )
 

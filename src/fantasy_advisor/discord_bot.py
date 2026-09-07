@@ -765,7 +765,9 @@ def build_client(config: AppConfig) -> discord.Client:
         deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                context = await bounded_context_load(deadline, get_injury_opportunity_context)
+                context = await bounded_context_load(
+                    deadline, get_injury_opportunity_context, manager_id=EXPECTED_MANAGER_ID,
+                )
                 timeline_context = injury_timeline_research_context(context)
                 researched_player_ids = [str(player["player_id"]) for player in timeline_context["injured_players"]]
                 timeline_trace = {

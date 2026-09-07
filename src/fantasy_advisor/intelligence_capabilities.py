@@ -51,8 +51,10 @@ def get_gameweek_recap_context(*, manager_id: str, client: SleeperClient | None 
     return load_gameweek_recap_context(manager_id=manager_id, client=client)
 
 
-def get_injury_opportunity_context(*, client: SleeperClient | None = None) -> InjuryOpportunitiesContext:
-    return load_injury_opportunities_context(client=client)
+def get_injury_opportunity_context(
+    *, manager_id: str | None = None, client: SleeperClient | None = None,
+) -> InjuryOpportunitiesContext:
+    return load_injury_opportunities_context(client=client, manager_id=manager_id)
 
 
 def get_trade_context(

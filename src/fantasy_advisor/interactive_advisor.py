@@ -244,7 +244,9 @@ def execute_fantasy_tool(
         return context_packet(context, "Fantasy gameweek context")
     if name == "get_injury_opportunity_context" and not payload:
         try:
-            context = get_injury_opportunity_context(client=capabilities.bounded_client())
+            context = get_injury_opportunity_context(
+                manager_id=EXPECTED_MANAGER_ID, client=capabilities.bounded_client(),
+            )
         except Exception:
             return context_failure("injury_opportunities")
         return context_packet(context, "Fantasy injury context")
@@ -623,71 +625,216 @@ def current_evidence_envelope(context: Any, source: str) -> dict[str, Any]:
     }
 
 
-TARGET_VERIFICATION_PREFIX = "<!-- ADVISOR_TARGET_VERIFICATION "
-TARGET_VERIFICATION_SUFFIX = " -->"
+FINALIZER_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "analysis": {"type": "string"},
+        "decision": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "actionable": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "targets": {
+                    "type": "array",
+                    "maxItems": 3,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "player_id": {"type": "string"},
+                            "name": {"type": "string"},
+                            "action": {"type": "string", "enum": ["add", "trade_for"]},
+                            "rationale": {"type": "string"},
+                            "availability_injury_verified": {"type": "boolean"},
+                            "role_minutes_verified": {"type": "boolean"},
+                            "current_public_sources": {
+                                "type": "array",
+                                "maxItems": 3,
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "title": {"type": "string"},
+                                        "url": {"type": "string"},
+                                    },
+                                    "required": ["title", "url"],
+                                },
+                            },
+                        },
+                        "required": [
+                            "player_id", "name", "action", "rationale",
+                            "availability_injury_verified", "role_minutes_verified",
+                            "current_public_sources",
+                        ],
+                    },
+                },
+            },
+            "required": ["actionable", "summary", "targets"],
+        },
+    },
+    "required": ["analysis", "decision"],
+}
 
 
-def _target_verification(text: str) -> tuple[str, dict[str, Any]]:
-    """Remove and validate the finalizer's machine-readable target evidence.
+def _target_inventory(evidence: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index current deterministic player records used to validate actions.
 
-    The Advisor writes the comment as the final line, so it is never shown to
-    the Owner.  Treat malformed or incomplete action metadata as an unsafe
-    recommendation rather than trying to infer whether arbitrary prose was
-    adequately researched.
+    This is intentionally shallow: specialist packets already expose player
+    records as dictionaries.  It never guesses ownership from a display name.
     """
 
-    match = re.search(
-        rf"(?:^|\n){re.escape(TARGET_VERIFICATION_PREFIX)}(\{{.*\}}){re.escape(TARGET_VERIFICATION_SUFFIX)}\s*$",
-        text,
-        flags=re.DOTALL,
-    )
-    base = {
+    data = evidence.get("data")
+    inventory: dict[str, dict[str, Any]] = {}
+    your_ids: set[str] = set()
+    if isinstance(data, dict):
+        raw_ids = data.get("your_roster_player_ids")
+        if isinstance(raw_ids, list):
+            your_ids = {str(value) for value in raw_ids if str(value).strip()}
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            player_id = value.get("player_id")
+            name = value.get("name")
+            if isinstance(player_id, (str, int)) and isinstance(name, str) and name.strip():
+                ownership = value.get("ownership")
+                ownership = ownership if isinstance(ownership, dict) else {}
+                player_id = str(player_id)
+                inventory[player_id] = {
+                    "name": name.strip(),
+                    "rostered": ownership.get("rostered") if isinstance(ownership.get("rostered"), bool) else None,
+                    "on_your_team": ownership.get("on_your_team") is True or player_id in your_ids,
+                }
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(data)
+    return inventory
+
+
+def _render_target_sources(sources: list[dict[str, str]]) -> str:
+    links = []
+    for source in sources:
+        title, url = source["title"], source["url"]
+        parsed = urlsplit(url)
+        links.append(f"[{title}](<{url}>)" if parsed.scheme in {"http", "https"} and parsed.netloc else title)
+    return " · ".join(links)
+
+
+def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Validate one structured recommendation and render its action section.
+
+    The only actionable language added to the final Discord response is
+    generated here from ``decision.targets``.  The trace is built from that
+    exact same list, so a visible incoming recommendation cannot silently fall
+    outside its verification record.
+    """
+
+    base: dict[str, Any] = {
         "recommended_targets": [],
         "required_target_research_completed": False,
         "target_verification_metadata_valid": False,
     }
-    if match is None:
-        base["target_verification_error"] = "missing"
-        return text, base
-    visible = text[:match.start()].rstrip()
     try:
-        metadata = _object(match.group(1))
+        payload = _object(text)
     except ValueError:
         base["target_verification_error"] = "invalid_json"
-        return visible, base
-    actionable = metadata.get("actionable")
-    targets = metadata.get("recommended_targets")
-    if not isinstance(actionable, bool) or not isinstance(targets, list):
+        return "", base
+    if set(payload) != {"analysis", "decision"} or not isinstance(payload.get("analysis"), str):
         base["target_verification_error"] = "invalid_shape"
-        return visible, base
+        return "", base
+    decision = payload["decision"]
+    if not isinstance(decision, dict) or set(decision) != {"actionable", "summary", "targets"}:
+        base["target_verification_error"] = "invalid_decision"
+        return "", base
+    actionable, summary, targets = decision.get("actionable"), decision.get("summary"), decision.get("targets")
+    if not isinstance(actionable, bool) or not isinstance(summary, str) or not summary.strip() or not isinstance(targets, list):
+        base["target_verification_error"] = "invalid_decision"
+        return "", base
+    if not actionable and targets:
+        base["target_verification_error"] = "targets_without_action"
+        return "", base
+    if actionable and not targets:
+        base["target_verification_error"] = "action_without_targets"
+        return "", base
+
+    inventory = _target_inventory(evidence)
     normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
     for target in targets:
-        if not isinstance(target, dict):
+        if not isinstance(target, dict) or set(target) != {
+            "player_id", "name", "action", "rationale", "availability_injury_verified",
+            "role_minutes_verified", "current_public_sources",
+        }:
             base["target_verification_error"] = "invalid_target"
-            return visible, base
-        name = target.get("name")
-        sources = target.get("current_public_sources")
-        if not isinstance(name, str) or not name.strip() or not isinstance(sources, list) or not any(
-            isinstance(source, str) and source.strip() for source in sources
+            return "", base
+        player_id, name, action = target["player_id"], target["name"], target["action"]
+        sources = target["current_public_sources"]
+        if (
+            not isinstance(player_id, str) or not player_id.strip() or player_id in seen_ids
+            or not isinstance(name, str) or not name.strip() or not isinstance(action, str)
+            or action not in {"add", "trade_for"} or not isinstance(target["rationale"], str)
+            or not target["rationale"].strip() or not isinstance(sources, list) or not sources
+            or target["availability_injury_verified"] is not True or target["role_minutes_verified"] is not True
         ):
             base["target_verification_error"] = "invalid_target"
-            return visible, base
+            return "", base
+        record = inventory.get(player_id)
+        if record is None or record["name"].casefold() != name.strip().casefold():
+            base["target_verification_error"] = "target_not_in_current_evidence"
+            return "", base
+        if record["on_your_team"]:
+            base["target_verification_error"] = "target_already_on_your_team"
+            return "", base
+        if record["rostered"] is None or (action == "add" and record["rostered"]) or (
+            action == "trade_for" and not record["rostered"]
+        ):
+            base["target_verification_error"] = "target_ownership_mismatch"
+            return "", base
+        safe_sources: list[dict[str, str]] = []
+        for source in sources:
+            if not isinstance(source, dict) or set(source) != {"title", "url"}:
+                base["target_verification_error"] = "invalid_target_source"
+                return "", base
+            title, url = source["title"], source["url"]
+            parsed = urlsplit(url) if isinstance(url, str) else None
+            if not isinstance(title, str) or not title.strip() or parsed is None or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                base["target_verification_error"] = "invalid_target_source"
+                return "", base
+            safe_sources.append({"title": title.strip(), "url": url})
+        seen_ids.add(player_id)
         normalized.append({
+            "player_id": player_id,
             "name": name.strip(),
-            "availability_injury_verified": target.get("availability_injury_verified") is True,
-            "role_minutes_verified": target.get("role_minutes_verified") is True,
-            "current_public_sources": [source.strip() for source in sources if isinstance(source, str) and source.strip()],
+            "action": action,
+            "rationale": target["rationale"].strip(),
+            "availability_injury_verified": True,
+            "role_minutes_verified": True,
+            "current_public_sources": safe_sources,
         })
-    if not actionable and normalized:
-        base["target_verification_error"] = "targets_without_action"
-        return visible, base
-    complete = not actionable or bool(normalized) and all(
-        target["availability_injury_verified"] and target["role_minutes_verified"]
-        for target in normalized
-    )
-    return visible, {
+
+    analysis = payload["analysis"].strip()
+    if not analysis:
+        base["target_verification_error"] = "empty_analysis"
+        return "", base
+    if actionable:
+        actions = []
+        for target in normalized:
+            verb = "Add" if target["action"] == "add" else "Trade for"
+            actions.append(
+                f"{len(actions) + 1}. **{verb} {target['name']}** — {target['rationale']}\n"
+                f"   Sources: {_render_target_sources(target['current_public_sources'])}"
+            )
+        rendered = f"{analysis}\n\n## Recommended manual move(s)\n" + "\n".join(actions)
+    else:
+        rendered = f"{analysis}\n\n## Recommendation\n**HOLD** — {summary.strip()}"
+    return rendered, {
         "recommended_targets": normalized,
-        "required_target_research_completed": complete,
+        "required_target_research_completed": True,
         "target_verification_metadata_valid": True,
         "target_verification_actionable": actionable,
     }
@@ -750,10 +897,15 @@ async def finalize_advisor_from_evidence(
         if status == "partial" and not trace["target_verification_metadata_valid"]:
             trace.update({
                 "recommended_targets": [],
-                "required_target_research_completed": True,
                 "target_verification_actionable": False,
                 "target_verification_fallback": "no_action",
             })
+            # An invalid attempted acquisition remains observable as failed
+            # verification even though the owner only sees the safe HOLD.
+            # A provider/model failure before any proposed target is harmless
+            # no-action degradation and needs no target research.
+            if "target_verification_error" not in trace:
+                trace["required_target_research_completed"] = True
         trace["result_status"] = status
         trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
         LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
@@ -791,16 +943,15 @@ async def finalize_advisor_from_evidence(
     finalization = (
         "This is an explicit slash command. The supplied current-request evidence is authoritative; "
         "do not use historical conversation, invent a package/player, or imply a transaction occurred. "
-        "For every player you recommend acquiring or trading for, state the current public availability/role evidence "
-        "and include its source in the answer. If that verification is not available, return HOLD/no actionable recommendation "
-        "instead of naming an unverified target. "
-        "End every response with one exact machine-only HTML comment, after all user-facing prose: "
-        "<!-- ADVISOR_TARGET_VERIFICATION {\"actionable\":false,\"recommended_targets\":[]} -->. "
-        "Use actionable=true only when you recommend an acquisition or trade. When actionable=true, include every ultimately "
-        "recommended incoming target, including every incoming player in a multi-player trade, in recommended_targets. Each target "
-        "must contain name, availability_injury_verified=true, role_minutes_verified=true, and a non-empty current_public_sources "
-        "array naming the sources used. If a candidate is rejected and replaced, list only the final replacement and verify it. "
-        "Never claim actionable=true unless every listed target meets those checks. "
+        "Return the required JSON object only. Put factual comparison and uncertainty in analysis, but do not use analysis "
+        "to tell the Owner to add, acquire, pursue, trade for, or make an offer for any player. The decision object is the "
+        "only actionable recommendation and it is rendered directly to the Owner. Use actionable=false with no targets for "
+        "HOLD/no action. Use actionable=true only when every ultimately recommended incoming player appears exactly once in "
+        "decision.targets. Each target needs its current deterministic player_id, exact current-evidence name, add or trade_for "
+        "action, current availability/injury verification, material role/minutes verification, and current public source URLs. "
+        "A player marked on_your_team in current evidence can never be an incoming acquisition or trade target. For add, the "
+        "current ownership must be unrostered; for trade_for, it must be rostered by another team. If a candidate is rejected "
+        "and replaced, list only the final replacement. If any final target cannot meet every condition, use HOLD/no action. "
         + command_instructions
     )
     request_kwargs: dict[str, Any] = {
@@ -812,6 +963,14 @@ async def finalize_advisor_from_evidence(
         "input": json.dumps(payload, ensure_ascii=False),
         "store": False,
         "timeout": budget,
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "advisor_slash_finalization",
+                "strict": True,
+                "schema": FINALIZER_RESPONSE_SCHEMA,
+            }
+        },
     }
     if web_enabled:
         request_kwargs["tools"] = [{"type": "web_search_preview", "search_context_size": "medium"}]
@@ -829,10 +988,10 @@ async def finalize_advisor_from_evidence(
     )
     if mandatory_web and not trace["web_search_used"]:
         return finish(partial_text, "partial")
-    text = discord_answer_text(response)
+    text = str(getattr(response, "output_text", "") or "").strip()
     if not text:
         return finish(partial_text, "partial")
-    text, target_trace = _target_verification(text)
+    text, target_trace = _structured_finalization(text, evidence)
     trace.update(target_trace)
     if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
         return finish(partial_text, "partial")
