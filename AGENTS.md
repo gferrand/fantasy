@@ -2,6 +2,92 @@
 
 This file is a map, not an encyclopedia. Keep always-loaded guidance short. Read the focused documents below when their topic applies.
 
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.3" sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca" -->
+# Infrastructure Standards
+
+These standards apply to every project and every agent working on the Mac infrastructure.
+
+## Git & GitHub
+
+- `/Documents/GitHub/` contains **one canonical folder per project**. Do not create duplicate project folders there.
+- Every task starts with a **GitHub Issue**, then a dedicated branch, then a PR.
+- Never push directly to `main`.
+- PRs should normally **squash merge** so one completed task becomes one clean history entry.
+- Temporary worktrees are allowed only when genuinely necessary, outside the main GitHub folder, and must be cleaned up afterward.
+- Repositories must stay clean. Do not commit `.env`, credentials, caches, virtual environments, logs, generated runtime state, local databases, or junk.
+- Important PR checks may block merge for meaningful security, reliability, or infrastructure violations.
+- Exceptions are allowed when justified and documented.
+
+## Security
+
+- Never expose or commit passwords, API keys, tokens, cookies, sessions, or credentials.
+- Treat exposed credentials as compromised.
+- Applications are private by default.
+- Remote access should continue through the approved Tailscale-based private setup.
+- Minimize permissions and blast radius.
+- Projects must remain isolated from one another.
+- Containers should follow the common hardened baseline wherever practical.
+- Security must protect the business without creating unnecessary development bureaucracy.
+
+## Performance & Efficiency
+
+- Projects should use the resources they genuinely need to perform their jobs extremely well.
+- Do not sacrifice business value or speed simply to minimize CPU, RAM, or storage.
+- Do not waste resources either.
+- Measure before optimizing.
+- Prefer efficient systems that still win the race.
+- If the hardware is genuinely the bottleneck, recommend better hardware instead of crippling the applications.
+
+## Reliability
+
+- Every running application must have a clear definition of healthy.
+- Services should fail visibly, recover predictably, and report meaningful failures.
+- Project agents own the health of their applications.
+- Infrastructure-level health is monitored separately across the whole machine.
+- Post-merge deployments should verify health and automatically roll back when the new version is clearly unhealthy.
+
+## Architecture
+
+- Prefer simple, boring, proven systems.
+- Standardize infrastructure patterns across projects whenever practical.
+- Do not introduce a new database, programming language, container platform, cloud service, or other foundational technology casually.
+- Normal libraries and packages can be added when justified.
+- Keep persistent data clearly separated from replaceable code, cache, and generated state.
+- Avoid unnecessary machine-specific paths, hidden setup, or undocumented dependencies.
+
+## Portability & Recovery
+
+- Projects should be reproducible on another Mac with minimal manual work.
+- Infrastructure should depend on documented configuration rather than knowledge stored only on the current machine.
+- Important state must have a defined backup and recovery strategy.
+- Backup and recovery standards are owned centrally by the Infrastructure Agent.
+
+## Documentation
+
+- Every project must maintain useful documentation.
+- Documentation should stay current when architecture, setup, deployment, integrations, or operating behavior changes.
+- Another capable agent should be able to understand, operate, and rebuild the project from its repository and documentation.
+
+## Shared Chrome
+
+- At the start of browser work, create a task tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`.
+- When the task is finished, close that tab with `infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID`.
+- If any workspace command fails, reports a stale or unavailable heartbeat, or times out, stop browser work and send the Infrastructure Agent one alert containing only the project, task ID, failed command, safe error code, and UTC timestamp. Do not include URLs, page content, credentials, or browser history.
+- Do not retry repeatedly, reload the extension, restart Chrome, create an unmanaged tab, or troubleshoot the allocator. Wait for Infrastructure to reply that the allocator is healthy, then retry the original command once.
+- The Infrastructure Agent owns allocator recovery. On the first alert, it immediately verifies the failure from live metadata, reconciles any partially created tab, applies the smallest safe repair when the failure is real, and runs an Infrastructure-owned create/touch/close smoke test. It sends one conclusive reply: either `Chrome allocator healthy — retry now` or a concrete blocker and next action.
+- Duplicate reports for the same failure are one incident. Keep coordination to the initial alert and Infrastructure's conclusive reply unless a genuinely new blocker requires one clarification.
+
+## Governance
+
+The Infrastructure Agent is the standards authority.
+
+Project agents own their applications, but they are expected to operate within these standards.
+
+The Infrastructure Agent should keep standards consistent across projects, audit for drift, and propagate important changes to each project's `AGENTS.md`.
+
+Standards should be strict where mistakes are dangerous and lightweight where extra process adds little value.
+<!-- INFRA-STANDARDS:END -->
+
 ## Read these documents when applicable
 
 - **Any implementation or bug fix:** `docs/engineering/CORE_ENGINEERING.md`
