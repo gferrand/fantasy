@@ -8,7 +8,7 @@ import tempfile
 import time
 from types import SimpleNamespace as NS
 import unittest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 from fantasy_advisor.automation import (
     AppConfig,
@@ -18,6 +18,8 @@ from fantasy_advisor.automation import (
 )
 from fantasy_advisor import interactive_advisor as advisor
 from fantasy_advisor.context_store import append_event, build_context_packet, DISCORD_USER_MESSAGE, PRIVATE_EVIDENCE
+from fantasy_advisor.watchlist import WatchlistPlayer
+from fantasy_advisor.watchlist_stats import WatchlistStat, WatchlistStatsReport
 
 ROOT = Path(__file__).parents[1]
 
@@ -113,6 +115,52 @@ class GuidanceTests(unittest.TestCase):
             packet = advisor.execute_fantasy_tool(config(), "add_to_watchlist", json.dumps({"player_name": "Enciso"}), timeout=1)
         self.assertEqual(packet["status"], "success")
         actions.return_value.add_to_watchlist.assert_called_once_with("Enciso")
+
+    def test_named_catalog_routes_compact_league_and_market_requests(self):
+        packet = {"status": "complete", "data": {}, "limitations": [], "sources": []}
+        cases = (
+            ("get_league_context", "{}", "get_league_context", ()),
+            ("search_player_pool", '{"query":"Enciso","limit":5}', "search_player_pool", ("Enciso",)),
+            ("get_draft_context", '{"player_name":"Damsgaard"}', "get_draft_context", ("Damsgaard",)),
+            ("get_player_trends", '{"kind":"add","hours":24,"limit":8}', "get_player_trends", ()),
+        )
+        with patch.object(advisor, "DataCapabilities") as capabilities:
+            for name, arguments, method, expected_args in cases:
+                with self.subTest(name=name):
+                    getattr(capabilities.return_value, method).return_value = packet
+                    self.assertEqual(
+                        advisor.execute_fantasy_tool(config(), name, arguments, timeout=1),
+                        packet,
+                    )
+                    getattr(capabilities.return_value, method).assert_called()
+                    self.assertEqual(
+                        getattr(capabilities.return_value, method).call_args.args,
+                        expected_args,
+                    )
+        capabilities.return_value.search_player_pool.assert_called_with("Enciso", limit=5)
+        capabilities.return_value.get_player_trends.assert_called_with(
+            kind="add", hours=24, limit=8,
+        )
+
+    def test_watchlist_stats_tool_uses_the_shared_bounded_stats_engine(self):
+        watched = [WatchlistPlayer("enciso", "Julio Enciso", "IPS", ("M",), "2026-09-01T00:00:00+00:00")]
+        report = WatchlistStatsReport(
+            "2026", 3, "2026-09-07T12:00:00+00:00",
+            (WatchlistStat(watched[0], 12.0, 2.0, 1.0, 120.0, None, 1.0, None, None, None, None, True),),
+        )
+        with (
+            patch.object(advisor, "list_watchlist", return_value=watched),
+            patch.object(advisor, "get_watchlist_stats", return_value=report) as stats,
+        ):
+            packet = advisor.execute_fantasy_tool(config(), "get_watchlist_stats", "{}", timeout=1)
+        self.assertEqual(packet["status"], "complete")
+        self.assertEqual(packet["data"]["entries"][0]["player"]["name"], "Julio Enciso")
+        stats.assert_called_once_with(
+            watched,
+            client=ANY,
+            include_trends=False,
+            include_previous_season=False,
+        )
 
     def test_named_intelligence_tools_return_provenanced_packets(self):
         context = NS(

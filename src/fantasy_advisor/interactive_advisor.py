@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
@@ -27,6 +28,8 @@ from .intelligence_capabilities import (
     get_trade_context,
 )
 from .lineup_alerts import load_persisted_fixture_schedule
+from .watchlist import WatchlistError, list_watchlist
+from .intelligence_capabilities import get_watchlist_stats
 
 LOGGER = logging.getLogger(__name__)
 MAX_RESULT_CHARS = 16_000
@@ -76,9 +79,14 @@ FOLLOWUP_TOOL = {
 
 # Product-level tool catalog: no provider URLs, SQL, filesystem, or raw task execution.
 FANTASY_TOOLS = (
+    {"type": "function", "name": "get_league_context", "description": "Current league scoring, roster-slot, season, and round context from Sleeper. Use for any exact Kick & Run scoring or league-rules question; it is a live snapshot.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_player_context", "description": "Current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
+    {"type": "function", "name": "search_player_pool", "description": "Small, current local player-catalog search with current Sleeper ownership. Use to resolve a named player or a short name fragment; it does not provide a full waiver ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["query", "limit"]}},
     {"type": "function", "name": "get_team_context", "description": "Current roster and starters for one named league team.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"team_name": {"type": "string"}}, "required": ["team_name"]}},
+    {"type": "function", "name": "get_draft_context", "description": "Observed current-league draft position and a compact nearby-picks window for one named player. Returns a truthful limitation when the draft is unavailable.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
+    {"type": "function", "name": "get_player_trends", "description": "Current bounded Sleeper add or drop trend list. Use as one waiver-market signal, not as a deterministic player ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"kind": {"type": "string", "enum": ["add", "drop"]}, "hours": {"type": "integer", "minimum": 1, "maximum": 168}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["kind", "hours", "limit"]}},
     {"type": "function", "name": "get_watchlist", "description": "Saved Fantasy watchlist only; does not change it.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_watchlist_stats", "description": "Current-season Sleeper stats for the saved watchlist using the same deterministic statistics engine as /watch stats. It omits longer trend and prior-season reads to stay within an interactive answer deadline.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_league_activity", "description": "Bounded completed/current league transactions for one round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": "integer", "minimum": 1}}, "required": ["round_number"]}},
     {"type": "function", "name": "add_to_watchlist", "description": "Add one named player to the saved watchlist. Use only when the owner explicitly asks to add the player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "get_gameweek_context", "description": "Current deterministic roster, scoring, and gameweek preparation context.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
@@ -115,6 +123,14 @@ def execute_fantasy_tool(config: AppConfig, name: str, arguments: str, *, timeou
         result = capabilities.get_player_context(payload["player_name"])
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
+    if name == "get_league_context" and not payload:
+        result = capabilities.get_league_context()
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
+        return result
+    if name == "search_player_pool" and isinstance(payload.get("query"), str) and isinstance(payload.get("limit"), int):
+        result = capabilities.search_player_pool(payload["query"], limit=payload["limit"])
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
+        return result
     if name == "get_team_context" and isinstance(payload.get("team_name"), str):
         result = capabilities.get_team_context(payload["team_name"])
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
@@ -123,8 +139,43 @@ def execute_fantasy_tool(config: AppConfig, name: str, arguments: str, *, timeou
         result = capabilities.get_watchlist()
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
+    if name == "get_watchlist_stats" and not payload:
+        try:
+            watched = list_watchlist(config.repo_root / "data" / "automation" / "watchlist.sqlite3")
+            report = get_watchlist_stats(
+                watched,
+                client=capabilities.client,
+                include_trends=False,
+                include_previous_season=False,
+            )
+        except (WatchlistError, SleeperDataError):
+            return unavailable("Current watchlist statistics could not be accessed.")
+        result = {
+            "status": "complete",
+            "data": asdict(report),
+            "limitations": [],
+            "sources": [
+                {"source": "Fantasy watchlist", "retrieved_at": None, "stale": True},
+                {"source": "Sleeper current watchlist statistics", "retrieved_at": report.retrieved_at, "stale": False},
+            ],
+        }
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
+        return result
     if name == "get_league_activity" and isinstance(payload.get("round_number"), int):
         result = capabilities.get_league_activity(payload["round_number"])
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
+        return result
+    if name == "get_draft_context" and isinstance(payload.get("player_name"), str):
+        result = capabilities.get_draft_context(payload["player_name"])
+        LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
+        return result
+    if name == "get_player_trends" and all(
+        isinstance(payload.get(key), expected)
+        for key, expected in (("kind", str), ("hours", int), ("limit", int))
+    ):
+        result = capabilities.get_player_trends(
+            kind=payload["kind"], hours=payload["hours"], limit=payload["limit"],
+        )
         LOGGER.info("advisor_tool name=%s elapsed_ms=%d status=%s", name, round((time.monotonic() - started) * 1000), result.get("status"))
         return result
     if name == "add_to_watchlist" and isinstance(payload.get("player_name"), str):
