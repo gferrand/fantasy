@@ -47,6 +47,32 @@ def followup():
     }))])
 
 
+class GuidanceTests(unittest.TestCase):
+    def test_reasoning_standard_loads_from_repository(self):
+        standard = advisor.advisor_reasoning(config())
+        self.assertIn("# Fantasy Advisor Reasoning & Decision Standard", standard)
+        self.assertIn("Do not tell the Owner to manually check", standard)
+
+    def test_missing_unreadable_or_empty_reasoning_standard_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaisesRegex(AutomationError, "reasoning standard is unavailable"):
+                advisor.advisor_reasoning(config(root))
+            path = root / "docs/advisor/ADVISOR_REASONING.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("\n", encoding="utf-8")
+            with self.assertRaisesRegex(AutomationError, "reasoning standard is unavailable"):
+                advisor.advisor_reasoning(config(root))
+        with patch.object(Path, "read_text", side_effect=OSError("permission denied")):
+            with self.assertRaisesRegex(AutomationError, "reasoning standard is unavailable"):
+                advisor.advisor_reasoning(config())
+
+    def test_runtime_source_does_not_duplicate_durable_reasoning_standard(self):
+        source = Path(advisor.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("ADVISOR_INSTRUCTIONS =", source)
+        self.assertNotIn("Optimize the roster, not the isolated player", source)
+
+
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
         client = NS(responses=NS(create=AsyncMock(side_effect=responses)))
@@ -61,6 +87,22 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         persist.assert_not_called()
         self.assertEqual(calls.await_count, 2)
         self.assertEqual(calls.call_args_list[1].kwargs["tools"][0]["type"], "web_search_preview")
+        reasoning = advisor.advisor_reasoning(config())
+        self.assertIn("OpenAI researches public football evidence", calls.call_args_list[0].kwargs["instructions"])
+        self.assertNotIn(reasoning, calls.call_args_list[0].kwargs["instructions"])
+        self.assertIn(reasoning, calls.call_args_list[1].kwargs["instructions"])
+        self.assertIn("OpenAI researches public football evidence", calls.call_args_list[1].kwargs["instructions"])
+
+    async def test_missing_reasoning_standard_stops_before_provider_work(self):
+        client = NS(responses=NS(create=AsyncMock()))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            capabilities = root / "docs/advisor/DATA_CAPABILITIES.md"
+            capabilities.parent.mkdir(parents=True)
+            capabilities.write_text("# Advisor data capabilities\n", encoding="utf-8")
+            with self.assertRaisesRegex(AutomationError, "reasoning standard is unavailable"):
+                await advisor.run_advisor(config(root), "hello", client=client)
+        client.responses.create.assert_not_awaited()
 
     async def test_private_facts_reach_openai_and_only_openai_answer_returns(self):
         answer, calls, retrieve, persist = await self.execute([plan(), result()])
@@ -77,6 +119,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(json.loads(calls.call_args.kwargs["input"])["private_evidence"]), 2)
         self.assertEqual([tool["type"] for tool in calls.call_args.kwargs["tools"]], ["web_search_preview"])
         self.assertEqual(answer.text, "OpenAI recommendation")
+        reasoning = advisor.advisor_reasoning(config())
+        for call in calls.call_args_list[1:]:
+            self.assertIn(reasoning, call.kwargs["instructions"])
 
     async def test_third_retrieval_is_rejected(self):
         with self.assertRaisesRegex(AutomationError, "retrieval limit"):
@@ -119,6 +164,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls.await_count, 3)
         self.assertEqual(retrieve.call_count, 1)
         self.assertEqual(len(calls.call_args.kwargs["tools"]), 1)
+        reasoning = advisor.advisor_reasoning(config())
+        for call in calls.call_args_list[1:]:
+            self.assertIn(reasoning, call.kwargs["instructions"])
 
     async def test_expired_deadline_starts_no_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))

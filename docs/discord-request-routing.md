@@ -19,8 +19,11 @@ normalized request + recent context + retained private evidence
 
 Public-only questions never start Codex. There is no keyword-based semantic
 routing in this path. The planner uses the concise portion of
-[the capability contract](advisor/DATA_CAPABILITIES.md); its retrieval reference
-is available to Codex but is not always loaded into the planner.
+[the capability contract](advisor/DATA_CAPABILITIES.md) to decide whether
+private facts are needed; its retrieval reference is available to Codex but is
+not always loaded into the planner. The final OpenAI response receives the
+durable [reasoning standard](advisor/ADVISOR_REASONING.md), the capability
+boundary, and compact Discord/runtime instructions.
 
 OpenAI retains the configured `OPENAI_WEB_MODEL` and reasoning effort; Codex
 retains the configured application model and reasoning effort. The retrieval
