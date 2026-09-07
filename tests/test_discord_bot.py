@@ -55,6 +55,29 @@ class DiscordBotTests(unittest.TestCase):
         self.assertIn("now=discord.utils.utcnow()", rotation_source)
         self.assertNotIn("load_persisted_fixture_schedule, config", rotation_source)
 
+    def test_analytical_commands_use_the_shared_post_retrieval_finalizer(self):
+        source = Path(discord_bot.__file__).read_text(encoding="utf-8")
+        for callback, capability in (
+            ("rotation_command", "get_rotation_context"),
+            ("trade_propose_command", "get_trade_context"),
+            ("injury_opportunities_command", "get_injury_opportunity_context"),
+            ("gameweek_prepare_command", "get_gameweek_prepare_context"),
+            ("gameweek_recap_command", "get_gameweek_recap_context"),
+            ("watch_outlook_command", "get_watchlist_stats"),
+            ("watch_recommend_command", "load_current_watchlist_recommendation_context"),
+        ):
+            with self.subTest(callback=callback):
+                block = source.split(f"async def {callback}", 1)[1][:3_500]
+                self.assertIn(capability, block)
+                self.assertIn("finalize_advisor_from_evidence", block)
+                self.assertNotIn("run_advisor(", block)
+
+    def test_watch_outlook_uses_a_disclosed_twelve_player_bound(self):
+        source = Path(discord_bot.__file__).read_text(encoding="utf-8")
+        block = source.split("async def watch_outlook_command", 1)[1][:3_500]
+        self.assertIn("watched[:12]", block)
+        self.assertIn("watchlist_omitted_count", block)
+
     def test_private_watch_stats_command_is_registered(self):
         self.assert_private_group(
             "watch", ["add", "remove", "list", "stats", "outlook", "recommend"]

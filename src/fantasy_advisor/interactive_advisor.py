@@ -609,6 +609,128 @@ about 12 position-filtered candidates even when the Owner asks to see only a few
 CURRENT_DATA_REFRESH_FAILURE = "I couldn’t refresh the current Fantasy data right now. Please try again."
 
 
+def current_evidence_envelope(context: Any, source: str) -> dict[str, Any]:
+    """Normalize one command-owned current report for the shared finalizer."""
+
+    retrieved_at = getattr(context, "retrieved_at", None) or getattr(
+        getattr(context, "stats_report", None), "retrieved_at", None,
+    )
+    return {
+        "status": "complete",
+        "data": getattr(context, "payload", context),
+        "limitations": [],
+        "sources": [{"source": source, "retrieved_at": retrieved_at, "stale": False}],
+    }
+
+
+async def finalize_advisor_from_evidence(
+    config: AppConfig,
+    *,
+    command: str,
+    question: str,
+    evidence: dict[str, Any],
+    command_instructions: str,
+    mandatory_web: bool,
+    partial_text: str,
+    deadline: RequestDeadline | None = None,
+    client: Any = None,
+    request_id: str | None = None,
+) -> WebResult:
+    """Synthesize an explicit slash command after its deterministic retrieval.
+
+    Slash commands already express their Fantasy intent, so this deliberately
+    starts after retrieval: no grounding call, no private-tool catalog, and no
+    Codex fallback.  The same final Advisor contract used by ``run_advisor``
+    governs the web-qualified answer.
+    """
+
+    deadline = deadline or RequestDeadline.start()
+    started = time.monotonic()
+    request_id = request_id or uuid.uuid4().hex
+    trace: dict[str, Any] = {
+        "request_id": request_id,
+        "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+        "surface": "discord_slash",
+        "command": command,
+        "deterministic_capabilities": [evidence.get("capability")],
+        "capability_arguments": [evidence.get("arguments", {})],
+        "capability_statuses": [evidence.get("status")],
+        "source_timestamps": [source.get("retrieved_at") for source in evidence.get("sources", [])],
+        "cache_hits": evidence.get("cache_hits", []),
+        "web_search_used": False,
+        "codex_used": False,
+        "result_status": "failed",
+    }
+
+    def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
+        trace["result_status"] = status
+        trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
+        LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))
+        return WebResult(text=text, response_id=response_id, elapsed_seconds=trace["elapsed_seconds"], trace=trace)
+
+    if evidence.get("status") != "complete":
+        return finish(partial_text, "partial")
+    if not config.openai_api_key:
+        return finish(partial_text, "partial")
+
+    if client is None:
+        from openai import AsyncOpenAI
+        async with AsyncOpenAI(api_key=config.openai_api_key, max_retries=0) as owned_client:
+            return await finalize_advisor_from_evidence(
+                config, command=command, question=question, evidence=evidence,
+                command_instructions=command_instructions, mandatory_web=mandatory_web,
+                partial_text=partial_text, deadline=deadline, client=owned_client,
+                request_id=request_id,
+            )
+
+    budget = min(75, deadline.remaining(FINAL_RESERVE_SECONDS))
+    if budget <= 0:
+        return finish(partial_text, "partial")
+    payload = {
+        "slash_command": command,
+        "user_request": question,
+        "historical_discord_continuity_non_authoritative": "",
+        "current_time": datetime.now(timezone.utc).isoformat(),
+        "current_request_evidence": [{
+            key: value for key, value in evidence.items()
+            if key in {"status", "data", "limitations", "sources"}
+        }],
+    }
+    finalization = (
+        "This is an explicit slash command. The supplied current-request evidence is authoritative; "
+        "do not use historical conversation, invent a package/player, or imply a transaction occurred. "
+        + command_instructions
+    )
+    try:
+        response = await asyncio.wait_for(
+            client.responses.create(
+                model=config.openai_web_model,
+                reasoning={"effort": config.openai_web_reasoning_effort},
+                instructions=final_advisor_instructions(
+                    advisor_reasoning(config), capability_contract(config), finalization,
+                ),
+                input=json.dumps(payload, ensure_ascii=False),
+                tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
+                tool_choice="required" if mandatory_web else "auto",
+                store=False,
+                timeout=budget,
+            ),
+            timeout=budget,
+        )
+    except Exception:
+        LOGGER.warning("Advisor slash finalization failed command=%s", command, exc_info=True)
+        return finish(partial_text, "partial")
+    trace["web_search_used"] = any(
+        getattr(item, "type", None) == "web_search_call" for item in getattr(response, "output", [])
+    )
+    if mandatory_web and not trace["web_search_used"]:
+        return finish(partial_text, "partial")
+    text = discord_answer_text(response)
+    if not text:
+        return finish(partial_text, "partial")
+    return finish(text, "complete", getattr(response, "id", None))
+
+
 def _function_calls(response: Any) -> list[Any]:
     return [item for item in getattr(response, "output", []) if getattr(item, "type", None) == "function_call"]
 
