@@ -6,24 +6,19 @@ use one pipeline:
 ```text
 normalized request + recent context + retained private evidence
                          |
-                  OpenAI private-data plan
+          OpenAI reasoning + public web search
                          |
-          optional read-only Codex facts retrieval
+        up to four named deterministic Fantasy tools
                          |
-              OpenAI reasoning + public web search
-                         |
-       optional second retrieval of one essential missing fact
+       narrow read-only fallback only when no tool exists
                          |
                 OpenAI final Fantasy Advisor answer
 ```
 
 Public-only questions never start Codex. There is no keyword-based semantic
-routing in this path. The planner uses the concise portion of
-[the capability contract](advisor/DATA_CAPABILITIES.md) to decide whether
-private facts are needed; its retrieval reference is available to Codex but is
-not always loaded into the planner. The final OpenAI response receives the
-durable [reasoning standard](advisor/ADVISOR_REASONING.md), the capability
-boundary, and compact Discord/runtime instructions.
+routing in this path. OpenAI selects named product capabilities from the
+[capability contract](advisor/DATA_CAPABILITIES.md), then produces the final
+response using the durable [reasoning standard](advisor/ADVISOR_REASONING.md).
 
 OpenAI retains the configured `OPENAI_WEB_MODEL` and reasoning effort; Codex
 retains the configured application model and reasoning effort. The retrieval
@@ -46,10 +41,10 @@ The first retrieval may use up to 60 seconds, capped by the remaining shared
 budget after reserving final-answer and cleanup time; a second uses at most 20.
 One 120-second deadline starts when processing begins after queue acquisition
 and acknowledgment. Download and attachment normalization count toward it.
-Planner calls are capped at 15 seconds, first retrieval at 45 seconds, and a
-second retrieval at 20 seconds. Retrieval reserves 30 seconds for a final
-answer plus process-cleanup allowance. Provider retries are disabled for the new
-path. A slow intermediate OpenAI pass falls back to the final-answer reserve.
+Named deterministic calls share the request deadline and reserve 30 seconds for
+the final answer plus process-cleanup allowance. Provider retries are disabled
+for the interactive path. A slow intermediate OpenAI pass falls back to the
+final-answer reserve.
 The gateway cancels overdue API work; the runner terminates overdue Codex trees.
 The target is under 90 seconds; this is measured, not a guaranteed provider SLA.
 

@@ -32,9 +32,18 @@ def test_team_and_watchlist_are_product_level_results():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory); app = config(root)
         add_watchlist_player(root / "data/automation/watchlist.sqlite3", {"player_id": "x", "name": "Player", "club": "IPS", "positions": ["M"]})
-        client = FakeSleeper({f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [{"user_id": "a", "display_name": "Owner", "metadata": {"team_name": "Los Blancos"}}], f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "a", "roster_id": 1, "players": ["x"], "starters": ["x"]}]})
+        refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {"x": {"player_id": "x", "full_name": "Player", "team_abbr": "IPS", "fantasy_positions": ["M", "F"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}})
+        client = FakeSleeper({
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [{"user_id": "a", "display_name": "Owner", "metadata": {"team_name": "Los Blancos"}}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "a", "roster_id": 1, "players": ["x"], "starters": ["x"]}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"scoring_settings": {"pos_m_g": 5, "pos_f_g": 4}},
+            f"{API_BASE}/state/clubsoccer:epl": {"season": "2026", "display_week": 7},
+            f"https://api.sleeper.com/stats/clubsoccer:epl/2026?season_type=regular": [{"player_id": "x", "stats": {"gp": 2, "gs": 1, "min": 120, "pos_m_g": 1, "pos_f_g": 1}}],
+        })
         capabilities = DataCapabilities(app, timeout=10, client=client)
-        assert capabilities.get_team_context("Los Blancos")["data"]["team"]["player_ids"] == ["x"]
+        profile = capabilities.get_team_context("Los Blancos")["data"]["team"]["players"][0]
+        assert profile["name"] == "Player" and profile["starter"] is True
+        assert set(profile["kick_and_run"]["points_by_position"]) == {"M", "F"}
         assert capabilities.get_watchlist()["data"]["watchlist"][0]["name"] == "Player"
         assert capabilities.get_watchlist()["data"]["watchlist"][0]["name"] == "Player"
 
@@ -42,11 +51,31 @@ def test_team_and_watchlist_are_product_level_results():
 def test_transaction_results_are_bounded_and_invalid_round_is_explicit():
     with tempfile.TemporaryDirectory() as directory:
         url = f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/transactions/3"
-        client = FakeSleeper({url: [{"transaction_id": "t", "type": "waiver", "status": "complete", "adds": {"x": 1}, "secret": "not exposed"}]})
-        capabilities = DataCapabilities(config(Path(directory)), timeout=10, client=client)
+        root = Path(directory)
+        refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {"x": {"player_id": "x", "full_name": "Player X", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}})
+        client = FakeSleeper({
+            url: [{"transaction_id": "t", "type": "waiver", "status": "complete", "adds": {"x": 1}, "secret": "not exposed"}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [{"user_id": "a", "metadata": {"team_name": "Los Blancos"}}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "a", "roster_id": 1, "players": []}],
+        })
+        capabilities = DataCapabilities(config(root), timeout=10, client=client)
         packet = capabilities.get_league_activity(3)
-        assert packet["data"]["transactions"] == [{"transaction_id": "t", "type": "waiver", "status": "complete", "created": None, "leg": None, "roster_ids": None, "adds": {"x": 1}, "drops": None, "draft_picks": None}]
+        assert packet["data"]["transactions"][0]["adds"] == [{"player": {"name": "Player X", "club": "IPS", "positions": ["M"]}, "team": "Los Blancos"}]
         assert capabilities.get_league_activity(0)["limitations"][0]["kind"] == "unsupported"
+
+
+def test_omitted_activity_round_uses_the_shared_completed_gameweek_rule():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {"x": {"player_id": "x", "full_name": "Player X", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}})
+        client = FakeSleeper({
+            f"{API_BASE}/state/clubsoccer:epl": {"season": "2026", "display_week": 7},
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/transactions/6": [],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [],
+        })
+        packet = DataCapabilities(config(root), timeout=10, client=client).get_league_activity()
+        assert packet["data"] == {"round": 6, "transactions": []}
 
 
 def test_player_pool_never_calls_an_unowned_player_available_without_rosters():
@@ -66,17 +95,19 @@ def test_draft_context_returns_only_a_small_pick_neighborhood():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory); app = config(root)
         refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {"x": {"player_id": "x", "full_name": "Player X", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}})
-        client = FakeSleeper({f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"draft_id": "draft"}, f"{API_BASE}/draft/draft/picks": [{"pick_no": 1, "player_id": "a"}, {"pick_no": 2, "player_id": "x"}, {"pick_no": 3, "player_id": "b"}]})
+        client = FakeSleeper({f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"draft_id": "draft"}, f"{API_BASE}/draft/draft/picks": [{"pick_no": 1, "player_id": "a"}, {"pick_no": 2, "player_id": "x", "roster_id": 1}, {"pick_no": 3, "player_id": "b"}], f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [{"user_id": "a", "metadata": {"team_name": "Los Blancos"}}], f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "a", "roster_id": 1, "players": []}]})
         packet = DataCapabilities(app, timeout=10, client=client).get_draft_context("Player X", radius=1)
-        assert [pick["player_id"] for pick in packet["data"]["picks"]] == ["a", "x", "b"]
+        assert [pick["player"]["name"] for pick in packet["data"]["picks"]] == ["Unknown player", "Player X", "Unknown player"]
 
 
 def test_trends_are_bounded_and_never_presented_as_availability():
     with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {"x": {"player_id": "x", "full_name": "Player X", "team_abbr": "IPS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}})
         url = f"{API_BASE}/players/clubsoccer:epl/trending/add?lookback_hours=24&limit=2"
         client = FakeSleeper({url: [{"player_id": "x", "count": 3}]})
-        packet = DataCapabilities(config(Path(directory)), timeout=10, client=client).get_player_trends(kind="add", limit=2)
-        assert packet["data"] == {"kind": "add", "lookback_hours": 24, "trends": [{"player_id": "x", "count": 3}]}
+        packet = DataCapabilities(config(root), timeout=10, client=client).get_player_trends(kind="add", limit=2)
+        assert packet["data"] == {"kind": "add", "lookback_hours": 24, "trends": [{"name": "Player X", "club": "IPS", "positions": ["M"], "count": 3}]}
 
 
 def test_whole_operation_deadline_stops_after_the_first_slow_provider_read():

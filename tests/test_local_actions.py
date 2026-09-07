@@ -6,6 +6,7 @@ from fantasy_advisor.automation import AppConfig, player_catalog_file
 from fantasy_advisor.local_actions import LocalActions
 from fantasy_advisor.player_catalog import refresh_player_catalog
 from fantasy_advisor.deadline_guardian import record_initial_alerts
+from unittest.mock import patch
 
 
 def config(root):
@@ -31,3 +32,15 @@ def test_guardian_action_changes_only_active_events():
         actions = LocalActions(app, requester_id="owner")
         assert actions.acknowledge_guardian_alerts(now=now)["status"] == "success"
         assert actions.acknowledge_guardian_alerts(now=now)["status"] == "no_op"
+
+
+def test_operational_watchlist_failure_is_not_mislabeled_as_not_found():
+    with tempfile.TemporaryDirectory() as directory:
+        app = config(Path(directory))
+        actions = LocalActions(app, requester_id="owner")
+        with patch("fantasy_advisor.local_actions.load_local_player_catalog", side_effect=OSError("disk unavailable")):
+            result = actions.add_to_watchlist("Enciso")
+        assert result == {
+            "status": "failure", "data": {},
+            "detail": "I couldn’t update the watchlist right now. Please try again.",
+        }

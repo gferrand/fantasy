@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+import logging
 
 from .automation import AppConfig, load_local_player_catalog, watchlist_file
 from .deadline_guardian import acknowledge_active_events
 from .watchlist import (
     WatchlistError,
+    WatchlistResolutionError,
     add_watchlist_player,
     remove_watchlist_player,
     resolve_saved_watchlist_player,
     resolve_watchlist_player,
     list_watchlist,
 )
+
+LOGGER = logging.getLogger(__name__)
 
 
 class LocalActions:
@@ -36,8 +40,11 @@ class LocalActions:
         try:
             player = resolve_watchlist_player(player_query, load_local_player_catalog(self.config))
             saved, added = add_watchlist_player(watchlist_file(self.config), player)
-        except Exception as exc:
+        except WatchlistResolutionError as exc:
             return {"status": "not_found", "data": {}, "detail": str(exc)}
+        except Exception:
+            LOGGER.exception("Watchlist add failed")
+            return {"status": "failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
         return {"status": "success" if added else "no_op", "data": {"player_id": saved.player_id, "name": saved.name, "club": saved.club, "positions": list(saved.positions)}, "detail": "Added to watchlist." if added else "Already on watchlist."}
 
     def remove_from_watchlist(self, player_query: str) -> dict[str, Any]:
@@ -46,8 +53,11 @@ class LocalActions:
         try:
             saved = resolve_saved_watchlist_player(player_query, list_watchlist(watchlist_file(self.config)))
             removed = remove_watchlist_player(watchlist_file(self.config), saved.player_id)
-        except WatchlistError as exc:
+        except WatchlistResolutionError as exc:
             return {"status": "not_found", "data": {}, "detail": str(exc)}
+        except Exception:
+            LOGGER.exception("Watchlist removal failed")
+            return {"status": "failure", "data": {}, "detail": "I couldn’t update the watchlist right now. Please try again."}
         if removed is None:
             return {"status": "not_found", "data": {}, "detail": "That player is no longer on the watchlist."}
         return {"status": "success", "data": {"player_id": removed.player_id, "name": removed.name}, "detail": "Removed from watchlist."}
@@ -55,5 +65,9 @@ class LocalActions:
     def acknowledge_guardian_alerts(self, *, now: datetime) -> dict[str, Any]:
         if not self._authorized():
             return self._denied()
-        events = acknowledge_active_events(self.config, now=now)
+        try:
+            events = acknowledge_active_events(self.config, now=now)
+        except Exception:
+            LOGGER.exception("Guardian acknowledgement failed")
+            return {"status": "failure", "data": {}, "detail": "I couldn’t update Deadline Guardian right now. Please try again."}
         return {"status": "success" if events else "no_op", "data": {"acknowledged_event_ids": [event.event_id for event in events]}, "detail": "Guardian alerts acknowledged." if events else "No active Guardian alerts needed acknowledgement."}

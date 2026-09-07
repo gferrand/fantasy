@@ -10,7 +10,7 @@ All 18 currently registered application commands are in `src/fantasy_advisor/dis
 
 | Command | Current path, sources, deterministic work | Model / output | Mutation | Advisor reuse |
 | --- | --- | --- | --- | --- |
-| `/ask` | `run_interaction` → `run_advisor`; context SQLite plus semantic private-data planning | OpenAI final response with web search; planner can call deterministic player evaluation or Codex exploration | Conversation event log | Yes: normal Advisor entry. |
+| `/ask` | `run_interaction` → `run_advisor`; context SQLite plus semantic named-tool selection | OpenAI final response with web search; up to four deterministic product capabilities and narrow unsupported-only fallback | Conversation event log | Yes: normal Advisor entry. |
 | `/analyze-waivers` | fixed waiver request → LLM router → Codex task or web briefing | Codex/web analysis using bounded feed context | Conversation event log | Yes; extract candidate construction. |
 | `/rotation` | `load_fixture_schedule` + `load_rotation_context` | web-backed explanation of deterministic protected core/candidates | fixture cache may refresh | Yes. |
 | `/tasks` | `load_registry` from `automation/tasks.toml` | rendered task menu | remembered DM channel file | Yes: task metadata only. Preserve. |
@@ -29,7 +29,7 @@ All 18 currently registered application commands are in `src/fantasy_advisor/dis
 | `/gameweek recap` | `load_gameweek_recap_context` | web-backed recap report | none | Yes. |
 | `/player_catalog update` | `update_player_catalog` → Sleeper player catalog | refresh card | player catalog SQLite | Explicit maintenance action. |
 
-Plain owner DMs take the same Advisor route as `/ask`; explicit watchlist and Guardian intents are intercepted first, and attachments are normalized before the Advisor. `!tasks` is an additional plain-DM registry read. `/task` and `/tasks` are preserved.
+Plain owner DMs take the same Advisor route as `/ask`; clear watchlist and Guardian actions are model-selected authenticated local tools, and attachments are normalized before the Advisor. `!tasks` is an additional plain-DM registry read. `/task` and `/tasks` are preserved.
 
 ## Authoritative local/private state
 
@@ -69,7 +69,7 @@ Actual application storage is local files plus **SQLite**. No Supabase client, c
 ```text
 Discord /ask or normal DM
   → run_advisor (OpenAI final answer + direct web search)
-  → semantic private-data planner
+  → semantic named deterministic capability selection
       → deterministic get_player_evaluation_context, or
       → narrow read-only Codex private exploration
 
@@ -80,7 +80,7 @@ Specialist commands
 
 - OpenAI is already the final voice for normal `run_advisor`; its Responses API has web search. Attachments use bounded local normalization/transcription.
 - Codex is still a routine fallback for private exploration and can be selected by `/analyze-waivers`; closing that gap is the future capability-catalog objective.
-- The planner/router is model-based, not a keyword router. Watchlist and Guardian parsers are deterministic safety/authorization controls, not evidence routing.
+- Capability selection is model-based, not a keyword router. Local actions remain deterministic at the authorization and state-transition boundary.
 - Public web briefing functions exist for watchlist, injury, gameweek, rotation, trade, lineup alerts, and scheduled work. ESPN is a separate read-only fixture source.
 
 ## Existing Sleeper call sites and duplication

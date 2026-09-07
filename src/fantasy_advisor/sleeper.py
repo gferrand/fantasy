@@ -60,6 +60,15 @@ class SleeperClient:
     backoff_seconds: float = 0.5
     opener: Callable[..., Any] = urlopen
     sleep: Callable[[float], None] = time.sleep
+    deadline: float | None = None
+
+    def _request_timeout(self) -> float:
+        if self.deadline is None:
+            return self.timeout
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise SleeperDataError("Sleeper request deadline expired")
+        return min(self.timeout, remaining)
 
     def get_json(self, url: str) -> Any:
         """Fetch and decode a JSON object or array with bounded retries."""
@@ -68,7 +77,7 @@ class SleeperClient:
         for attempt in range(self.retries):
             request = Request(url, headers={"User-Agent": USER_AGENT})
             try:
-                with self.opener(request, timeout=self.timeout) as response:
+                with self.opener(request, timeout=self._request_timeout()) as response:
                     raw = response.read()
                 if not raw:
                     raise SleeperDataError(f"Empty response from {url}")
@@ -84,7 +93,11 @@ class SleeperClient:
             except (URLError, TimeoutError, SleeperDataError) as exc:
                 last_error = exc
             if attempt + 1 < self.retries:
-                self.sleep(self.backoff_seconds * (2**attempt))
+                delay = self.backoff_seconds * (2**attempt)
+                if self.deadline is not None:
+                    delay = min(delay, max(0.0, self.deadline - time.monotonic()))
+                if delay > 0:
+                    self.sleep(delay)
         raise SleeperDataError(f"Sleeper request failed: {url}") from last_error
 
 

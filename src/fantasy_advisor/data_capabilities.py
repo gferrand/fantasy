@@ -9,9 +9,18 @@ from typing import Any, Mapping
 
 from .automation import AppConfig, EXPECTED_LEAGUE_ID, load_local_player_catalog, load_registry
 from .deadline_guardian import active_events
-from .lineup_alerts import load_persisted_fixture_schedule
+from .gameweek import latest_completed_gameweek
 from .player_evaluation import get_player_evaluation_context
-from .sleeper import API_BASE, SleeperClient, SleeperDataError, transactions_url
+from .sleeper import (
+    API_BASE,
+    STATS_BASE,
+    SleeperClient,
+    SleeperDataError,
+    custom_points_by_position,
+    pickup_candidates,
+    roster_swap_recommendations,
+    transactions_url,
+)
 from .watchlist import WatchlistError, list_watchlist
 
 
@@ -41,6 +50,18 @@ class DataCapabilities:
     def _remaining(self) -> float:
         return self.deadline - time.monotonic()
 
+    def bounded_client(self) -> SleeperClient:
+        """Return the shared client clamped to this request's remaining budget."""
+
+        if isinstance(self.client, SleeperClient):
+            return replace(
+                self.client,
+                timeout=min(8.0, max(0.001, self._remaining())),
+                retries=1,
+                deadline=self.deadline,
+            )
+        return self.client
+
     def _get(self, key: str, url: str, expected: type) -> object | None:
         if key in self.cache:
             return self.cache[key]
@@ -48,8 +69,7 @@ class DataCapabilities:
             self.limitations.append(_limitation("packet_deadline", "Current league data could not be retrieved within this answer's time limit."))
             return None
         try:
-            requester = replace(self.client, timeout=min(8.0, self._remaining()), retries=1) if isinstance(self.client, SleeperClient) else self.client
-            value = requester.get_json(url)
+            value = self.bounded_client().get_json(url)
         except SleeperDataError:
             self.limitations.append(_limitation(key, "Current league data could not be accessed."))
             return None
@@ -62,6 +82,76 @@ class DataCapabilities:
 
     def _result(self, data: dict[str, Any]) -> dict[str, Any]:
         return {"status": "partial" if self.limitations else "complete", "data": data, "limitations": self.limitations.copy(), "sources": self.sources.copy()}
+
+    def _catalog(self) -> list[dict[str, Any]]:
+        cached = self.cache.get("player_catalog")
+        if isinstance(cached, list):
+            return cached
+        catalog = load_local_player_catalog(self.config)
+        self.cache["player_catalog"] = catalog
+        self.sources.append(_local_source("Fantasy player catalog"))
+        return catalog
+
+    @staticmethod
+    def _player_identity(player_id: str, catalog: list[dict[str, Any]]) -> dict[str, Any]:
+        player = next((row for row in catalog if str(row.get("player_id") or "") == player_id), {})
+        return {
+            "name": player.get("name") or f"Unknown player",
+            "club": player.get("club") or None,
+            "positions": list(player.get("positions") or []),
+        }
+
+    def _team_names(self) -> dict[str, str]:
+        cached = self.cache.get("team_names")
+        if isinstance(cached, dict):
+            return cached
+        users = self._get("league_users", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users", list)
+        rosters = self._get("league_rosters", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters", list)
+        labels = {
+            str(user.get("user_id") or ""): str(
+                (user.get("metadata") or {}).get("team_name") or user.get("display_name") or "Unknown team"
+            )
+            for user in users or [] if isinstance(user, Mapping)
+        }
+        names = {
+            str(roster.get("roster_id") or ""): labels.get(str(roster.get("owner_id") or ""), "Unknown team")
+            for roster in rosters or [] if isinstance(roster, Mapping)
+        }
+        self.cache["team_names"] = names
+        return names
+
+    @staticmethod
+    def _number(stats: Mapping[str, Any], key: str) -> float | None:
+        try:
+            return float(stats[key])
+        except (KeyError, TypeError, ValueError):
+            return None
+
+    def _team_player_profile(
+        self,
+        player_id: str,
+        catalog: list[dict[str, Any]],
+        stats: object,
+        scoring: Mapping[str, Any],
+        starter: bool,
+    ) -> dict[str, Any]:
+        identity = self._player_identity(player_id, catalog)
+        values = stats if isinstance(stats, Mapping) else {}
+        points = custom_points_by_position(values, scoring, identity["positions"])
+        games = self._number(values, "gp")
+        return {
+            **identity,
+            "starter": starter,
+            "kick_and_run": {
+                "points_by_position": points,
+                "points_per_game_by_position": {
+                    position: round(value / games, 3)
+                    for position, value in points.items() if games and games > 0
+                },
+            },
+            "starts": self._number(values, "gs"),
+            "minutes": self._number(values, "min"),
+        }
 
     def get_league_context(self) -> dict[str, Any]:
         league = self._get("league_settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", Mapping)
@@ -91,7 +181,31 @@ class DataCapabilities:
         if roster is None:
             self.limitations.append({"kind": "not_found", "field": "team", "detail": "The requested league team could not be resolved."})
             return self._result({})
-        return self._result({"team": {"name": label, "owner_id": owner_id, "roster_id": roster.get("roster_id"), "player_ids": [str(value) for value in (roster.get("players") or [])], "starters": [str(value) for value in (roster.get("starters") or [])]}})
+        league = self._get("league_settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", Mapping)
+        state = self._get("epl_state", f"{API_BASE}/state/clubsoccer:epl", Mapping)
+        season = str(state.get("season") or "") if isinstance(state, Mapping) else ""
+        stats_rows = self._get(
+            "season_stats",
+            f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular",
+            list,
+        ) if season else None
+        try:
+            catalog = self._catalog()
+        except Exception:
+            self.limitations.append(_limitation("player_catalog", "Player identity data could not be accessed."))
+            return self._result({"team": {"name": label, "players": []}})
+        scoring = league.get("scoring_settings") if isinstance(league, Mapping) and isinstance(league.get("scoring_settings"), Mapping) else {}
+        stats_by_id = {
+            str(row.get("player_id") or ""): row.get("stats")
+            for row in stats_rows or []
+            if isinstance(row, Mapping) and isinstance(row.get("stats"), Mapping)
+        }
+        starters = {str(value) for value in (roster.get("starters") or []) if str(value) != "0"}
+        players = [
+            self._team_player_profile(str(player_id), catalog, stats_by_id.get(str(player_id), {}), scoring, str(player_id) in starters)
+            for player_id in (roster.get("players") or [])
+        ]
+        return self._result({"team": {"name": label, "players": players}})
 
     def get_watchlist(self) -> dict[str, Any]:
         if "watchlist" in self.cache:
@@ -106,21 +220,46 @@ class DataCapabilities:
         self.sources.append(_local_source("Fantasy watchlist"))
         return self._result({"watchlist": data})
 
-    def get_league_activity(self, round_number: int) -> dict[str, Any]:
+    def get_league_activity(self, round_number: int | None = None) -> dict[str, Any]:
+        if round_number is None:
+            state = self._get("epl_state", f"{API_BASE}/state/clubsoccer:epl", Mapping)
+            if not isinstance(state, Mapping):
+                return self._result({})
+            try:
+                round_number = latest_completed_gameweek(state)
+            except SleeperDataError:
+                self.limitations.append(_limitation("round", "The latest completed league round could not be resolved."))
+                return self._result({})
         if round_number < 1:
             return {"status": "partial", "data": {}, "limitations": [{"kind": "unsupported", "field": "round", "detail": "Transaction rounds start at 1."}], "sources": []}
         rows = self._get(f"transactions_{round_number}", transactions_url(EXPECTED_LEAGUE_ID, round_number), list)
+        team_names = self._team_names()
+        try:
+            catalog = self._catalog()
+        except Exception:
+            self.limitations.append(_limitation("player_catalog", "Player identity data could not be accessed."))
+            return self._result({"round": round_number, "transactions": []})
         activities = []
         for row in rows if isinstance(rows, list) else []:
             if not isinstance(row, Mapping):
                 continue
-            activities.append({key: row.get(key) for key in ("transaction_id", "type", "status", "created", "leg", "roster_ids", "adds", "drops", "draft_picks")})
+            def moves(key: str) -> list[dict[str, Any]]:
+                raw = row.get(key)
+                return [
+                    {"player": self._player_identity(str(player_id), catalog), "team": team_names.get(str(roster_id), "Unknown team")}
+                    for player_id, roster_id in raw.items()
+                ] if isinstance(raw, Mapping) else []
+            activities.append({
+                "type": row.get("type"), "status": row.get("status"), "created": row.get("created"),
+                "adds": moves("adds"), "drops": moves("drops"),
+                "teams": [team_names.get(str(value), "Unknown team") for value in (row.get("roster_ids") or [])],
+            })
         return self._result({"round": round_number, "transactions": activities} if rows is not None else {})
 
     def get_draft_context(self, player_name: str, *, radius: int = 2) -> dict[str, Any]:
         """Return a named player's observed draft neighborhood when available."""
         try:
-            catalog = load_local_player_catalog(self.config)
+            catalog = self._catalog()
         except Exception:
             return {"status": "partial", "data": {}, "limitations": [_limitation("player_catalog", "Player identity data could not be accessed.")], "sources": []}
         matches = [row for row in catalog if str(row.get("name") or "").casefold() == player_name.casefold().strip()]
@@ -138,13 +277,60 @@ class DataCapabilities:
             self.limitations.append({"kind": "not_found", "field": "draft_pick", "detail": "The player was not found in the current league draft."})
             return self._result({})
         selected = [pick for pick in (picks or [])[max(0, index - max(0, radius)):index + max(0, radius) + 1] if isinstance(pick, Mapping)]
-        return self._result({"player": {"player_id": target_id, "name": matches[0]["name"]}, "picks": [{key: pick.get(key) for key in ("pick_no", "round", "draft_slot", "player_id", "picked_by", "roster_id")} for pick in selected]})
+        team_names = self._team_names()
+        return self._result({"player": {"name": matches[0]["name"]}, "picks": [{
+            "pick_no": pick.get("pick_no"), "round": pick.get("round"), "draft_slot": pick.get("draft_slot"),
+            "player": self._player_identity(str(pick.get("player_id") or ""), catalog),
+            "team": team_names.get(str(pick.get("roster_id") or pick.get("picked_by") or ""), "Unknown team"),
+        } for pick in selected]})
 
     def get_player_trends(self, *, kind: str, hours: int = 24, limit: int = 12) -> dict[str, Any]:
         if kind not in {"add", "drop"} or not 1 <= hours <= 168 or not 1 <= limit <= 25:
             return {"status": "partial", "data": {}, "limitations": [{"kind": "unsupported", "field": "trend_request", "detail": "Trend type, lookback, or limit is outside the supported bounds."}], "sources": []}
         rows = self._get(f"trending_{kind}_{hours}_{limit}", f"{API_BASE}/players/clubsoccer:epl/trending/{kind}?lookback_hours={hours}&limit={limit}", list)
-        return self._result({"kind": kind, "lookback_hours": hours, "trends": [{"player_id": str(row.get("player_id") or ""), "count": row.get("count")} for row in rows if isinstance(row, Mapping)]} if rows is not None else {})
+        catalog = self._catalog()
+        return self._result({"kind": kind, "lookback_hours": hours, "trends": [{**self._player_identity(str(row.get("player_id") or ""), catalog), "count": row.get("count")} for row in rows if isinstance(row, Mapping)]} if rows is not None else {})
+
+    def get_waiver_context(self, *, manager_id: str) -> dict[str, Any]:
+        """Return the existing deterministic waiver engine's compact evidence."""
+
+        league = self._get("league_settings", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}", Mapping)
+        state = self._get("epl_state", f"{API_BASE}/state/clubsoccer:epl", Mapping)
+        rosters = self._get("league_rosters", f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters", list)
+        season = str(state.get("season") or "") if isinstance(state, Mapping) else ""
+        stats_rows = self._get(
+            "season_stats", f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular", list,
+        ) if season else None
+        if not all((isinstance(league, Mapping), isinstance(rosters, list), isinstance(stats_rows, list))):
+            return self._result({})
+        scoring = league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {}
+        try:
+            players = {
+                str(player.get("player_id") or ""): {
+                    "player_id": str(player.get("player_id") or ""),
+                    "full_name": player.get("name"),
+                    "team_abbr": player.get("club"),
+                    "fantasy_positions": player.get("positions") or [],
+                    "competitions": player.get("competitions") or [],
+                    "active": player.get("active"),
+                    "status": player.get("status"),
+                    "metadata": {},
+                }
+                for player in self._catalog()
+                if str(player.get("player_id") or "")
+            }
+        except Exception:
+            self.limitations.append(_limitation("player_catalog", "Player identity data could not be accessed."))
+            return self._result({})
+        candidates = pickup_candidates(players, rosters, stats_rows, scoring, limit=12)
+        swaps = roster_swap_recommendations(
+            candidates, players, rosters, stats_rows, scoring, manager_id=manager_id, limit=6,
+        )
+        return self._result({
+            "available_candidates": candidates,
+            "roster_swap_recommendations": swaps,
+            "availability_note": "Sleeper does not distinguish an immediate add from pending waivers.",
+        })
 
     def get_player_context(self, player_name: str) -> dict[str, Any]:
         """Use the existing compact named-player evidence contract unchanged."""
