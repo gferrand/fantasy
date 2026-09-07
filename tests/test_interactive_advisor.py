@@ -372,6 +372,11 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             client.responses.create.call_args_list[0].kwargs["tool_choice"],
             {"type": "function", "name": "get_waiver_context"},
         )
+        final_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertNotIn(
+            "get_waiver_context",
+            [tool.get("name") for tool in final_tools if tool["type"] == "function"],
+        )
 
     def test_only_current_waiver_decisions_force_live_waiver_context(self):
         self.assertTrue(advisor.requires_fresh_waiver_context(
