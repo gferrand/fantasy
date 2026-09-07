@@ -421,15 +421,25 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
             [tool.get("name") for tool in final_tools if tool["type"] == "function"],
         )
 
-    async def test_grounding_noop_is_exclusive_and_public_only_uses_no_private_data(self):
+    async def test_grounding_noop_requires_public_web_research_before_answering(self):
         no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Tel update.")])))
+        web = NS(type="web_search_call")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Tel update.", [web])])))
         answer = await advisor.run_advisor(config(), "What’s the latest on Mathys Tel’s role at Tottenham?", client=client)
         self.assertEqual(answer.text, "Tel update.")
         self.assertEqual(answer.trace["grounding"][0]["calls"][0]["name"], "no_private_fantasy_data_needed")
         self.assertEqual(answer.trace["tools"][0]["status"], "no_op")
+        self.assertTrue(answer.trace["web_search_used"])
         second_tools = client.responses.create.call_args_list[1].kwargs["tools"]
         self.assertEqual([tool["type"] for tool in second_tools], ["web_search_preview"])
+        self.assertEqual(client.responses.create.call_args_list[1].kwargs["tool_choice"], "required")
+
+    async def test_public_only_plain_text_without_web_research_fails_safely(self):
+        no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public club-role news only"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [no_op]), result("Unresearched Tel update.")])))
+        answer = await advisor.run_advisor(config(), "What’s the latest on Mathys Tel’s role at Tottenham?", client=client)
+        self.assertEqual(answer.text, advisor.CURRENT_DATA_REFRESH_FAILURE)
+        self.assertFalse(answer.trace["web_search_used"])
 
     async def test_invalid_grounding_retries_once_then_never_answers_from_history(self):
         no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"bad batch"}')

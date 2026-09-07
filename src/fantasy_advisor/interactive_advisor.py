@@ -818,6 +818,10 @@ async def run_advisor(
     while answer is None:
         remaining_calls = MAX_PRIVATE_TOOL_CALLS - tool_calls
         external_tools: list[dict[str, Any]] = [web_tool]
+        # A public-only grounding decision deliberately excludes private Fantasy
+        # data. It is still a current-information request, so the following
+        # turn must use the public web rather than answer from model knowledge.
+        must_research_public_only = grounded_no_op and not trace["web_search_used"]
         must_research_final_target = bool(
             target_research_capabilities.intersection(used_deterministic_names)
             and not trace["web_search_used"]
@@ -837,7 +841,12 @@ async def run_advisor(
             if not remaining_calls or private_context_sufficient or grounded_no_op or performed_local_action or not can_retrieve
             else "Use public web research when material, and request another named capability only if it is necessary. Current-request evidence outranks historical continuity."
         )
-        if must_research_final_target:
+        if must_research_public_only:
+            finalization = (
+                "Use public web research now before answering this public-only current-information request. "
+                "Do not produce a final answer until that research has run."
+            )
+        elif must_research_final_target:
             finalization = (
                 "Use public web research now to verify current injury, availability, and role for the acquisition or trade target you will recommend. "
                 "Do not give a final recommendation before that research; if it changes the target, research the replacement too."
@@ -855,20 +864,19 @@ async def run_advisor(
                 "phase": "reasoning", "tools": external_tools,
                 "parallel_tool_calls": True,
             }
-            if must_research_final_target:
-                # The selected acquisition/trade target cannot be finalized
-                # from Sleeper scoring alone. Limit this turn to public web
-                # research so the model verifies material role/availability.
+            if must_research_public_only or must_research_final_target:
+                # A public-only current request and a selected acquisition or
+                # trade target cannot be finalized from model knowledge or
+                # Sleeper scoring alone. Limit this turn to public web research.
                 reasoning_kwargs["tool_choice"] = "required"
             answer = await response(
                 **reasoning_kwargs,
             )
         except AutomationError:
-            # A target recommendation is unsafe without its required current
-            # public availability and role check.  Do not turn a failed web
-            # research pass into an unverified recommendation from Sleeper
-            # evidence alone.
-            if must_research_final_target:
+            # A public-only current answer or target recommendation is unsafe
+            # without required public research. Do not turn a failed web pass
+            # into an answer from stale model knowledge.
+            if must_research_public_only or must_research_final_target:
                 return finish_failure()
             if evidence:
                 answer = None
@@ -882,6 +890,8 @@ async def run_advisor(
             else:
                 return finish_failure()
         calls = _function_calls(answer)
+        if must_research_public_only and not trace["web_search_used"]:
+            return finish_failure()
         if not calls:
             break
         allowed_later = deterministic_names | {FOLLOWUP_TOOL["name"]}
