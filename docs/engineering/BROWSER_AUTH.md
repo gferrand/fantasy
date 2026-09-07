@@ -87,9 +87,12 @@ The authenticated Owner has standing, action-time authorization for Discord smok
 For Discord, use the general saved-login rules above plus this exact procedure:
 
 1. When Discord shows its normal login form, click or focus only **Email or Phone Number**. Do not type into it.
-2. Select the **first saved credential** shown by Chrome.
-3. Use Discord's normal login action only if the page does not advance automatically.
-4. Confirm success only from non-sensitive UI state, such as the authenticated Discord interface or the **Fantasy EPL Advisor** DM becoming visible.
+2. If Chrome exposes its saved-credential chooser from that field, select the **first saved credential** without reading any account names or values.
+3. If the chooser is not exposed in the page accessibility tree, do **not** treat that as a missing credential or a login blocker. Use Chrome's current-site **Manage your passwords** toolbar control to open the saved-password picker, then select its first entry by position without inspecting the entries.
+4. Allow Chrome to fill the form. Use Discord's normal login action only if the page does not advance automatically.
+5. Confirm success only from non-sensitive UI state, such as the authenticated Discord interface or the **Fantasy EPL Advisor** DM becoming visible.
+
+The toolbar picker is part of Chrome's supported saved-login flow. It is the required fallback when the normal Discord email field does not visibly show the chooser; it does not authorize reading, copying, or choosing among credential values.
 
 Never:
 
