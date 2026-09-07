@@ -74,12 +74,25 @@ def task_registry(repo_root: Path) -> tuple[Any, ...]:
     return load_registry(repo_root / "automation" / "tasks.toml", repo_root=repo_root).tasks
 
 
+def runtime_sha(repo_root: Path) -> str:
+    """Return the exact source revision copied into the runnable runtime."""
+
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        text=True, capture_output=True, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError("Could not determine the Fantasy runtime git SHA")
+    return result.stdout.strip()
+
+
 def agent_definitions(
     *,
     python: Path = PYTHON,
     repo_root: Path = ROOT,
     tasks: tuple[Any, ...] | None = None,
     python_gate: Path | None = None,
+    served_sha: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Return the explicit launchd definitions owned by this project."""
 
@@ -90,6 +103,7 @@ def agent_definitions(
         "FANTASY_PYTHON": str(python),
         "PYTHONUNBUFFERED": "1",
         "TZ": "America/New_York",
+        "FANTASY_RUNTIME_SHA": served_sha or runtime_sha(repo_root),
     }
     common: dict[str, Any] = {
         "WorkingDirectory": str(repo_root),
@@ -165,13 +179,16 @@ def gated_program_arguments(arguments: list[str], *, gate: Path = PYTHON_GATE) -
     return ["/bin/zsh", "-lc", command]
 
 
-def sync_runtime(repo_root: Path = ROOT, *, runtime_root: Path = RUNTIME_ROOT) -> Path:
+def sync_runtime(
+    repo_root: Path = ROOT, *, runtime_root: Path = RUNTIME_ROOT,
+    source_venv: Path | None = None,
+) -> Path:
     """Copy the runnable project outside macOS's protected Documents folder."""
 
     if not (repo_root / ".env").exists():
         raise RuntimeError(f"Missing local credentials file: {repo_root / '.env'}")
-    source_python = repo_root / ".venv"
-    if not source_python.exists():
+    source_python = source_venv or (repo_root / ".venv")
+    if not source_python.exists() or not source_python.is_dir():
         raise RuntimeError(f"Missing virtual environment: {source_python}")
 
     runtime_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -290,11 +307,12 @@ def main(argv: list[str] | None = None) -> int:
                 "Refusing to start a second Fantasy Discord listener while these Docker "
                 f"containers are running: {names}. Stop the duplicate listener first."
             )
-        runtime_root = sync_runtime(ROOT)
+        runtime_root = sync_runtime(ROOT, source_venv=args.python.parent.parent)
         definitions = agent_definitions(
             python=runtime_root / ".venv" / "bin" / "python",
             repo_root=runtime_root,
             python_gate=runtime_root / "scripts" / "run_python_after_startup.sh",
+            served_sha=runtime_sha(ROOT),
         )
         install(definitions, uid=os.getuid())
         return 0

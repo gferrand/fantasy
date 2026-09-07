@@ -203,9 +203,10 @@ and execution.
 
 The waiver report is optimized for phone reading: emoji-led pickup cards,
 clear `ADD` → `DROP` swap cards, then the complete 30-player shortlist in
-one continuous ranked list. `/ask` chooses the web briefing for a general
-public question such as a transfer update, and the Codex analysis path whenever
-your roster or league data is relevant. The bot replies in the same personal
+one continuous ranked list. `/ask` and `/analyze-waivers` first use the
+required semantic grounding pass to choose current deterministic Fantasy
+evidence; a public-only question grounds to a no-op and then uses web research.
+Codex is not a normal roster or league-data path. The bot replies in the same personal
 DM with the result. `/tasks` lists registered jobs, and
 `/task nightly_recap`, `/task transfer_monitor`, or `/task watchlist_report` runs a registered job
 immediately in the DM. Text DMs remain supported when Discord exposes them to

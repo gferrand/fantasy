@@ -197,6 +197,7 @@ def build_client(config: AppConfig) -> discord.Client:
         waiver_analysis: bool = False,
         has_attachment: bool = False,
         deadline: RequestDeadline | None = None,
+        request_id: str | None = None,
     ) -> tuple[str, bool, str | None, AdvisorRoute | None]:
         if content.startswith("!task ") and not has_attachment:
             task_id = content[6:].strip()
@@ -213,7 +214,7 @@ def build_client(config: AppConfig) -> discord.Client:
         if not waiver_analysis:
             result = await run_advisor(
                 config, content, context_packet=context_packet, deadline=deadline,
-                requester_id=requester_id,
+                requester_id=requester_id, request_id=request_id,
             )
             return advisor_header() + "\n\n" + result.text, True, None, None
 
@@ -222,7 +223,7 @@ def build_client(config: AppConfig) -> discord.Client:
         # one model tool call instead of reviving a separate report engine.
         result = await run_advisor(
             config, content, context_packet=context_packet, deadline=deadline or RequestDeadline.start(),
-            requester_id=requester_id,
+            requester_id=requester_id, request_id=request_id,
         )
         return waiver_header() + "\n\n" + result.text, True, None, None
 
@@ -271,6 +272,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         content, context_packet=context_packet,
                         requester_id=str(message.author.id),
                         has_attachment=user_metadata is not None, deadline=deadline,
+                        request_id=str(message.id),
                     )
                     if is_interactive:
                         await asyncio.to_thread(remember_advisor_response, report, thread_id, route=route)
@@ -374,6 +376,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         content, context_packet=context_packet,
                         requester_id=str(interaction.user.id),
                         waiver_analysis=waiver_analysis, deadline=deadline,
+                        request_id=str(getattr(interaction, "id", f"interaction-{interaction.user.id}")),
                     )
                     if is_interactive:
                         await asyncio.to_thread(remember_advisor_response, report, thread_id, route=route)
@@ -953,6 +956,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    LOGGER.info("Fantasy Discord worker starting runtime_sha=%s", os.environ.get("FANTASY_RUNTIME_SHA", "unknown"))
     client = build_client(config)
     client.run(config.discord_bot_token, log_handler=None)
     return 0

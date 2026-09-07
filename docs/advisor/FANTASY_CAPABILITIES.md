@@ -10,8 +10,8 @@ All 18 currently registered application commands are in `src/fantasy_advisor/dis
 
 | Command | Current path, sources, deterministic work | Model / output | Mutation | Advisor reuse |
 | --- | --- | --- | --- | --- |
-| `/ask` | `run_interaction` → `run_advisor`; context SQLite plus semantic named-tool selection | OpenAI final response with web search; up to four deterministic product capabilities and narrow unsupported-only fallback | Conversation event log | Yes: normal Advisor entry. |
-| `/analyze-waivers` | fixed waiver request → unified Advisor → one compound `get_waiver_context` call when selected | OpenAI final response with selective public research | Conversation event log | Yes: shares the authoritative pickup and swap engine. |
+| `/ask` | `run_interaction` → `run_advisor`; eight historical Discord events plus required semantic grounding | Function-only grounding, then OpenAI final response with selective web search; four deterministic/private calls total | Conversation event log | Yes: normal Advisor entry. |
+| `/analyze-waivers` | fixed waiver request → unified Advisor required grounding → one compound `get_waiver_context(position, limit)` call when selected | OpenAI final response with selective public research | Conversation event log | Yes: intentional Advisor surface sharing the authoritative pickup and swap engine. |
 | `/rotation` | `load_fixture_schedule` + `load_rotation_context` | web-backed explanation of deterministic protected core/candidates | fixture cache may refresh | Yes. |
 | `/tasks` | `load_registry` from `automation/tasks.toml` | rendered task menu | remembered DM channel file | Yes: task metadata only. Preserve. |
 | `/task {id}` | validates registry then `!task {id}` → `run_scheduled_task` | generated report | scheduled report/context and configured task state | Keep explicit manual control. |
@@ -68,10 +68,11 @@ Actual application storage is local files plus **SQLite**. No Supabase client, c
 
 ```text
 Discord /ask, normal DM, or /analyze-waivers
-  → run_advisor (OpenAI final answer + direct web search)
+  → run_advisor required function-only grounding (no web/Codex/final answer)
   → semantic named deterministic capability selection
       → deterministic named product capability, or
-      → narrow read-only Codex exploration for an unsupported private fact
+      → exclusive no-private-data grounding result
+  → final OpenAI reasoning with selective web and narrow later fallback
 
 Specialist commands
   → deterministic context builder → OpenAI web briefing
@@ -79,7 +80,7 @@ Specialist commands
 ```
 
 - OpenAI is already the final voice for normal `run_advisor`; its Responses API has web search. Attachments use bounded local normalization/transcription.
-- Codex is only a narrow fallback for an unsupported private fact; routine player evaluation and waiver analysis use named deterministic capabilities.
+- Codex is only a narrow later fallback for an unsupported private fact; it is absent from grounding and routine player evaluation and waiver analysis use named deterministic capabilities.
 - Capability selection is model-based, not a keyword router. Local actions remain deterministic at the authorization and state-transition boundary.
 - Public web briefing functions exist for watchlist, injury, gameweek, rotation, trade, lineup alerts, and scheduled work. ESPN is a separate read-only fixture source.
 

@@ -73,11 +73,15 @@ ordered chunks, avoiding both truncation and file attachments.
 
 ### 5. Conversation layer
 
-Normal `/ask`, plain messages, and supported attachments use the OpenAI Advisor
-with a bounded catalog of named deterministic capabilities and public
-web-search access. OpenAI chooses up to four material capabilities; Codex is a
-narrow fallback only when no named capability can retrieve the needed private
-fact. The final answer uses the durable
+Normal `/ask`, plain messages, `/analyze-waivers`, and supported attachments
+use the OpenAI Advisor with a required function-only grounding pass before any
+final reasoning. Grounding selects current named deterministic capabilities,
+approved local actions, or an exclusive public-only no-op; it has no web search
+or Codex fallback and consumes the same four-call private budget as later
+reasoning. The final pass has selective public web search, while Codex is a
+narrow later fallback only when no named capability can retrieve an unusual
+private fact. Interactive continuity is limited to eight historical Discord
+events with neither scheduled reports nor retained private evidence. The final answer uses the durable
 [advisor reasoning standard](advisor/ADVISOR_REASONING.md). The existing
 context SQLite database retains
 separate timestamped private-evidence events alongside recent conversation.

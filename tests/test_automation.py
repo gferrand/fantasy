@@ -441,7 +441,7 @@ class AutomationTests(unittest.TestCase):
             scheduled_prompt = runner.call_args.args[0]
             self.assertIn("Standalone scheduled prompt", scheduled_prompt)
             self.assertNotIn("DISCORD_CONTEXT_MARKER", scheduled_prompt)
-            packet = build_context_packet(advisor_context_file(config))
+            packet = build_context_packet(advisor_context_file(config), scheduled_reports=1)
             self.assertIn("scheduled report", packet)
 
     def test_state_persistence_is_atomic_from_callers_perspective(self):

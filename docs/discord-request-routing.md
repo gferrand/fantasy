@@ -4,19 +4,23 @@ Normal `/ask` and plain messages, including PDFs, text files, and voice notes,
 use one pipeline:
 
 ```text
-normalized request + recent context + retained private evidence
+normalized request + up to 8 historical Discord events
                          |
-          OpenAI reasoning + public web search
+  required function-only grounding (no web or Codex)
                          |
-        up to four named deterministic Fantasy tools
+   current deterministic evidence/actions (four-call total)
                          |
-       narrow read-only fallback only when no tool exists
+ OpenAI reasoning + selective public web / bounded fallback
                          |
                 OpenAI final Fantasy Advisor answer
 ```
 
-Public-only questions never start Codex. There is no keyword-based semantic
-routing in this path. OpenAI selects named product capabilities from the
+The grounding turn accepts only named deterministic capabilities, approved
+local actions, or the exclusive `no_private_fantasy_data_needed` function. It
+uses `tool_choice="required"`, has a 15-second ceiling, and retries an invalid
+selection once. It cannot answer. Public-only questions ground to that no-op
+and never start Codex. There is no keyword-based semantic routing in this path.
+OpenAI selects named product capabilities from the
 [capability contract](advisor/DATA_CAPABILITIES.md), then produces the final
 response using the durable [reasoning standard](advisor/ADVISOR_REASONING.md).
 
@@ -43,7 +47,10 @@ Named deterministic calls share cached data but have independent evidence
 envelopes and per-call ceilings, each clamped by the remaining request deadline.
 The request reserves 30 seconds for the final answer plus process-cleanup
 allowance. Provider retries are disabled for the interactive path. A slow
-intermediate OpenAI pass falls back to the final-answer reserve.
+grounding pass gets one bounded corrective retry. If grounding cannot obtain a
+valid current-evidence decision, the Advisor returns a generic refresh failure
+rather than using history as Fantasy state. Approved authenticated local actions
+remain available independently of external/private retrieval time.
 The gateway cancels overdue API work; the runner terminates overdue Codex trees.
 The target is under 90 seconds; this is measured, not a guaranteed provider SLA.
 
@@ -53,12 +60,12 @@ or cancellation. Attachment-only documents go to the advisor, which can ask
 what the user wants to know. Attachment content never triggers local watchlist
 mutations or registered task dispatch.
 
-Validated private results are stored as `private_evidence` events in the existing
-context SQLite database. Two recent results can contribute up to roughly 6 KB
-of field-bounded evidence within the existing 32 KB packet. Recent conversation
-retains priority; omitted evidence fields are labeled. Sources retain original
-timestamps. Volatile facts are rechecked; stable facts may be reused. Failed,
-unsupported, and absent facts are distinct, and stale fallback is never live.
+Validated private results may be stored as `private_evidence` events for
+diagnostics/history, but normal DMs, `/ask`, and `/analyze-waivers` never load
+them into a new request. Evidence remains available only within the request that
+retrieved it. Sources retain their current-request timestamps and cache-hit
+provenance. Failed, unsupported, and absent facts are distinct, and stale
+reference metadata is never presented as live state.
 
 Only the OpenAI answer is displayed, with the existing working acknowledgment,
 one Fantasy Advisor heading, and genuine operational errors. Current public

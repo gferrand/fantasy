@@ -223,6 +223,7 @@ class WebResult:
     text: str
     response_id: str | None
     elapsed_seconds: float
+    trace: dict[str, Any] | None = None
 
 
 class CodexRunError(AutomationError):
@@ -1761,7 +1762,12 @@ def load_advisor_context(config: AppConfig, *, include_private_evidence: bool = 
     """Load context for an interactive Discord task only."""
 
     try:
-        return build_context_packet(advisor_context_file(config), include_private_evidence=include_private_evidence)
+        return build_context_packet(
+            advisor_context_file(config),
+            conversation_events=8,
+            scheduled_reports=0,
+            include_private_evidence=include_private_evidence,
+        )
     except Exception as exc:
         raise AutomationError(f"Could not load advisor context: {exc}") from exc
 

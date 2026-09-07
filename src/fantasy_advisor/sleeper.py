@@ -369,11 +369,15 @@ def pickup_candidates(
     *,
     excluded_names: Iterable[str] = (),
     allowed_clubs: set[str] | None = None,
+    required_position: str = "ANY",
     limit: int = 30,
 ) -> list[dict[str, Any]]:
     """Return a compact scoring-aware pickup shortlist for bounded readers."""
 
     if limit < 1:
+        return []
+    normalized_position = str(required_position).upper().strip()
+    if normalized_position not in {"ANY", "F", "M", "D", "GK"}:
         return []
     available = available_epl_players(
         players,
@@ -381,6 +385,13 @@ def pickup_candidates(
         excluded_names=excluded_names,
         allowed_clubs=allowed_clubs,
     )
+    # Filter before enrichment, ranking, and limiting.  Otherwise a ranking
+    # dominated by another position can silently starve this requested pool.
+    if normalized_position != "ANY":
+        available = [
+            item for item in available
+            if normalized_position in {str(value).upper() for value in item.get("positions") or []}
+        ]
     stats_by_id: dict[str, Mapping[str, Any]] = {}
     for row in stats_rows:
         if not isinstance(row, Mapping):
