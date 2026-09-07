@@ -359,6 +359,20 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         execute.assert_called_once()
         self.assertEqual(execute.call_args.args[1], "get_waiver_context")
         self.assertNotIn("PRIVATE_EVIDENCE", client.responses.create.call_args_list[0].kwargs["input"])
+        self.assertEqual(
+            client.responses.create.call_args_list[0].kwargs["tool_choice"],
+            {"type": "function", "name": "get_waiver_context"},
+        )
+
+    def test_only_current_waiver_decisions_force_live_waiver_context(self):
+        self.assertTrue(advisor.requires_fresh_waiver_context(
+            "Look at my team and tell me the best waiver move I should make right now."
+        ))
+        self.assertTrue(advisor.requires_fresh_waiver_context(
+            "Which available players should I add today?"
+        ))
+        self.assertFalse(advisor.requires_fresh_waiver_context("Should I remove Santos from my watchlist?"))
+        self.assertFalse(advisor.requires_fresh_waiver_context("What is a waiver?"))
 
     def test_current_player_and_unrostered_guidance_requires_fresh_evidence_and_web_research(self):
         instructions = advisor.ADVISOR_RUNTIME_INSTRUCTIONS

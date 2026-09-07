@@ -492,6 +492,19 @@ def discord_answer_text(response: Any) -> str:
     return "\n\n".join(blocks).strip() if blocks else str(getattr(response, "output_text", "") or "").strip()
 
 
+def requires_fresh_waiver_context(question: str) -> bool:
+    """Identify the narrow current-waiver decision that cannot use stale evidence.
+
+    This is a tool-selection guard, not an action router: OpenAI still chooses
+    all mutations and performs the recommendation after the live packet exists.
+    """
+    text = question.casefold()
+    current = any(marker in text for marker in ("right now", "current", "today", "recent"))
+    waiver = any(marker in text for marker in ("waiver", "available player", "available players", "add/drop", "add drop"))
+    roster_move = "best move" in text and any(marker in text for marker in ("my team", "my roster", "bench"))
+    return current and (waiver or roster_move)
+
+
 async def run_advisor(
     config: AppConfig, question: str, *, context_packet: str | None = None,
     deadline: RequestDeadline | None = None, client: Any = None, requester_id: str | None = None,
@@ -568,6 +581,13 @@ async def run_advisor(
         answer_kwargs: dict[str, Any] = {"tools": tools}
         if can_retrieve:
             answer_kwargs["parallel_tool_calls"] = True
+            if requires_fresh_waiver_context(question):
+                # A current waiver recommendation is explicitly time-sensitive;
+                # do not permit a web-only first pass to skip its live league
+                # ownership and roster-comparison evidence.
+                answer_kwargs["tool_choice"] = {
+                    "type": "function", "name": "get_waiver_context",
+                }
         answer = await response(
             instructions=final_advisor_instructions(reasoning_standard, contract),
             budget=min(30, deadline.remaining(35)) if can_retrieve else deadline.remaining(),
