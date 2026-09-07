@@ -331,6 +331,45 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         retrieve.assert_called_once()
         self.assertNotIn("player_evaluation", json.dumps(client.responses.create.call_args_list[0].kwargs["tools"]))
 
+    async def test_slow_first_pass_still_allows_one_explicit_authenticated_remove(self):
+        call = NS(type="function_call", name="remove_from_watchlist", arguments='{"player_name":"Santos"}')
+        client = NS(responses=NS(create=AsyncMock(side_effect=[asyncio.TimeoutError(), result("", [call]), result("Removed Santos.")])))
+        packet = {"status": "success", "data": {"name": "Santos"}, "detail": "Removed", "limitations": [], "sources": []}
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Remove Santos from my watchlist.", client=client, requester_id="123")
+        self.assertEqual(answer.text, "Removed Santos.")
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1], "remove_from_watchlist")
+        retry_tools = client.responses.create.call_args_list[1].kwargs["tools"]
+        self.assertIn("remove_from_watchlist", [tool.get("name") for tool in retry_tools if tool["type"] == "function"])
+
+    async def test_slow_first_pass_does_not_mutate_for_watchlist_advice(self):
+        client = NS(responses=NS(create=AsyncMock(side_effect=[asyncio.TimeoutError(), result("Here is advice only.")])))
+        with (patch.object(advisor, "execute_fantasy_tool") as execute, patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Should I remove Santos from my watchlist?", client=client, requester_id="123")
+        self.assertEqual(answer.text, "Here is advice only.")
+        execute.assert_not_called()
+
+    async def test_current_waiver_request_uses_a_fresh_compound_capability(self):
+        call = NS(type="function_call", name="get_waiver_context", arguments="{}")
+        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Fresh waiver answer.")])))
+        packet = {"status": "complete", "data": {"available_candidates": []}, "limitations": [], "sources": []}
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute, patch.object(advisor, "persist_advisor_context_event")):
+            await advisor.run_advisor(config(), "Look at my team and tell me the best waiver move I should make right now.", context_packet="recent conversation only", client=client)
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1], "get_waiver_context")
+        self.assertNotIn("PRIVATE_EVIDENCE", client.responses.create.call_args_list[0].kwargs["input"])
+
+    def test_current_player_and_unrostered_guidance_requires_fresh_evidence_and_web_research(self):
+        instructions = advisor.ADVISOR_RUNTIME_INSTRUCTIONS
+        waiver_tool = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_waiver_context")
+        player_tool = next(tool for tool in advisor.FANTASY_TOOLS if tool["name"] == "get_player_context")
+        self.assertIn("public web research", instructions)
+        self.assertIn("unrostered, state that as fact", instructions)
+        self.assertIn("immediate Add or through waivers", instructions)
+        self.assertIn("Fresh current", player_tool["description"])
+        self.assertIn("Unrostered means unrostered", waiver_tool["description"])
+
 
 class RetrievalTests(unittest.TestCase):
     def test_accepts_fresh_and_stale_facts_and_each_limitation_kind(self):

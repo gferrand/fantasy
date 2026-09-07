@@ -265,7 +265,7 @@ def build_client(config: AppConfig) -> discord.Client:
                             content = text
                         else:
                             content = f"{content}\n\nAttachment ({kind}; {source['filename']}):\n{text}"
-                    context_packet = "" if content.startswith("!task ") and not user_metadata else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=True)
+                    context_packet = "" if content.startswith("!task ") and not user_metadata else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=False)
                     await asyncio.to_thread(remember_user_message, content, metadata=user_metadata)
                     report, is_interactive, thread_id, route = await report_for_content(
                         content, context_packet=context_packet,
@@ -368,7 +368,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 normal = not content.startswith("!task ")
                 deadline = RequestDeadline.start() if normal else None
                 async with asyncio.timeout(deadline.remaining() if deadline else None):
-                    context_packet = "" if content.startswith("!task ") else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=normal)
+                    context_packet = "" if content.startswith("!task ") else await asyncio.to_thread(load_advisor_context, config, include_private_evidence=False)
                     await asyncio.to_thread(remember_user_message, content)
                     report, is_interactive, thread_id, route = await report_for_content(
                         content, context_packet=context_packet,

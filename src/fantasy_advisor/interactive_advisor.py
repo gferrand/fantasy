@@ -71,7 +71,7 @@ FOLLOWUP_TOOL = {
 # Product-level tool catalog: no provider URLs, SQL, filesystem, or raw task execution.
 FANTASY_TOOLS = (
     {"type": "function", "name": "get_league_context", "description": "Current league scoring, roster-slot, season, and round context from Sleeper. Use for any exact Kick & Run scoring or league-rules question; it is a live snapshot.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_player_context", "description": "Current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
+    {"type": "function", "name": "get_player_context", "description": "Fresh current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player. Use in this request when current roster value, watchlist value, add/drop, trade, start/bench, role, minutes, or appearances materially affect the answer.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "search_player_pool", "description": "Small, current local player-catalog search with current Sleeper ownership. Use to resolve a named player or a short name fragment; it does not provide a full waiver ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["query", "limit"]}},
     {"type": "function", "name": "get_team_context", "description": "Current roster and starters for one named league team.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"team_name": {"type": "string"}}, "required": ["team_name"]}},
     {"type": "function", "name": "get_draft_context", "description": "Observed current-league draft position and a compact nearby-picks window for one named player. Returns a truthful limitation when the draft is unavailable.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
@@ -79,7 +79,7 @@ FANTASY_TOOLS = (
     {"type": "function", "name": "get_watchlist", "description": "Saved Fantasy watchlist only; does not change it.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_watchlist_stats", "description": "Current-season Sleeper stats for the saved watchlist using the same deterministic statistics engine as /watch stats. It omits longer trend and prior-season reads to stay within an interactive answer deadline.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "get_league_activity", "description": "Bounded, human-readable completed league transactions. Omit round_number for the latest verified completed round; use it only for a historical round.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"round_number": {"type": "integer", "minimum": 1}}, "required": []}},
-    {"type": "function", "name": "get_waiver_context", "description": "One compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for best waiver move or available players versus the owner's bench.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
+    {"type": "function", "name": "get_waiver_context", "description": "One fresh compound deterministic waiver capability for roster-aware available-player candidates and add/drop swap signals. Use for every current best-waiver-move or available-players-versus-bench question in this request. Unrostered means unrostered; only immediate-add versus waiver processing is unknown.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
     {"type": "function", "name": "add_to_watchlist", "description": "Add one named player to the saved watchlist. Use only when the owner explicitly asks to add the player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "remove_from_watchlist", "description": "Remove one named player from the saved watchlist. Use only when the owner explicitly asks to remove that player.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "get_guardian_status", "description": "Read active Deadline Guardian alerts without changing them.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
@@ -254,6 +254,16 @@ For a compound request, gather each materially requested private context before
 finalizing (for example, roster, watchlist, activity, and league scoring), up
 to that four-call limit. Do not claim an available context was absent if you
 did not request its named capability.
+For a current named-player decision about roster value, watchlist value,
+add/drop, trade, start/bench, role, minutes, or appearances, obtain fresh
+current evidence in this request with get_player_context and the relevant
+compound capability. If private data lacks a material real-world fact such as
+appearances, minutes, starts, current role, or squad status, use public web research
+when reasonably retrievable; do not treat an earlier report or an
+absent private field as proof that the fact is unverified. When fresh waiver
+evidence says a player is unrostered, state that as fact. The only distinct
+limitation is whether Sleeper will process that unrostered player as an
+immediate Add or through waivers.
 
 Reply for a private Discord DM: use short paragraphs and bold player names; do
 not use tables, code blocks, backend names, task IDs, planner text, or retrieval
@@ -542,33 +552,41 @@ async def run_advisor(
         evidence.append(facts)
         await retain_private_evidence(facts, source="private_retrieval")
 
-    can_followup = deadline.remaining() > 45
-    tools = [{"type": "web_search_preview", "search_context_size": "medium"}]
-    if can_followup:
+    can_retrieve = deadline.remaining() > 45
+    local_actions_available = deadline.remaining() > FINAL_RESERVE_SECONDS + 1
+    web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
+    local_action_names = {"add_to_watchlist", "remove_from_watchlist", "acknowledge_guardian_alerts"}
+    local_action_tools = [tool for tool in FANTASY_TOOLS if tool["name"] in local_action_names]
+    tools = [web_tool]
+    if can_retrieve:
         tools.extend(FANTASY_TOOLS)
         tools.append(FOLLOWUP_TOOL)  # narrow unsupported-private fallback only
+    elif local_actions_available:
+        tools.extend(local_action_tools)
     max_tool_calls = 4
     try:
         answer_kwargs: dict[str, Any] = {"tools": tools}
-        if can_followup:
+        if can_retrieve:
             answer_kwargs["parallel_tool_calls"] = True
         answer = await response(
             instructions=final_advisor_instructions(reasoning_standard, contract),
-            budget=min(30, deadline.remaining(35)) if can_followup else deadline.remaining(),
+            budget=min(30, deadline.remaining(35)) if can_retrieve else deadline.remaining(),
             **answer_kwargs,
         )
     except AutomationError:
-        if not can_followup or deadline.remaining() < 1:
+        if not can_retrieve or deadline.remaining() < 1:
             raise
         # A slow intermediate pass must not consume the final-answer reserve.
-        can_followup = False
+        can_retrieve = False
+        local_actions_available = deadline.remaining() > FINAL_RESERVE_SECONDS + 1
+        tools = [web_tool] + (local_action_tools if local_actions_available else [])
         answer = await response(
             instructions=final_advisor_instructions(
                 reasoning_standard,
                 contract,
                 "No further retrieval time remains. Give the strongest answer supported by available evidence.",
             ),
-            budget=deadline.remaining(), tools=tools[:1],
+            budget=deadline.remaining(), tools=tools,
         )
     calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
     tool_calls = 0
@@ -576,10 +594,13 @@ async def run_advisor(
     while calls:
         remaining_calls = max_tool_calls - tool_calls
         if (
-            not can_followup
-            or not remaining_calls
+            not remaining_calls
             or len(calls) > remaining_calls
             or any(getattr(call, "name", None) not in names for call in calls)
+            or any(
+                call.name not in local_action_names
+                for call in calls
+            ) and not can_retrieve
             or (any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1)
         ):
             raise AutomationError("The advisor returned an invalid additional-data request")
@@ -612,18 +633,22 @@ async def run_advisor(
             if getattr(item, "type", None) == "message" and hasattr(item, "model_dump")
         )
         if tool_calls == max_tool_calls or deadline.remaining() <= FINAL_RESERVE_SECONDS:
+            final_tools = [web_tool] + (local_action_tools if local_actions_available else [])
             answer = await response(
                 instructions=final_advisor_instructions(
                     reasoning_standard,
                     contract,
                     "No further private retrievals are available. Produce the final answer now.",
                 ),
-                budget=deadline.remaining(), tools=tools[:1],
+                budget=deadline.remaining(), tools=final_tools,
             )
             calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
-            if calls:
+            if not calls:
+                break
+            if any(call.name not in local_action_names for call in calls):
                 raise AutomationError("The advisor exceeded the private-data retrieval limit")
-            break
+            can_retrieve = False
+            continue
         answer = await response(
             instructions=final_advisor_instructions(
                 reasoning_standard,
