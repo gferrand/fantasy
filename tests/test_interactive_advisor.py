@@ -260,6 +260,10 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("web_search_preview", [tool["type"] for tool in first.kwargs["tools"]])
         self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
         self.assertIn("get_player_context", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
+        self.assertEqual(
+            [tool["type"] for tool in client.responses.create.call_args_list[1].kwargs["tools"]],
+            ["web_search_preview"],
+        )
 
     async def test_normal_advisor_executes_named_tool_then_returns_openai_answer(self):
         call = NS(type="function_call", name="get_team_context", arguments=json.dumps({"team_name": "Los Blancos"}))

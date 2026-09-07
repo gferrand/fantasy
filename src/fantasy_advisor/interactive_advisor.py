@@ -842,7 +842,7 @@ async def run_advisor(
             and not trace["web_search_used"]
         )
         if (
-            not must_research_final_target and not private_context_sufficient
+            not must_research_named_player and not must_research_final_target and not private_context_sufficient
             and not grounded_no_op and not performed_local_action and can_retrieve and remaining_calls
         ):
             external_tools.extend(
