@@ -7,6 +7,7 @@ They expose the existing authoritative engines to Discord and the future Advisor
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Iterable, Mapping
 
 from .gameweek import GameweekContext, load_gameweek_prepare_context, load_gameweek_recap_context
 from .injury_opportunities import InjuryOpportunitiesContext, load_injury_opportunities_context
@@ -54,5 +55,18 @@ def get_injury_opportunity_context(*, client: SleeperClient | None = None) -> In
     return load_injury_opportunities_context(client=client)
 
 
-def get_trade_context(*, manager_id: str, fixture_schedule: object, client: SleeperClient | None = None, now: datetime | None = None) -> TradeProposalContext:
-    return load_trade_proposal_context(manager_id=manager_id, fixture_schedule=fixture_schedule, client=client, now=now)
+def get_trade_context(
+    *,
+    manager_id: str,
+    fixture_schedule: object,
+    client: SleeperClient | None = None,
+    now: datetime | None = None,
+    named_offer: Mapping[str, Iterable[str]] | None = None,
+) -> TradeProposalContext:
+    return load_trade_proposal_context(
+        manager_id=manager_id,
+        fixture_schedule=fixture_schedule,
+        client=client,
+        now=now,
+        named_offer=named_offer,
+    )

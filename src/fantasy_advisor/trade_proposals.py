@@ -27,6 +27,10 @@ from .sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 
 MAX_PLAYERS_PER_PACKAGE = 2
 MAX_PLAYERS_IN_TRADE = 3
+# A concrete offer can be larger than the compact proposal-generator packages.
+# Keep it bounded, but do not reject a normal two-for-two offer merely because
+# the generator only searches up to three total players at a time.
+MAX_NAMED_OFFER_PLAYERS_PER_SIDE = 3
 # Three per roster keeps the legal-lineup search inside the interactive Advisor
 # deadline while still evaluating the leading current-market assets on every
 # team.  The product returns only the best few legal, mutually viable offers,
@@ -558,6 +562,161 @@ def _roster_after(
     return result
 
 
+def _normalized_player_name(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _resolve_named_roster_players(
+    players: Iterable[Mapping[str, Any]],
+    names: Iterable[str],
+    *,
+    side: str,
+) -> list[dict[str, Any]]:
+    """Resolve an explicit owner-supplied offer against one live roster.
+
+    Exact names deliberately keep this product capability deterministic.  The
+    advisor can ask for clarification if an offered player is ambiguous rather
+    than silently pricing the wrong player.
+    """
+
+    by_name: dict[str, list[dict[str, Any]]] = {}
+    player_names: list[tuple[dict[str, Any], tuple[str, ...]]] = []
+    for raw in players:
+        player = dict(raw)
+        name = str(player.get("name") or "").strip()
+        if name:
+            normalized = _normalized_player_name(name)
+            by_name.setdefault(normalized, []).append(player)
+            player_names.append((player, tuple(normalized.split())))
+
+    resolved: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for requested in names:
+        normalized = _normalized_player_name(requested)
+        matches = by_name.get(normalized, [])
+        if not matches:
+            requested_parts = tuple(normalized.split())
+            matches = [
+                player
+                for player, name_parts in player_names
+                if len(requested_parts) <= len(name_parts)
+                and name_parts[-len(requested_parts):] == requested_parts
+            ]
+        if len(matches) != 1:
+            reason = "was not found" if not matches else "is ambiguous"
+            raise SleeperDataError(f"The {side} offer player {requested!r} {reason} on the current live roster")
+        player = matches[0]
+        player_id = str(player.get("player_id") or "")
+        if not player_id or player_id in seen_ids:
+            raise SleeperDataError(f"The {side} offer repeats a player")
+        seen_ids.add(player_id)
+        resolved.append(player)
+    return resolved
+
+
+def evaluate_named_trade_offer(
+    *,
+    owner_team: Mapping[str, Any],
+    partner_teams: Iterable[Mapping[str, Any]],
+    starting_slots: Iterable[str],
+    you_send_names: Iterable[str],
+    you_receive_names: Iterable[str],
+) -> dict[str, Any]:
+    """Evaluate one explicit, read-only offer from current Sleeper rosters.
+
+    Unlike ``build_trade_options``, this preserves the Owner's actual offer
+    even when it is uneven or a two-for-two.  It reports the same bounded
+    custom-scoring and legal-lineup math without inventing a likelihood that
+    the other manager accepts it.
+    """
+
+    send_names = [str(name).strip() for name in you_send_names if str(name).strip()]
+    receive_names = [str(name).strip() for name in you_receive_names if str(name).strip()]
+    if not send_names or not receive_names:
+        raise SleeperDataError("A specific trade offer needs at least one player on each side")
+    if len(send_names) > MAX_NAMED_OFFER_PLAYERS_PER_SIDE or len(receive_names) > MAX_NAMED_OFFER_PLAYERS_PER_SIDE:
+        raise SleeperDataError("A specific trade offer supports at most three players per side")
+
+    owner_players = [dict(player) for player in owner_team.get("players") or []]
+    send = _resolve_named_roster_players(owner_players, send_names, side="you send")
+    partners = [dict(team) for team in partner_teams]
+    matching_partners: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for partner in partners:
+        try:
+            receive = _resolve_named_roster_players(
+                partner.get("players") or [], receive_names, side="you receive"
+            )
+        except SleeperDataError:
+            continue
+        matching_partners.append((partner, receive))
+    if len(matching_partners) != 1:
+        if not matching_partners:
+            raise SleeperDataError("The offered players are not all on one current live league roster")
+        raise SleeperDataError("The offered players match more than one current live league roster")
+    partner, receive = matching_partners[0]
+    partner_players = [dict(player) for player in partner.get("players") or []]
+    slots = tuple(starting_slots)
+    owner_before = evaluate_lineup(owner_players, slots)
+    owner_projected_before = evaluate_lineup(
+        owner_players, slots, score_field="projected_horizon_points"
+    )
+    partner_before = evaluate_lineup(partner_players, slots)
+    owner_after_players = _roster_after(
+        owner_players,
+        remove_ids=(player["player_id"] for player in send),
+        add_players=receive,
+    )
+    partner_after_players = _roster_after(
+        partner_players,
+        remove_ids=(player["player_id"] for player in receive),
+        add_players=send,
+    )
+    owner_after = evaluate_lineup(owner_after_players, slots)
+    owner_projected_after = evaluate_lineup(
+        owner_after_players, slots, score_field="projected_horizon_points"
+    )
+    partner_after = evaluate_lineup(partner_after_players, slots)
+    send_value = _package_value(send)
+    receive_value = _package_value(receive)
+
+    return {
+        "partner_team": partner.get("name"),
+        "partner_roster_id": partner.get("roster_id"),
+        "you_send": [_display_player(player) for player in send],
+        "you_receive": [_display_player(player) for player in receive],
+        "package_shape": f"{len(send)}-for-{len(receive)}",
+        "math": {
+            "lineup_score_basis": "current-season custom Sleeper points to date",
+            "your_before": owner_before.score,
+            "your_after": owner_after.score,
+            "your_lineup_gain": round(owner_after.score - owner_before.score, 2),
+            "your_projected_before": owner_projected_before.score,
+            "your_projected_after": owner_projected_after.score,
+            "your_projected_lineup_gain": round(owner_projected_after.score - owner_projected_before.score, 2),
+            "projection_horizon": next(
+                (
+                    str(player.get("forecast_horizon") or "")
+                    for player in (*send, *receive)
+                    if player.get("forecast_horizon")
+                ),
+                "next published fixtures",
+            ),
+            "partner_before": partner_before.score,
+            "partner_after": partner_after.score,
+            "partner_lineup_gain": round(partner_after.score - partner_before.score, 2),
+            "your_offer_player_points": send_value,
+            "your_request_player_points": receive_value,
+            "player_equity_ratio": round(send_value / receive_value, 3) if receive_value else None,
+            "faab_included_in_point_math": False,
+        },
+        "limitations": {
+            "read_only": True,
+            "acceptance": "Sleeper does not expose private manager preferences or a calibrated acceptance probability.",
+            "score_math": "Lineup comparisons use current-season custom Sleeper points to date, not a rest-of-season projection.",
+        },
+    }
+
+
 def _candidate_players(
     players: Iterable[Mapping[str, Any]],
     *,
@@ -827,8 +986,9 @@ def load_trade_proposal_context(
     retrieved_at: str | None = None,
     fixture_schedule: object | None = None,
     now: datetime | None = None,
+    named_offer: Mapping[str, Iterable[str]] | None = None,
 ) -> TradeProposalContext:
-    """Load live league data and construct bounded, read-only trade packages."""
+    """Load live league data and construct generic or named trade evidence."""
 
     if fixture_schedule is None:
         raise SleeperDataError(
@@ -893,11 +1053,29 @@ def load_trade_proposal_context(
         )
     owner_team = next(team for team in teams if team["owner_id"] == str(manager_id))
     owner_lineup = evaluate_lineup(owner_team["players"], slots)
-    options = build_trade_options(
-        owner_team=owner_team,
-        partner_teams=(team for team in teams if team["owner_id"] != str(manager_id)),
-        starting_slots=slots,
-    )
+    partner_teams = [team for team in teams if team["owner_id"] != str(manager_id)]
+    specific_offer = None
+    if named_offer is not None:
+        send = named_offer.get("you_send")
+        receive = named_offer.get("you_receive")
+        if not isinstance(send, Iterable) or isinstance(send, (str, bytes)):
+            raise SleeperDataError("A specific trade offer needs a list of players you send")
+        if not isinstance(receive, Iterable) or isinstance(receive, (str, bytes)):
+            raise SleeperDataError("A specific trade offer needs a list of players you receive")
+        specific_offer = evaluate_named_trade_offer(
+            owner_team=owner_team,
+            partner_teams=partner_teams,
+            starting_slots=slots,
+            you_send_names=send,
+            you_receive_names=receive,
+        )
+        options: list[dict[str, Any]] = []
+    else:
+        options = build_trade_options(
+            owner_team=owner_team,
+            partner_teams=partner_teams,
+            starting_slots=slots,
+        )
     payload = {
         "source": "live Sleeper EPL",
         "report": "read-only trade proposal",
@@ -928,4 +1106,6 @@ def load_trade_proposal_context(
             ),
         },
     }
+    if specific_offer is not None:
+        payload["specific_offer"] = specific_offer
     return TradeProposalContext(season, gameweek, payload["retrieved_at"], payload)
