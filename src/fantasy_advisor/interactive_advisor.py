@@ -26,10 +26,10 @@ from .intelligence_capabilities import (
     get_injury_opportunity_context,
     get_rotation_context,
     get_trade_context,
+    get_watchlist_stats,
 )
 from .lineup_alerts import load_persisted_fixture_schedule
 from .watchlist import WatchlistError, list_watchlist
-from .intelligence_capabilities import get_watchlist_stats
 
 LOGGER = logging.getLogger(__name__)
 MAX_RESULT_CHARS = 16_000
