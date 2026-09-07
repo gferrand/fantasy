@@ -37,14 +37,13 @@ observations are accepted only when explicitly marked stale. Current public
 news requires publication-date and event-year verification before it is called
 current or latest.
 
-The first retrieval may use up to 60 seconds, capped by the remaining shared
-budget after reserving final-answer and cleanup time; a second uses at most 20.
 One 120-second deadline starts when processing begins after queue acquisition
 and acknowledgment. Download and attachment normalization count toward it.
-Named deterministic calls share the request deadline and reserve 30 seconds for
-the final answer plus process-cleanup allowance. Provider retries are disabled
-for the interactive path. A slow intermediate OpenAI pass falls back to the
-final-answer reserve.
+Named deterministic calls share cached data but have independent evidence
+envelopes and per-call ceilings, each clamped by the remaining request deadline.
+The request reserves 30 seconds for the final answer plus process-cleanup
+allowance. Provider retries are disabled for the interactive path. A slow
+intermediate OpenAI pass falls back to the final-answer reserve.
 The gateway cancels overdue API work; the runner terminates overdue Codex trees.
 The target is under 90 seconds; this is measured, not a guaranteed provider SLA.
 
@@ -65,8 +64,9 @@ Only the OpenAI answer is displayed, with the existing working acknowledgment,
 one Fantasy Advisor heading, and genuine operational errors. Current public
 claims retain source links; private source details appear only when material.
 
-`/analyze-waivers`, `/task`, `/rotation`, `/trade propose`, `/injury opportunities`,
-`/gameweek`, `/watch recommend`, other dedicated workflows, and scheduled reports
-retain their existing execution paths. Their legacy routing/feed helpers remain
-available. Owner-DM authorization, duplicate suppression, and mention controls
-remain in place.
+`/analyze-waivers` uses the same unified Advisor path as `/ask`, selecting the
+compound waiver capability when material. `/task`, `/rotation`, `/trade propose`,
+`/injury opportunities`, `/gameweek`, `/watch recommend`, other dedicated
+workflows, and scheduled reports retain their existing execution paths.
+Owner-DM authorization, duplicate suppression, and mention controls remain in
+place.

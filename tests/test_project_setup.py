@@ -46,7 +46,8 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertIn("waiver_analysis=True", source)
         self.assertIn("waiver_header()", source)
         self.assertIn("advisor_header()", source)
-        self.assertIn("web_briefing_header()", source)
+        self.assertIn("run_advisor(", source)
+        self.assertNotIn("route_interactive_request(", source)
         self.assertIn("Ask about news, your team, waivers, or a player", source)
 
     def test_canonical_context_contains_league_identity(self):

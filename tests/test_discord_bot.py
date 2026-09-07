@@ -148,7 +148,6 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
         self.advisor = self.stack.enter_context(patch.object(discord_bot, "run_advisor", new_callable=AsyncMock, return_value=NS(text="OpenAI final answer")))
-        self.legacy = self.stack.enter_context(patch.object(discord_bot, "run_interactive_task", return_value=NS(text="Legacy waiver report", thread_id=None)))
         self.stack.enter_context(patch.object(discord_bot, "persist_discord_channel_id"))
         self.stack.enter_context(patch.object(discord_bot, "persist_advisor_context_event"))
         self.stack.enter_context(patch.object(discord_bot, "load_advisor_context", return_value="recent context"))
@@ -167,7 +166,6 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         message = self.message()
         await self.client.on_message(message)
         self.advisor.assert_awaited_once()
-        self.legacy.assert_not_called()
         self.assertEqual(message.channel.send.await_count, 2)
         self.assertIn("OpenAI final answer", message.channel.send.call_args.args[0])
         self.assertNotIn("Web briefing", message.channel.send.call_args.args[0])
@@ -189,7 +187,6 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         command = self.client._fantasy_command_tree.get_command("ask")
         await command.callback(interaction, "Should I bench him?")
         self.advisor.assert_awaited_once()
-        self.legacy.assert_not_called()
         self.assertIn("OpenAI final answer", interaction.edit_original_response.call_args.kwargs["content"])
 
     async def test_waiver_command_uses_the_shared_tool_capable_advisor(self):
@@ -199,7 +196,6 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         command = self.client._fantasy_command_tree.get_command("analyze-waivers")
         await command.callback(interaction)
         self.advisor.assert_awaited_once()
-        self.legacy.assert_not_called()
 
     async def test_attachments_use_same_pipeline_and_remove_temporary_files(self):
         from types import SimpleNamespace as NS

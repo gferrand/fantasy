@@ -46,9 +46,17 @@ class DataCapabilities:
         self.cache: dict[str, object] = {}
         self.sources: list[dict[str, Any]] = []
         self.limitations: list[dict[str, str]] = []
+        self.operation_deadline = self.deadline
+
+    def begin_operation(self, timeout: float) -> None:
+        """Scope evidence and provider time to one named capability call."""
+
+        self.sources = []
+        self.limitations = []
+        self.operation_deadline = min(self.deadline, time.monotonic() + max(0.0, timeout))
 
     def _remaining(self) -> float:
-        return self.deadline - time.monotonic()
+        return self.operation_deadline - time.monotonic()
 
     def bounded_client(self) -> SleeperClient:
         """Return the shared client clamped to this request's remaining budget."""
@@ -58,7 +66,7 @@ class DataCapabilities:
                 self.client,
                 timeout=min(8.0, max(0.001, self._remaining())),
                 retries=1,
-                deadline=self.deadline,
+                deadline=self.operation_deadline,
             )
         return self.client
 
@@ -81,7 +89,20 @@ class DataCapabilities:
         return value
 
     def _result(self, data: dict[str, Any]) -> dict[str, Any]:
-        return {"status": "partial" if self.limitations else "complete", "data": data, "limitations": self.limitations.copy(), "sources": self.sources.copy()}
+        result = {
+            "status": "partial" if self.limitations else "complete",
+            "data": data,
+            "limitations": self.limitations.copy(),
+            "sources": self.sources.copy(),
+        }
+        # The cache is request-scoped; evidence belongs only to this operation.
+        self.sources.clear()
+        self.limitations.clear()
+        return result
+
+    def unavailable(self, field: str, detail: str) -> dict[str, Any]:
+        self.limitations.append(_limitation(field, detail))
+        return self._result({})
 
     def _catalog(self) -> list[dict[str, Any]]:
         cached = self.cache.get("player_catalog")
@@ -337,7 +358,9 @@ class DataCapabilities:
         remaining = self._remaining()
         if remaining <= 0:
             return {"status": "partial", "data": {}, "limitations": [_limitation("packet_deadline", "Current player data could not be retrieved within this answer's time limit.")], "sources": []}
-        return get_player_evaluation_context(self.config, player_name, timeout=remaining, client=self.client)
+        return get_player_evaluation_context(
+            self.config, player_name, timeout=remaining, client=self.bounded_client(),
+        )
 
     def search_player_pool(self, query: str, *, limit: int = 12) -> dict[str, Any]:
         """Return a small local-catalog match set with safe ownership evidence."""
