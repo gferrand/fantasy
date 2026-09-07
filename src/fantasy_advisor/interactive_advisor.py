@@ -572,6 +572,7 @@ async def run_advisor(
         evidence.append(facts)
         await retain_private_evidence(facts, source="private_retrieval")
 
+    fresh_waiver_request = requires_fresh_waiver_context(question)
     can_retrieve = deadline.remaining() > 45
     local_actions_available = deadline.remaining() > FINAL_RESERVE_SECONDS + 1
     web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
@@ -588,7 +589,7 @@ async def run_advisor(
         answer_kwargs: dict[str, Any] = {"tools": tools}
         if can_retrieve:
             answer_kwargs["parallel_tool_calls"] = True
-            if requires_fresh_waiver_context(question):
+            if fresh_waiver_request:
                 # A current waiver recommendation is explicitly time-sensitive;
                 # do not permit a web-only first pass to skip its live league
                 # ownership and roster-comparison evidence.
@@ -659,7 +660,15 @@ async def run_advisor(
             item.model_dump(mode="json") for item in getattr(answer, "output", [])
             if getattr(item, "type", None) == "message" and hasattr(item, "model_dump")
         )
-        if tool_calls == max_tool_calls or deadline.remaining() <= FINAL_RESERVE_SECONDS:
+        # The compound waiver packet is the bounded private evidence for this
+        # request. Finalize from it instead of inviting duplicate waiver/team
+        # calls that burn the four-call budget. Public web research and the
+        # explicit local-action tools remain available in the final pass.
+        if (
+            (fresh_waiver_request and tool_calls >= 1)
+            or tool_calls == max_tool_calls
+            or deadline.remaining() <= FINAL_RESERVE_SECONDS
+        ):
             final_tools = [web_tool] + (local_action_tools if local_actions_available else [])
             answer = await response(
                 instructions=final_advisor_instructions(
