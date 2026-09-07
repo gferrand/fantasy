@@ -620,6 +620,7 @@ async def run_advisor(
     tool_calls = 0
     names = {tool["name"] for tool in FANTASY_TOOLS} | {FOLLOWUP_TOOL["name"]}
     while calls:
+        performed_local_action = any(call.name in local_action_names for call in calls)
         remaining_calls = max_tool_calls - tool_calls
         if (
             not remaining_calls
@@ -666,10 +667,16 @@ async def run_advisor(
         # explicit local-action tools remain available in the final pass.
         if (
             (fresh_waiver_request and tool_calls >= 1)
+            or performed_local_action
             or tool_calls == max_tool_calls
             or deadline.remaining() <= FINAL_RESERVE_SECONDS
         ):
-            final_tools = [web_tool] + (local_action_tools if local_actions_available else [])
+            # An approved local action is idempotent at the storage boundary,
+            # but a semantic retry must not invoke it repeatedly in one Owner
+            # request. Its result is already in current-request evidence.
+            final_tools = [web_tool] if performed_local_action else (
+                [web_tool] + (local_action_tools if local_actions_available else [])
+            )
             answer = await response(
                 instructions=final_advisor_instructions(
                     reasoning_standard,
