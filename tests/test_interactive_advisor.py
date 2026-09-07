@@ -102,6 +102,18 @@ class GuidanceTests(unittest.TestCase):
         self.assertNotIn("ADVISOR_INSTRUCTIONS =", source)
         self.assertNotIn("Optimize the roster, not the isolated player", source)
 
+    def test_named_product_tool_rejects_raw_or_unknown_access(self):
+        packet = advisor.execute_fantasy_tool(config(), "unknown", "{}", timeout=1)
+        self.assertEqual(packet["status"], "partial")
+        self.assertEqual(packet["limitations"][0]["field"], "requested_private_data")
+
+    def test_watchlist_action_requires_a_named_explicit_tool_call(self):
+        with patch.object(advisor, "LocalActions") as actions:
+            actions.return_value.add_to_watchlist.return_value = {"status": "success", "data": {"name": "Enciso"}, "detail": "Added"}
+            packet = advisor.execute_fantasy_tool(config(), "add_to_watchlist", json.dumps({"player_name": "Enciso"}), timeout=1)
+        self.assertEqual(packet["status"], "success")
+        actions.return_value.add_to_watchlist.assert_called_once_with("Enciso")
+
 
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
@@ -158,10 +170,8 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         codex_retrieve.assert_not_called()
         self.assertEqual(player_retrieve.call_args.args[1], "Julio Enciso")
         self.assertFalse(calls.call_args_list[1].kwargs["parallel_tool_calls"])
-        self.assertEqual(
-            [tool["type"] for tool in calls.call_args_list[1].kwargs["tools"]],
-            ["web_search_preview", "function"],
-        )
+        self.assertEqual(calls.call_args_list[1].kwargs["tools"][0]["type"], "web_search_preview")
+        self.assertGreaterEqual(len(calls.call_args_list[1].kwargs["tools"]), 2)
         final_payload = json.loads(calls.call_args_list[2].kwargs["input"])
         packet = final_payload["private_evidence"][0]["data"]["player_evaluation"]
         self.assertEqual(packet["target"]["positions"], ["M", "F"])
