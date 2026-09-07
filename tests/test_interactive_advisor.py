@@ -119,7 +119,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def execute(self, responses, evidence=None, deadline=None, context="recent request"):
         client = NS(responses=NS(create=AsyncMock(side_effect=responses)))
         with patch.object(advisor, "get_player_evaluation_context", return_value=evidence or player_evaluation_facts()) as player_retrieve, patch.object(advisor, "retrieve_private_data", return_value=evidence or facts()) as codex_retrieve, patch.object(advisor, "persist_advisor_context_event") as persist:
-            answer = await advisor.run_advisor(config(), "Should I make the swap?", context_packet=context, client=client, deadline=deadline)
+            answer = await advisor.run_advisor(config(), "Should I make the swap?", context_packet=context, client=client, deadline=deadline, legacy_planner=True)
         return answer, client.responses.create, player_retrieve, codex_retrieve, persist
 
     async def test_public_only_never_starts_codex(self):
@@ -138,6 +138,14 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(reasoning, calls.call_args_list[0].kwargs["instructions"])
         self.assertIn(reasoning, calls.call_args_list[1].kwargs["instructions"])
         self.assertIn("OpenAI researches public football evidence", calls.call_args_list[1].kwargs["instructions"])
+
+    async def test_normal_advisor_starts_with_named_tools_not_the_legacy_planner(self):
+        client = NS(responses=NS(create=AsyncMock(return_value=result("Direct answer"))))
+        answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)
+        self.assertEqual(answer.text, "Direct answer")
+        call = client.responses.create.call_args
+        self.assertNotIn("private_data_plan", call.kwargs["instructions"])
+        self.assertIn("get_player_context", [tool.get("name") for tool in call.kwargs["tools"] if tool["type"] == "function"])
 
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
