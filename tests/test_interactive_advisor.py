@@ -242,6 +242,28 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(persist.call_args.kwargs["metadata"]["source"], "advisor_tool:get_team_context")
         self.assertEqual(json.loads(client.responses.create.call_args.kwargs["input"])["private_evidence"][0], packet)
 
+    async def test_normal_advisor_can_iterate_named_tools_for_compound_request(self):
+        calls = [
+            NS(type="function_call", name="get_team_context", arguments='{"team_name":"Los Blancos"}'),
+            NS(type="function_call", name="get_watchlist", arguments="{}"),
+        ]
+        client = NS(responses=NS(create=AsyncMock(side_effect=[
+            result("", [calls[0]]), result("", [calls[1]]), result("Compound answer"),
+        ])))
+        packet = {
+            "status": "complete", "data": {}, "limitations": [],
+            "sources": [{"source": "test", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}],
+        }
+        with (
+            patch.object(advisor, "execute_fantasy_tool", return_value=packet) as execute,
+            patch.object(advisor, "persist_advisor_context_event"),
+        ):
+            answer = await advisor.run_advisor(config(), "Assess my roster and watchlist", client=client)
+        self.assertEqual(answer.text, "Compound answer")
+        self.assertEqual(execute.call_count, 2)
+        final_input = json.loads(client.responses.create.call_args.kwargs["input"])
+        self.assertEqual(len(final_input["private_evidence"]), 2)
+
     async def test_missing_reasoning_standard_stops_before_provider_work(self):
         client = NS(responses=NS(create=AsyncMock()))
         with tempfile.TemporaryDirectory() as temp:
