@@ -76,11 +76,13 @@ ordered chunks, avoiding both truncation and file attachments.
 Normal `/ask`, plain messages, and supported attachments use an OpenAI-first
 private-data planner. Optional ephemeral Codex retrieval returns bounded facts;
 OpenAI produces every final advisory answer with public web-search access.
-At most one additional essential private-fact retrieval is allowed. These
+The planner uses [data capabilities](advisor/DATA_CAPABILITIES.md) to determine
+which private facts may be needed; the final answer uses the durable
+[advisor reasoning standard](advisor/ADVISOR_REASONING.md). At most one
+additional essential private-fact retrieval is allowed. These
 retrieval tasks use no browser. The existing context SQLite database retains
 separate timestamped private-evidence events alongside recent conversation.
-See [interactive advisor flow](discord-request-routing.md) and
-[data capabilities](advisor/DATA_CAPABILITIES.md).
+See [interactive advisor flow](discord-request-routing.md).
 
 Browser-capable specialized and recurring analysis creates a task tab with
 `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose
