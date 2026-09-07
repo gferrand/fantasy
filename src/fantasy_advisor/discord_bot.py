@@ -77,15 +77,16 @@ from .watchlist import (
     resolve_saved_watchlist_player,
     resolve_watchlist_player,
 )
-from .watchlist_stats import load_current_watchlist_stats
-from .gameweek import load_gameweek_prepare_context, load_gameweek_recap_context
-from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
-from .injury_opportunities import (
-    load_injury_opportunities_context,
-    render_injury_opportunities,
+from .intelligence_capabilities import (
+    get_gameweek_prepare_context,
+    get_gameweek_recap_context,
+    get_injury_opportunity_context,
+    get_rotation_context,
+    get_trade_context,
+    get_watchlist_stats,
 )
-from .trade_proposals import load_trade_proposal_context
-from .rotation import load_rotation_context
+from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
+from .injury_opportunities import render_injury_opportunities
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -483,7 +484,7 @@ def build_client(config: AppConfig) -> discord.Client:
                     now=discord.utils.utcnow(),
                 )
                 context = await asyncio.to_thread(
-                    load_rotation_context,
+                    get_rotation_context,
                     manager_id=EXPECTED_MANAGER_ID,
                     fixture_schedule=fixture_schedule,
                 )
@@ -614,7 +615,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 return
             async with run_lock:
                 report = await asyncio.to_thread(
-                    load_current_watchlist_stats,
+                    get_watchlist_stats,
                     watched,
                     include_trends=True,
                     include_previous_season=True,
@@ -642,7 +643,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 await interaction.edit_original_response(content=watchlist_empty())
                 return
             async with run_lock:
-                report = await asyncio.to_thread(load_current_watchlist_stats, watched)
+                report = await asyncio.to_thread(get_watchlist_stats, watched)
                 result = await asyncio.to_thread(
                     run_watchlist_web_briefing,
                     config,
@@ -712,7 +713,7 @@ def build_client(config: AppConfig) -> discord.Client:
         await interaction.response.defer()
         try:
             async with run_lock:
-                context = await asyncio.to_thread(load_injury_opportunities_context)
+                context = await asyncio.to_thread(get_injury_opportunity_context)
                 research = None
                 research_error = None
                 try:
@@ -759,7 +760,7 @@ def build_client(config: AppConfig) -> discord.Client:
             async with run_lock:
                 fixture_schedule = await asyncio.to_thread(load_persisted_fixture_schedule, config)
                 context = await asyncio.to_thread(
-                    load_trade_proposal_context,
+                    get_trade_context,
                     manager_id=EXPECTED_MANAGER_ID,
                     fixture_schedule=fixture_schedule,
                 )
@@ -834,7 +835,7 @@ def build_client(config: AppConfig) -> discord.Client:
         try:
             async with run_lock:
                 context = await asyncio.to_thread(
-                    load_gameweek_prepare_context,
+                    get_gameweek_prepare_context,
                     manager_id=EXPECTED_MANAGER_ID,
                 )
                 result = await asyncio.to_thread(
@@ -863,7 +864,7 @@ def build_client(config: AppConfig) -> discord.Client:
         try:
             async with run_lock:
                 context = await asyncio.to_thread(
-                    load_gameweek_recap_context,
+                    get_gameweek_recap_context,
                     manager_id=EXPECTED_MANAGER_ID,
                 )
                 result = await asyncio.to_thread(
