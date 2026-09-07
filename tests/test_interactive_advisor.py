@@ -247,7 +247,9 @@ class GuidanceTests(unittest.TestCase):
 class PipelineTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_advisor_starts_with_named_tools_not_the_legacy_planner(self):
         call = NS(type="function_call", name="get_player_context", arguments='{"player_name":"Enciso"}')
-        client = NS(responses=NS(create=AsyncMock(side_effect=[result("", [call]), result("Grounded answer")])))
+        client = NS(responses=NS(create=AsyncMock(side_effect=[
+            result("", [call]), result("Grounded answer", [NS(type="web_search_call")]),
+        ])))
         packet = facts()
         with (patch.object(advisor, "execute_fantasy_tool", return_value=packet), patch.object(advisor, "persist_advisor_context_event")):
             answer = await advisor.run_advisor(config(), "Who owns Enciso?", client=client)

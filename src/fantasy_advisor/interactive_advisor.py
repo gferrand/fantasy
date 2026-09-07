@@ -811,16 +811,20 @@ async def run_advisor(
     compound_context_capabilities = {
         "get_waiver_context", "get_gameweek_context", "get_rotation_context", "get_trade_context",
     }
-    # A current team packet plus current league settings is sufficient for
-    # league-specific roster/scoring interpretation. Do not expose a broad
-    # follow-up catalog merely because neither is a compound report: the model
-    # can otherwise over-select tools and exhaust the four-call ceiling.
-    private_context_sufficient = bool(
-        compound_context_capabilities.intersection(used_deterministic_names)
-    ) or {"get_team_context", "get_league_context"}.issubset(used_deterministic_names)
+    def private_context_is_sufficient() -> bool:
+        """Return whether the evidence already supports final reasoning."""
+
+        # A current team packet plus current league settings is sufficient for
+        # league-specific roster/scoring interpretation. Do not expose a broad
+        # follow-up catalog merely because neither is a compound report: the
+        # model can otherwise over-select tools and exhaust the four-call cap.
+        return bool(compound_context_capabilities.intersection(used_deterministic_names)) or {
+            "get_team_context", "get_league_context",
+        }.issubset(used_deterministic_names)
     answer: Any | None = None
     while answer is None:
         remaining_calls = MAX_PRIVATE_TOOL_CALLS - tool_calls
+        private_context_sufficient = private_context_is_sufficient()
         external_tools: list[dict[str, Any]] = [web_tool]
         # A public-only grounding decision deliberately excludes private Fantasy
         # data. It is still a current-information request, so the following
@@ -828,6 +832,13 @@ async def run_advisor(
         must_research_public_only = grounded_no_op and not trace["web_search_used"]
         must_research_final_target = bool(
             target_research_capabilities.intersection(used_deterministic_names)
+            and not trace["web_search_used"]
+        )
+        # Player-context requests are current player decisions. A current
+        # public role/availability read is inexpensive and prevents the model
+        # from treating private scoring data as proof of current club status.
+        must_research_named_player = bool(
+            "get_player_context" in used_deterministic_names
             and not trace["web_search_used"]
         )
         if (
@@ -850,9 +861,9 @@ async def run_advisor(
                 "Use public web research now before answering this public-only current-information request. "
                 "Do not produce a final answer until that research has run."
             )
-        elif must_research_final_target:
+        elif must_research_named_player or must_research_final_target:
             finalization = (
-                "Use public web research now to verify current injury, availability, and role for the acquisition or trade target you will recommend. "
+                "Use public web research now to verify current injury, availability, and role for the named player decision or acquisition/trade target. "
                 "Do not give a final recommendation before that research; if it changes the target, research the replacement too."
             )
         try:
@@ -860,7 +871,7 @@ async def run_advisor(
                 "instructions": final_advisor_instructions(reasoning_standard, contract, finalization),
                 "budget": (
                     min(
-                        TARGET_RESEARCH_TIMEOUT_SECONDS if must_research_final_target else 30,
+                        TARGET_RESEARCH_TIMEOUT_SECONDS if (must_research_named_player or must_research_final_target) else 30,
                         deadline.remaining(FINAL_RESERVE_SECONDS),
                     )
                     if can_retrieve else deadline.remaining()
@@ -868,7 +879,7 @@ async def run_advisor(
                 "phase": "reasoning", "tools": external_tools,
                 "parallel_tool_calls": True,
             }
-            if must_research_public_only or must_research_final_target:
+            if must_research_public_only or must_research_named_player or must_research_final_target:
                 # A public-only current request and a selected acquisition or
                 # trade target cannot be finalized from model knowledge or
                 # Sleeper scoring alone. Limit this turn to public web research.
@@ -880,7 +891,7 @@ async def run_advisor(
             # A public-only current answer or target recommendation is unsafe
             # without required public research. Do not turn a failed web pass
             # into an answer from stale model knowledge.
-            if must_research_public_only or must_research_final_target:
+            if must_research_public_only or must_research_named_player or must_research_final_target:
                 return finish_failure()
             if evidence:
                 answer = None
@@ -894,7 +905,7 @@ async def run_advisor(
             else:
                 return finish_failure()
         calls = _function_calls(answer)
-        if must_research_public_only and not trace["web_search_used"]:
+        if (must_research_public_only or must_research_named_player) and not trace["web_search_used"]:
             return finish_failure()
         if not calls:
             break
