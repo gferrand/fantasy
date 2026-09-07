@@ -212,3 +212,69 @@ def player_catalog_refreshed_at(path: Path) -> str | None:
         return str(row["value"]) if row is not None else None
     finally:
         connection.close()
+
+
+def read_player_catalog(
+    path: Path, *, names: tuple[str, ...] = (), player_ids: tuple[str, ...] = (),
+) -> tuple[str, list[dict[str, Any]]]:
+    """Read only selected catalog rows without initializing or changing SQLite.
+
+    Interactive player evaluation uses this bounded accessor so a missing or
+    damaged catalog is reported as evidence unavailable rather than silently
+    creating database state.
+    """
+
+    if not path.is_file():
+        raise PlayerCatalogNotInitialized("The local player catalog is unavailable.")
+    normalized_names = tuple(
+        normalized for name in names if (normalized := normalize_player_text(name))
+    )
+    selected_ids = tuple(str(player_id).strip() for player_id in player_ids if str(player_id).strip())
+    if not normalized_names and not selected_ids:
+        return "", []
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        refreshed = connection.execute(
+            "SELECT value FROM catalog_metadata WHERE key = 'refreshed_at'"
+        ).fetchone()
+        if refreshed is None:
+            raise PlayerCatalogNotInitialized("The local player catalog is unavailable.")
+        clauses: list[str] = []
+        values: list[str] = []
+        if normalized_names:
+            clauses.append("normalized_name IN (" + ",".join("?" for _ in normalized_names) + ")")
+            values.extend(normalized_names)
+        if selected_ids:
+            clauses.append("player_id IN (" + ",".join("?" for _ in selected_ids) + ")")
+            values.extend(selected_ids)
+        rows = connection.execute(
+            "SELECT player_id, name, club, positions_json, competitions_json, active, status "
+            "FROM catalog_players WHERE " + " OR ".join(clauses),
+            values,
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise PlayerCatalogError("The local player catalog could not be read safely.") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+    players: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            positions = json.loads(str(row["positions_json"]))
+            competitions = json.loads(str(row["competitions_json"]))
+        except json.JSONDecodeError as exc:
+            raise PlayerCatalogError("The local player catalog is malformed.") from exc
+        players.append(
+            {
+                "player_id": str(row["player_id"]),
+                "name": str(row["name"]),
+                "club": str(row["club"]),
+                "positions": [str(position) for position in positions],
+                "competitions": [str(competition) for competition in competitions],
+                "active": None if row["active"] is None else bool(row["active"]),
+                "status": str(row["status"]),
+            }
+        )
+    return str(refreshed["value"]), players
