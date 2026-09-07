@@ -510,6 +510,9 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Fresh current", player_tool["description"])
         self.assertIn("Unrostered means unrostered", waiver_tool["description"])
 
+    def test_runtime_forbids_lineup_advice_for_a_player_absent_from_current_roster(self):
+        self.assertIn("cannot start that player in\nthis league", advisor.ADVISOR_RUNTIME_INSTRUCTIONS)
+
 
 class RetrievalTests(unittest.TestCase):
     def test_accepts_fresh_and_stale_facts_and_each_limitation_kind(self):

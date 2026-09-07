@@ -287,6 +287,10 @@ absent private field as proof that the fact is unverified. When fresh waiver
 evidence says a player is unrostered, state that as fact. The only distinct
 limitation is whether Sleeper will process that unrostered player as an
 immediate Add or through waivers.
+For a start/bench question, if the current roster evidence says the named
+player is not on Los Blancos, say that the owner cannot start that player in
+this league. Do not offer conditional or counterfactual lineup advice for a
+player the current roster does not contain.
 
 Reply for a private Discord DM: use short paragraphs and bold player names; do
 not use tables, code blocks, backend names, task IDs, planner text, or retrieval
