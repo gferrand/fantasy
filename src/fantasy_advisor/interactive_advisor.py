@@ -623,6 +623,76 @@ def current_evidence_envelope(context: Any, source: str) -> dict[str, Any]:
     }
 
 
+TARGET_VERIFICATION_PREFIX = "<!-- ADVISOR_TARGET_VERIFICATION "
+TARGET_VERIFICATION_SUFFIX = " -->"
+
+
+def _target_verification(text: str) -> tuple[str, dict[str, Any]]:
+    """Remove and validate the finalizer's machine-readable target evidence.
+
+    The Advisor writes the comment as the final line, so it is never shown to
+    the Owner.  Treat malformed or incomplete action metadata as an unsafe
+    recommendation rather than trying to infer whether arbitrary prose was
+    adequately researched.
+    """
+
+    match = re.search(
+        rf"(?:^|\n){re.escape(TARGET_VERIFICATION_PREFIX)}(\{{.*\}}){re.escape(TARGET_VERIFICATION_SUFFIX)}\s*$",
+        text,
+        flags=re.DOTALL,
+    )
+    base = {
+        "recommended_targets": [],
+        "required_target_research_completed": False,
+        "target_verification_metadata_valid": False,
+    }
+    if match is None:
+        base["target_verification_error"] = "missing"
+        return text, base
+    visible = text[:match.start()].rstrip()
+    try:
+        metadata = _object(match.group(1))
+    except ValueError:
+        base["target_verification_error"] = "invalid_json"
+        return visible, base
+    actionable = metadata.get("actionable")
+    targets = metadata.get("recommended_targets")
+    if not isinstance(actionable, bool) or not isinstance(targets, list):
+        base["target_verification_error"] = "invalid_shape"
+        return visible, base
+    normalized: list[dict[str, Any]] = []
+    for target in targets:
+        if not isinstance(target, dict):
+            base["target_verification_error"] = "invalid_target"
+            return visible, base
+        name = target.get("name")
+        sources = target.get("current_public_sources")
+        if not isinstance(name, str) or not name.strip() or not isinstance(sources, list) or not any(
+            isinstance(source, str) and source.strip() for source in sources
+        ):
+            base["target_verification_error"] = "invalid_target"
+            return visible, base
+        normalized.append({
+            "name": name.strip(),
+            "availability_injury_verified": target.get("availability_injury_verified") is True,
+            "role_minutes_verified": target.get("role_minutes_verified") is True,
+            "current_public_sources": [source.strip() for source in sources if isinstance(source, str) and source.strip()],
+        })
+    if not actionable and normalized:
+        base["target_verification_error"] = "targets_without_action"
+        return visible, base
+    complete = not actionable or bool(normalized) and all(
+        target["availability_injury_verified"] and target["role_minutes_verified"]
+        for target in normalized
+    )
+    return visible, {
+        "recommended_targets": normalized,
+        "required_target_research_completed": complete,
+        "target_verification_metadata_valid": True,
+        "target_verification_actionable": actionable,
+    }
+
+
 async def finalize_advisor_from_evidence(
     config: AppConfig,
     *,
@@ -659,6 +729,9 @@ async def finalize_advisor_from_evidence(
         "cache_hits": evidence.get("cache_hits", []),
         "web_search_used": False,
         "codex_used": False,
+        "recommended_targets": [],
+        "required_target_research_completed": False,
+        "target_verification_metadata_valid": False,
         "result_status": "failed",
     }
 
@@ -702,6 +775,13 @@ async def finalize_advisor_from_evidence(
         "For every player you recommend acquiring or trading for, state the current public availability/role evidence "
         "and include its source in the answer. If that verification is not available, return HOLD/no actionable recommendation "
         "instead of naming an unverified target. "
+        "End every response with one exact machine-only HTML comment, after all user-facing prose: "
+        "<!-- ADVISOR_TARGET_VERIFICATION {\"actionable\":false,\"recommended_targets\":[]} -->. "
+        "Use actionable=true only when you recommend an acquisition or trade. When actionable=true, include every ultimately "
+        "recommended incoming target, including every incoming player in a multi-player trade, in recommended_targets. Each target "
+        "must contain name, availability_injury_verified=true, role_minutes_verified=true, and a non-empty current_public_sources "
+        "array naming the sources used. If a candidate is rejected and replaced, list only the final replacement and verify it. "
+        "Never claim actionable=true unless every listed target meets those checks. "
         + command_instructions
     )
     try:
@@ -730,6 +810,10 @@ async def finalize_advisor_from_evidence(
         return finish(partial_text, "partial")
     text = discord_answer_text(response)
     if not text:
+        return finish(partial_text, "partial")
+    text, target_trace = _target_verification(text)
+    trace.update(target_trace)
+    if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
         return finish(partial_text, "partial")
     return finish(text, "complete", getattr(response, "id", None))
 

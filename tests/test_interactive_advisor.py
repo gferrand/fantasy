@@ -92,6 +92,13 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         }
 
     async def finalizer(self, output, *, mandatory=True):
+        output = list(output) + [
+            NS(type="message", content=[NS(
+                type="output_text",
+                text='<!-- ADVISOR_TARGET_VERIFICATION {"actionable":false,"recommended_targets":[]} -->',
+                annotations=[],
+            )]),
+        ]
         client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
         return await advisor.finalize_advisor_from_evidence(
             config(), command="/rotation", question="Rotate my squad", evidence=self.packet(),
@@ -125,6 +132,62 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(response.trace["web_search_used"])
         self.assertEqual(response.trace["deterministic_capabilities"], ["get_rotation_context"])
         self.assertEqual(response.trace["runtime_sha"], "unknown")
+
+    async def test_multi_player_trade_with_one_unverified_target_fails_closed(self):
+        output = [
+            NS(type="web_search_call"),
+            NS(type="message", content=[NS(
+                type="output_text",
+                text=(
+                    "Offer the package.\n"
+                    '<!-- ADVISOR_TARGET_VERIFICATION {"actionable":true,"recommended_targets":['
+                    '{"name":"Verified Incoming","availability_injury_verified":true,'
+                    '"role_minutes_verified":true,"current_public_sources":["Official club"]},'
+                    '{"name":"Unverified Incoming","availability_injury_verified":false,'
+                    '"role_minutes_verified":true,"current_public_sources":["Official club"]}]} -->'
+                ),
+                annotations=[],
+            )]),
+        ]
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/trade propose", question="Propose a trade", evidence=self.packet(),
+            command_instructions="Use deterministic packages.", mandatory_web=True,
+            partial_text="HOLD: public verification unavailable.", client=client,
+        )
+        self.assertEqual(response.text, "HOLD: public verification unavailable.")
+        self.assertEqual(response.trace["result_status"], "partial")
+        self.assertFalse(response.trace["required_target_research_completed"])
+        self.assertEqual([target["name"] for target in response.trace["recommended_targets"]], [
+            "Verified Incoming", "Unverified Incoming",
+        ])
+
+    async def test_replacement_target_is_complete_only_when_the_final_target_is_verified(self):
+        output = [
+            NS(type="web_search_call"),
+            NS(type="message", content=[NS(
+                type="output_text",
+                text=(
+                    "Target B is the verified replacement.\n"
+                    '<!-- ADVISOR_TARGET_VERIFICATION {"actionable":true,"recommended_targets":['
+                    '{"name":"Target B","availability_injury_verified":true,'
+                    '"role_minutes_verified":true,"current_public_sources":["Official club"]}]} -->'
+                ),
+                annotations=[],
+            )]),
+        ]
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/watch recommend", question="Recommend a target", evidence=self.packet(),
+            command_instructions="Verify the final target.", mandatory_web=True,
+            partial_text="HOLD: public verification unavailable.", client=client,
+        )
+        self.assertEqual(response.text, "Target B is the verified replacement.")
+        self.assertTrue(response.trace["required_target_research_completed"])
+        self.assertEqual(response.trace["recommended_targets"], [{
+            "name": "Target B", "availability_injury_verified": True,
+            "role_minutes_verified": True, "current_public_sources": ["Official club"],
+        }])
 
 
 class GuidanceTests(unittest.TestCase):

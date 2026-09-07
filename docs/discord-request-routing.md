@@ -81,5 +81,11 @@ current evidence, a bounded deadline, runtime-SHA tracing, and no Codex
 fallback. Commands requiring current football research require a web search;
 recap may finalize from completed-round evidence alone. State and operational
 commands remain direct and model-free.
+
+For an actionable acquisition or trade, the finalizer records each ultimately
+recommended incoming target plus per-target current availability/injury and
+role/minutes verification status and named public sources in the request trace.
+An incomplete target record is fail-closed: the Owner receives the command's
+HOLD/no-action partial response rather than an actionable recommendation.
 Owner-DM authorization, duplicate suppression, and mention controls remain in
 place.
