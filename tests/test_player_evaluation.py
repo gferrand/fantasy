@@ -3,13 +3,14 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from fantasy_advisor.automation import AppConfig, EXPECTED_LEAGUE_ID, EXPECTED_MANAGER_ID, player_catalog_file
 from fantasy_advisor.player_catalog import PlayerCatalogNotInitialized, read_player_catalog, refresh_player_catalog
 from fantasy_advisor.player_evaluation import get_player_evaluation_context
-from fantasy_advisor.sleeper import API_BASE, STATS_BASE, SleeperDataError
+from fantasy_advisor.sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 
 
 def config(root: Path) -> AppConfig:
@@ -96,6 +97,53 @@ class PlayerEvaluationTests(unittest.TestCase):
         self.assertTrue(any(item["field"] == "league_users" for item in packet["limitations"]))
         self.assertIn("failure=sleeper_source", "\n".join(logs.output))
         self.assertTrue(all("Sleeper" not in item["detail"] for item in packet["limitations"]))
+
+    def test_rosters_failure_keeps_ownership_unknown(self):
+        client = self.client()
+        client.values[f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters"] = SleeperDataError("transport")
+        packet = get_player_evaluation_context(self.config, "Julio Enciso", timeout=20, client=client)
+        evidence = packet["data"]["player_evaluation"]
+        self.assertEqual(packet["status"], "partial")
+        self.assertEqual(evidence["ownership"], {"state": "unknown"})
+        self.assertTrue(any(item["kind"] == "temporarily_unavailable" and item["field"] == "league_rosters" for item in packet["limitations"]))
+        self.assertFalse(any(item.get("state") == "unrostered_unclassified" for item in [evidence["ownership"]]))
+
+    def test_invalid_rosters_keeps_ownership_unknown(self):
+        client = self.client()
+        client.values[f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters"] = [{"owner_id": "other", "players": "not-a-list"}]
+        packet = get_player_evaluation_context(self.config, "Julio Enciso", timeout=20, client=client)
+        self.assertEqual(packet["data"]["player_evaluation"]["ownership"], {"state": "unknown"})
+        self.assertTrue(any(item["field"] == "league_rosters" for item in packet["limitations"]))
+
+    def test_packet_deadline_bounds_request_and_stops_following_reads(self):
+        calls: list[float] = []
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def slow_opener(request, *, timeout):
+            calls.append(timeout)
+            time.sleep(timeout + 0.01)
+            return Response()
+
+        started = time.monotonic()
+        packet = get_player_evaluation_context(
+            self.config, "Julio Enciso", timeout=0.03,
+            client=SleeperClient(timeout=8, retries=1, opener=slow_opener),
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(packet["status"], "partial")
+        self.assertEqual(len(calls), 1)
+        self.assertLessEqual(calls[0], 0.03)
+        self.assertLess(elapsed, 0.08)
+        self.assertTrue(any(item["field"] == "packet_deadline" for item in packet["limitations"]))
 
     def test_timeout_validation_local_and_profile_failures_are_diagnosed_safely(self):
         timeout = SleeperDataError("timeout")
