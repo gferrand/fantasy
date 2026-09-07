@@ -736,6 +736,17 @@ async def finalize_advisor_from_evidence(
     }
 
     def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
+        # Every fail-closed partial text supplied by a slash command is an
+        # explicitly non-actionable HOLD/inventory response.  Make that fact
+        # observable even when a model omitted its otherwise-required marker;
+        # never return the unmarked model prose.
+        if status == "partial" and not trace["target_verification_metadata_valid"]:
+            trace.update({
+                "recommended_targets": [],
+                "required_target_research_completed": True,
+                "target_verification_actionable": False,
+                "target_verification_fallback": "no_action",
+            })
         trace["result_status"] = status
         trace["elapsed_seconds"] = round(time.monotonic() - started, 2)
         LOGGER.info("advisor_trace %s", json.dumps(trace, sort_keys=True, default=str))

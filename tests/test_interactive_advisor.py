@@ -133,6 +133,22 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.trace["deterministic_capabilities"], ["get_rotation_context"])
         self.assertEqual(response.trace["runtime_sha"], "unknown")
 
+    async def test_missing_target_metadata_returns_a_traced_no_action_partial(self):
+        output = [
+            NS(type="web_search_call"),
+            NS(type="message", content=[NS(type="output_text", text="Unmarked answer", annotations=[])]),
+        ]
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/injury opportunities", question="Find opportunities", evidence=self.packet(),
+            command_instructions="Use current injuries.", mandatory_web=True,
+            partial_text="HOLD: public verification unavailable.", client=client,
+        )
+        self.assertEqual(response.text, "HOLD: public verification unavailable.")
+        self.assertEqual(response.trace["recommended_targets"], [])
+        self.assertTrue(response.trace["required_target_research_completed"])
+        self.assertEqual(response.trace["target_verification_fallback"], "no_action")
+
     async def test_multi_player_trade_with_one_unverified_target_fails_closed(self):
         output = [
             NS(type="web_search_call"),
