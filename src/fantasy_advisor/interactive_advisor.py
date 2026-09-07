@@ -1,4 +1,4 @@
-"""OpenAI advice with at most two bounded private-data retrievals."""
+"""OpenAI advice with a bounded deterministic Fantasy capability loop."""
 
 from __future__ import annotations
 
@@ -210,6 +210,10 @@ roster-fit decision, request the typed player_evaluation packet; it is
 application evidence, not a request for the owner to look up Sleeper. Treat
 partial packets as evidence for a conditional answer and never relabel Sleeper
 standard `pts_std` as Kick & Run scoring.
+For a compound request, gather each materially requested private context before
+finalizing (for example, roster, watchlist, activity, and league scoring), up
+to that four-call limit. Do not claim an available context was absent if you
+did not request its named capability.
 
 Reply for a private Discord DM: use short paragraphs and bold player names; do
 not use tables, code blocks, backend names, task IDs, planner text, or retrieval
@@ -534,10 +538,11 @@ async def run_advisor(
     if can_followup:
         tools.extend(FANTASY_TOOLS)
         tools.append(FOLLOWUP_TOOL)  # narrow unsupported-private fallback only
+    max_tool_calls = 2 if legacy_planner else 4
     try:
         answer_kwargs: dict[str, Any] = {"tools": tools}
         if can_followup:
-            answer_kwargs["parallel_tool_calls"] = False
+            answer_kwargs["parallel_tool_calls"] = not legacy_planner
         answer = await response(
             instructions=final_advisor_instructions(reasoning_standard, contract),
             budget=min(30, deadline.remaining(35)) if can_followup else deadline.remaining(),
@@ -557,9 +562,17 @@ async def run_advisor(
             budget=deadline.remaining(), tools=tools[:1],
         )
     calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
-    if calls:
-        names = {tool["name"] for tool in FANTASY_TOOLS} | {FOLLOWUP_TOOL["name"]}
-        if not can_followup or len(calls) > 4 or any(getattr(call, "name", None) not in names for call in calls) or (any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1):
+    tool_calls = len(evidence) if legacy_planner else 0
+    names = {tool["name"] for tool in FANTASY_TOOLS} | {FOLLOWUP_TOOL["name"]}
+    while calls:
+        remaining_calls = max_tool_calls - tool_calls
+        if (
+            not can_followup
+            or not remaining_calls
+            or len(calls) > remaining_calls
+            or any(getattr(call, "name", None) not in names for call in calls)
+            or (any(call.name == FOLLOWUP_TOOL["name"] for call in calls) and len(calls) != 1)
+        ):
             raise AutomationError("The advisor returned an invalid additional-data request")
         tool_budget = min(45, deadline.remaining(FINAL_RESERVE_SECONDS + 3)) / len(calls)
         for call in calls:
@@ -576,22 +589,37 @@ async def run_advisor(
                 )
                 evidence.append(facts)
                 await retain_private_evidence(facts, source=f"advisor_tool:{call.name}")
-        # Keep the first answer's public evidence as untrusted context, avoiding
-        # another retrieval of already researched facts. No raw tool calls leak.
-        payload["prior_public_research"] = [
+        tool_calls += len(calls)
+        # Keep public research as untrusted context without repeating it.
+        prior_public_research = payload.setdefault("prior_public_research", [])
+        prior_public_research.extend(
             item.model_dump(mode="json") for item in getattr(answer, "output", [])
             if getattr(item, "type", None) == "message" and hasattr(item, "model_dump")
-        ]
+        )
+        if tool_calls == max_tool_calls or deadline.remaining() <= FINAL_RESERVE_SECONDS:
+            answer = await response(
+                instructions=final_advisor_instructions(
+                    reasoning_standard,
+                    contract,
+                    "No further private retrievals are available. Produce the final answer now.",
+                ),
+                budget=deadline.remaining(), tools=tools[:1],
+            )
+            calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
+            if calls:
+                raise AutomationError("The advisor exceeded the private-data retrieval limit")
+            break
         answer = await response(
             instructions=final_advisor_instructions(
                 reasoning_standard,
                 contract,
-                "No further private retrievals are available. Produce the final answer now.",
+                "Request another named capability only if it is material to the Owner's question; otherwise produce the final answer now.",
             ),
-            budget=deadline.remaining(), tools=tools[:1],
+            budget=min(30, deadline.remaining(FINAL_RESERVE_SECONDS + 3)),
+            tools=tools,
+            parallel_tool_calls=True,
         )
-        if any(getattr(item, "type", None) == "function_call" for item in getattr(answer, "output", [])):
-            raise AutomationError("The advisor exceeded the private-data retrieval limit")
+        calls = [item for item in getattr(answer, "output", []) if getattr(item, "type", None) == "function_call"]
     text = discord_answer_text(answer)
     if not text:
         raise AutomationError("The OpenAI advisor completed without an answer")
