@@ -780,7 +780,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 research_error = None
                 # Keep this single structured public-research pass inside the
                 # command deadline and leave enough time to render its answer.
-                research_budget = min(55.0, deadline.remaining(35.0))
+                research_budget = min(60.0, deadline.remaining(35.0))
                 if research_budget <= 0:
                     research_error = "Current public timetable research could not start before the response deadline."
                 else:
