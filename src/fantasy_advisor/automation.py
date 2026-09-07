@@ -1209,7 +1209,28 @@ def _selected_injury_ids(live_context: str) -> set[str]:
 
 def _covers_selected_injuries(research: InjuryResearch, selected_ids: set[str]) -> bool:
     returned = [str(item.get("player_id") or "").strip() for item in research.injuries]
-    return len(returned) == len(selected_ids) and set(returned) == selected_ids
+    if len(returned) != len(selected_ids) or set(returned) != selected_ids:
+        return False
+    for item in research.injuries:
+        summary = str(item.get("injury_summary") or "").strip()
+        window = str(item.get("return_window") or "").strip()
+        confidence = str(item.get("confidence") or "").strip()
+        sources = item.get("sources")
+        if not summary or not window or confidence not in {"high", "medium", "low", "unknown"}:
+            return False
+        # An explicit inability to verify may honestly have no source. Any
+        # affirmative injury/timetable claim, however, needs public support.
+        no_factual_claim = summary == "Injury details not verified" and window == "No reliable timetable"
+        if not no_factual_claim and not isinstance(sources, list):
+            return False
+        if not no_factual_claim and not any(
+            isinstance(source, dict)
+            and str(source.get("title") or "").strip()
+            and str(source.get("url") or "").strip()
+            for source in sources
+        ):
+            return False
+    return True
 
 
 def _response_used_web_search(response: object) -> bool:

@@ -738,6 +738,9 @@ async def finalize_advisor_from_evidence(
     }
     if trace_fields:
         trace.update(trace_fields)
+        trace["web_search_used"] = bool(
+            trace["web_search_used"] or trace.get("timeline_research_web_used")
+        )
 
     def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
         # Every fail-closed partial text supplied by a slash command is an

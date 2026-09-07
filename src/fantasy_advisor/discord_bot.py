@@ -774,6 +774,7 @@ def build_client(config: AppConfig) -> discord.Client:
                     "timeline_research_completed": False,
                     "timeline_research_web_used": False,
                     "timeline_research_retry_used": False,
+                    "web_search_used": False,
                 }
                 research = None
                 research_error = None
@@ -797,6 +798,7 @@ def build_client(config: AppConfig) -> discord.Client:
                             "timeline_research_completed": True,
                             "timeline_research_web_used": research.web_search_used,
                             "timeline_research_retry_used": research.retry_used,
+                            "web_search_used": research.web_search_used,
                         })
                     except (AutomationError, TimeoutError) as exc:
                         LOGGER.warning("Current injury timeline research was unavailable; returning Sleeper inventory", exc_info=True)

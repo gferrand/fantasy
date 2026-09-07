@@ -424,9 +424,13 @@ def render_injury_opportunities(
     }
     researched_ids = None if researched_player_ids is None else {str(item) for item in researched_player_ids}
     if researched_ids is not None:
+        coverage = (
+            f"Current public return reporting was checked for {len(researched_ids)} priority Fantasy injury asset(s)."
+            if research is not None
+            else f"Current public return reporting could not be completed for {len(researched_ids)} priority Fantasy injury asset(s)."
+        )
         lines.extend((
-            f"*Current public return reporting was checked for {len(researched_ids)} priority Fantasy injury asset(s). "
-            "Other listed flags retain Sleeper status only.*",
+            f"*{coverage} Other listed flags retain Sleeper status only.*",
             "",
         ))
     for category, heading in (("out", "🚑 **Out**"), ("doubt", "⚠️ **GTD / Questionable**")):

@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from fantasy_advisor.automation import AppConfig, FANTASY_CODEX_MODEL, FANTASY_CODEX_REASONING_EFFORT
 from fantasy_advisor import discord_bot
 from fantasy_advisor.discord_bot import build_client
+from fantasy_advisor.injury_opportunities import InjuryResearch
 
 
 def _test_config():
@@ -67,7 +68,7 @@ class DiscordBotTests(unittest.TestCase):
             ("watch_recommend_command", "load_current_watchlist_recommendation_context"),
         ):
             with self.subTest(callback=callback):
-                block = source.split(f"async def {callback}", 1)[1][:3_500]
+                block = source.split(f"async def {callback}", 1)[1][:6_000]
                 self.assertIn(capability, block)
                 self.assertIn("finalize_advisor_from_evidence", block)
                 self.assertNotIn("run_advisor(", block)
@@ -112,13 +113,15 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 "channel": channel,
             },
         )()
-        fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
+        fake_context = type("Context", (), {"payload": {}, "retrieved_at": "now"})()
         long_report = "\n\n".join(["x" * 1800] * 6)
+        research = InjuryResearch((), (), web_search_used=True)
         with (
             patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
             patch("fantasy_advisor.discord_bot.injury_timeline_research_context", return_value={"injured_players": []}),
-            patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
+            patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=research),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=long_report),
+            patch("fantasy_advisor.discord_bot.finalize_advisor_from_evidence", new_callable=AsyncMock, return_value=type("Result", (), {"text": "", "trace": {"result_status": "partial"}})()),
         ):
             await command.callback(interaction)
 
@@ -147,13 +150,15 @@ class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
                 "channel": channel,
             },
         )()
-        fake_context = type("Context", (), {"as_json": lambda self: "{}"})()
+        fake_context = type("Context", (), {"payload": {}, "retrieved_at": "now"})()
         report = "🩺 **Injury opportunities**\nNo current injuries."
+        research = InjuryResearch((), (), web_search_used=True)
         with (
             patch("fantasy_advisor.discord_bot.get_injury_opportunity_context", return_value=fake_context),
             patch("fantasy_advisor.discord_bot.injury_timeline_research_context", return_value={"injured_players": []}),
-            patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=object()),
+            patch("fantasy_advisor.discord_bot.run_injury_web_briefing", return_value=research),
             patch("fantasy_advisor.discord_bot.render_injury_opportunities", return_value=report),
+            patch("fantasy_advisor.discord_bot.finalize_advisor_from_evidence", new_callable=AsyncMock, return_value=type("Result", (), {"text": "", "trace": {"result_status": "partial"}})()),
         ):
             await command.callback(interaction)
 

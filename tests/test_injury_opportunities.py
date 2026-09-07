@@ -16,6 +16,7 @@ from fantasy_advisor.automation import (
     run_injury_web_briefing,
 )
 from fantasy_advisor.injury_opportunities import (
+    InjuryResearch,
     build_injury_opportunities_context,
     injury_timeline_research_context,
     load_injury_opportunities_context,
@@ -85,6 +86,18 @@ class InjuryContextTests(unittest.TestCase):
         selected = injury_timeline_research_context(context)
         self.assertEqual([item["player_id"] for item in selected["injured_players"]], ["1", "9"])
         self.assertNotIn("2", [item["player_id"] for item in selected["injured_players"]])
+
+    def test_timeline_research_is_bounded_to_twelve_relevant_assets(self):
+        context = context_fixture()
+        for index in range(9, 24):
+            context.payload["injured_players"].append({
+                "player_id": str(index), "name": f"Relevant {index}", "club": "ARS",
+                "ownership": {"rostered": True, "team": "Team One"}, "status_category": "out",
+                "custom_points": float(index), "minutes": 200.0,
+            })
+        selected = injury_timeline_research_context(context)
+        self.assertEqual(len(selected["injured_players"]), 12)
+        self.assertGreater(len(context.payload["injured_players"]), 12)
 
     def test_load_fetches_complete_players_rosters_users_and_current_stats(self):
         class FakeClient:
@@ -175,7 +188,8 @@ class InjuryWebTests(unittest.TestCase):
         payload = {
             "injuries": [{
                 "player_id": "1", "injury_summary": "Club report confirms a knock.",
-                "return_window": "Expected within two weeks", "confidence": "medium", "sources": [],
+                "return_window": "Expected within two weeks", "confidence": "medium",
+                "sources": [{"title": "Club update", "url": "https://example.com/update"}],
             }],
             "opportunities": [],
         }
@@ -186,7 +200,10 @@ class InjuryWebTests(unittest.TestCase):
 
             def create(self, **kwargs):
                 self.calls.append(kwargs)
-                return type("Response", (), {"output_text": json.dumps(payload)})()
+                return type("Response", (), {
+                    "output_text": json.dumps(payload),
+                    "output": [type("WebCall", (), {"type": "web_search_call"})()],
+                })()
 
         responses = FakeResponses()
         fake_client = type("Client", (), {"responses": responses})()
@@ -197,6 +214,7 @@ class InjuryWebTests(unittest.TestCase):
         self.assertEqual(result.injuries[0]["player_id"], "1")
         call = responses.calls[0]
         self.assertEqual(call["tools"], [{"type": "web_search_preview", "search_context_size": "medium"}])
+        self.assertEqual(call["tool_choice"], "required")
         self.assertTrue(call["text"]["format"]["strict"])
         self.assertFalse(call["store"])
 
@@ -205,7 +223,8 @@ class InjuryWebTests(unittest.TestCase):
         complete = {
             "injuries": [{
                 "player_id": "1", "injury_summary": "Club report confirms a knock.",
-                "return_window": "No reliable timetable", "confidence": "unknown", "sources": [],
+                "return_window": "No reliable timetable", "confidence": "unknown",
+                "sources": [{"title": "Club update", "url": "https://example.com/update"}],
             }],
             "opportunities": [],
         }
@@ -217,7 +236,10 @@ class InjuryWebTests(unittest.TestCase):
             def create(self, **kwargs):
                 self.calls.append(kwargs)
                 payload = incomplete if len(self.calls) == 1 else complete
-                return type("Response", (), {"output_text": json.dumps(payload)})()
+                return type("Response", (), {
+                    "output_text": json.dumps(payload),
+                    "output": [type("WebCall", (), {"type": "web_search_call"})()],
+                })()
 
         responses = FakeResponses()
         fake_client = type("Client", (), {"responses": responses})()
@@ -228,6 +250,26 @@ class InjuryWebTests(unittest.TestCase):
         self.assertEqual(result.injuries[0]["return_window"], "No reliable timetable")
         self.assertEqual(len(responses.calls), 2)
         self.assertIn("prior response omitted", responses.calls[1]["input"].casefold())
+
+    def test_runner_rejects_structured_response_without_a_web_call(self):
+        payload = {
+            "injuries": [{
+                "player_id": "1", "injury_summary": "Claim from model memory.",
+                "return_window": "One week", "confidence": "medium", "sources": [],
+            }],
+            "opportunities": [],
+        }
+
+        class FakeResponses:
+            def create(self, **kwargs):
+                return type("Response", (), {"output_text": json.dumps(payload), "output": []})()
+
+        fake_client = type("Client", (), {"responses": FakeResponses()})()
+        with patch("openai.OpenAI", return_value=fake_client):
+            with self.assertRaisesRegex(Exception, "did not return every selected timetable"):
+                run_injury_web_briefing(
+                    self._config(), live_context=json.dumps({"injured_players": [{"player_id": "1"}]}),
+                )
 
 
 if __name__ == "__main__":

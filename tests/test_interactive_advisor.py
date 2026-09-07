@@ -123,6 +123,29 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.trace["result_status"], "complete")
         self.assertEqual(response.trace["command"], "/rotation")
 
+    async def test_pre_researched_evidence_skips_duplicate_finalizer_web_search(self):
+        output = [NS(type="message", content=[NS(
+            type="output_text",
+            text='Timeline-backed assessment\n<!-- ADVISOR_TARGET_VERIFICATION {"actionable":false,"recommended_targets":[]} -->',
+            annotations=[],
+        )])]
+        create = AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))
+        client = NS(responses=NS(create=create))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/injury opportunities", question="Assess injuries", evidence=self.packet(),
+            command_instructions="Use supplied timeline evidence.", mandatory_web=False,
+            web_enabled=False, partial_text="Inventory only.", client=client,
+            trace_fields={
+                "timeline_research_selected_count": 12,
+                "timeline_research_web_used": True,
+                "timeline_research_completed": True,
+            },
+        )
+        self.assertEqual(response.text, "Timeline-backed assessment")
+        self.assertTrue(response.trace["web_search_used"])
+        self.assertTrue(response.trace["timeline_research_completed"])
+        self.assertNotIn("tools", create.await_args.kwargs)
+
     async def test_mandatory_web_trace_records_current_evidence_path(self):
         response = await self.finalizer([
             NS(type="web_search_call"),

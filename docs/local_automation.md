@@ -256,15 +256,20 @@ label every pickup/drop as a manual Sleeper decision.
 Use `/injury opportunities` for a fresh scan of every active EPL player Sleeper
 marks Out or GTD/Questionable, including unrostered players. The report keeps
 that complete Sleeper inventory, while a single bounded public-web pass checks
-return reporting only for the most Fantasy-interesting injuries: rostered trade
-assets and players with meaningful current production or minutes. It labels the
-coverage so an unresearched status flag is never mistaken for a researched
-return outlook. The researched players receive only source-supported timelines;
+return reporting for at most 12 Fantasy-interesting injuries: rostered trade
+assets and players with meaningful current production or minutes. A deterministic
+selector—not another model—chooses that bounded set. It labels coverage so an
+unresearched status flag is never mistaken for a researched return outlook. The
+structured public-timetable pass must actually use web research and account for
+every selected player exactly once; it retries once for an incomplete batch and
+otherwise returns the safe Sleeper inventory. The shared slash Advisor finalizer
+receives that already-researched evidence, so it does not perform a duplicate
+broad injury search. Researched players receive only source-supported timelines;
 the command then ranks up to eight credible playing-time beneficiaries with
 unrostered league options first. Suspensions are excluded. If current injury
 research is unavailable, the command still returns Sleeper's complete status
-inventory and labels details and timetables unknown; it does not infer a
-recovery window.
+inventory, distinguishes that failure from a researched `No reliable timetable`,
+and never infers a recovery window.
 The complete report is split across ordinary Discord DM messages when needed;
 the command does not send report attachments.
 
