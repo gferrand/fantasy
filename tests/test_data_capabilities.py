@@ -130,6 +130,27 @@ def test_draft_context_returns_only_a_small_pick_neighborhood():
         assert [pick["player"]["name"] for pick in packet["data"]["picks"]] == ["Unknown player", "Player X", "Unknown player"]
 
 
+def test_draft_context_resolves_an_unambiguous_player_surname():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory); app = config(root)
+        refresh_player_catalog(root / "data/automation/player_catalog.sqlite3", {
+            "damsgaard": {
+                "player_id": "damsgaard", "full_name": "Mikkel Damsgaard",
+                "team_abbr": "BRE", "fantasy_positions": ["M"],
+                "competitions": ["epl"], "active": True, "status": "ACTIVE",
+            },
+        })
+        client = FakeSleeper({
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}": {"draft_id": "draft"},
+            f"{API_BASE}/draft/draft/picks": [{"pick_no": 29, "player_id": "damsgaard", "roster_id": 1}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/users": [{"user_id": "owner", "metadata": {"team_name": "Los Blancos"}}],
+            f"{API_BASE}/league/{EXPECTED_LEAGUE_ID}/rosters": [{"owner_id": "owner", "roster_id": 1, "players": []}],
+        })
+        packet = DataCapabilities(app, timeout=10, client=client).get_draft_context("Damsgaard")
+        assert packet["status"] == "complete"
+        assert packet["data"]["player"]["name"] == "Mikkel Damsgaard"
+
+
 def test_trends_are_bounded_and_never_presented_as_availability():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
