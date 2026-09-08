@@ -11,11 +11,23 @@
 | Output | Concise briefing in the task conversation |
 | Permissions | Read-only; no Sleeper actions |
 
-The local scheduler retrieves a current validated compact Sleeper feed and
-finalizes the report with OpenAI in the Owner bot DM. This document preserves
-the report contract; it is not executed through ChatGPT Scheduled Tasks or
-Codex. The embedded context below is fallback guidance only, not authority for
-the current roster, scoring map, or player IDs.
+The local scheduler finalizes the report with OpenAI in the Owner bot DM. This
+document preserves legacy report guidance; it is not executed through ChatGPT
+Scheduled Tasks or Codex. The embedded context below is fallback guidance only,
+not authority for the current roster, scoring map, or player IDs.
+
+## Current scheduled-report authority
+
+The runtime uses the same current deterministic capabilities as the accepted
+Advisor surfaces: Sleeper roster and league context, gameweek-prepare context,
+the maintained fixture schedule, waiver context, and current league activity.
+The compact feed and prior report state are not competing factual authorities.
+Public research is required for current availability and role/minutes claims.
+An acquisition appears only after its deterministic unrostered state, fixture,
+availability, role, and public sources pass structured validation; otherwise
+the card says **No verified pickup move tonight.** Current-season scoring
+differences are ranking signals, never future projections. Sources use compact
+Discord links so they do not create webpage previews.
 
 ## Report behavior specification
 
