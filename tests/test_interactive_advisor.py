@@ -85,21 +85,41 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             "status": "complete",
             "capability": "get_rotation_context",
             "arguments": {},
-            "data": {"current_roster": ["Current Player"]},
+            "data": {
+                "your_roster_player_ids": ["mateta"],
+                "current_roster": [{"player_id": "mateta", "name": "Jean-Philippe Mateta"}],
+                "beneficiary_candidates": [
+                    {"player_id": "strand", "name": "Jørgen Strand Larsen", "ownership": {"rostered": False, "on_your_team": False}},
+                    {"player_id": "frimpong", "name": "Jeremie Frimpong", "ownership": {"rostered": False, "on_your_team": False}},
+                    {"player_id": "mateta", "name": "Jean-Philippe Mateta", "ownership": {"rostered": True, "on_your_team": True}},
+                    {"player_id": "incoming", "name": "Verified Incoming", "ownership": {"rostered": True, "on_your_team": False}},
+                    {"player_id": "unverified", "name": "Unverified Incoming", "ownership": {"rostered": True, "on_your_team": False}},
+                    {"player_id": "target-b", "name": "Target B", "ownership": {"rostered": False, "on_your_team": False}},
+                ],
+            },
             "limitations": [],
             "sources": [{"source": "Fantasy rotation", "retrieved_at": datetime.now(timezone.utc).isoformat(), "stale": False}],
             "cache_hits": [],
         }
 
-    async def finalizer(self, output, *, mandatory=True):
-        output = list(output) + [
-            NS(type="message", content=[NS(
-                type="output_text",
-                text='<!-- ADVISOR_TARGET_VERIFICATION {"actionable":false,"recommended_targets":[]} -->',
-                annotations=[],
-            )]),
-        ]
-        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+    @staticmethod
+    def hold(analysis="Current analysis", summary="No verified move is available."):
+        return json.dumps({"analysis": analysis, "decision": {"actionable": False, "summary": summary, "targets": []}})
+
+    @staticmethod
+    def target(player_id, name, *, verified=True):
+        return {
+            "player_id": player_id, "name": name,
+            "rationale": "Current evidence supports the move.",
+            "availability_injury_verified": verified,
+            "role_minutes_verified": True,
+            "current_public_sources": [{"title": "Official club", "url": "https://example.com/current"}],
+        }
+
+    async def finalizer(self, output, *, mandatory=True, payload=None):
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=list(output), output_text=payload or self.hold(),
+        ))))
         return await advisor.finalize_advisor_from_evidence(
             config(), command="/rotation", question="Rotate my squad", evidence=self.packet(),
             command_instructions="Use only current roster evidence.", mandatory_web=mandatory,
@@ -118,27 +138,45 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
     async def test_optional_recap_can_finalize_without_web_search(self):
         response = await self.finalizer([
             NS(type="message", content=[NS(type="output_text", text="Verified recap", annotations=[])]),
-        ], mandatory=False)
-        self.assertEqual(response.text, "Verified recap")
+        ], mandatory=False, payload=self.hold("Verified recap"))
+        self.assertIn("Verified recap", response.text)
         self.assertEqual(response.trace["result_status"], "complete")
         self.assertEqual(response.trace["command"], "/rotation")
+
+    async def test_pre_researched_evidence_skips_duplicate_finalizer_web_search(self):
+        output = [NS(type="message", content=[])]
+        create = AsyncMock(return_value=NS(id="slash-response", output=output, output_text=self.hold("Timeline-backed assessment")))
+        client = NS(responses=NS(create=create))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/injury opportunities", question="Assess injuries", evidence=self.packet(),
+            command_instructions="Use supplied timeline evidence.", mandatory_web=False,
+            web_enabled=False, partial_text="Inventory only.", client=client,
+            trace_fields={
+                "timeline_research_selected_count": 12,
+                "timeline_research_web_used": True,
+                "timeline_research_completed": True,
+            },
+        )
+        self.assertIn("Timeline-backed assessment", response.text)
+        self.assertTrue(response.trace["web_search_used"])
+        self.assertTrue(response.trace["timeline_research_completed"])
+        self.assertNotIn("tools", create.await_args.kwargs)
+        self.assertEqual(create.await_args.kwargs["text"]["format"]["name"], "advisor_slash_finalization")
+        self.assertTrue(create.await_args.kwargs["text"]["format"]["strict"])
 
     async def test_mandatory_web_trace_records_current_evidence_path(self):
         response = await self.finalizer([
             NS(type="web_search_call"),
             NS(type="message", content=[NS(type="output_text", text="Current answer", annotations=[])]),
-        ])
-        self.assertEqual(response.text, "Current answer")
+        ], payload=self.hold("Current answer"))
+        self.assertIn("Current answer", response.text)
         self.assertTrue(response.trace["web_search_used"])
         self.assertEqual(response.trace["deterministic_capabilities"], ["get_rotation_context"])
         self.assertEqual(response.trace["runtime_sha"], "unknown")
 
     async def test_missing_target_metadata_returns_a_traced_no_action_partial(self):
-        output = [
-            NS(type="web_search_call"),
-            NS(type="message", content=[NS(type="output_text", text="Unmarked answer", annotations=[])]),
-        ]
-        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        output = [NS(type="web_search_call")]
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="not-json"))))
         response = await advisor.finalize_advisor_from_evidence(
             config(), command="/injury opportunities", question="Find opportunities", evidence=self.packet(),
             command_instructions="Use current injuries.", mandatory_web=True,
@@ -146,7 +184,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.text, "HOLD: public verification unavailable.")
         self.assertEqual(response.trace["recommended_targets"], [])
-        self.assertTrue(response.trace["required_target_research_completed"])
+        self.assertFalse(response.trace["required_target_research_completed"])
         self.assertEqual(response.trace["target_verification_fallback"], "no_action")
 
     async def test_multi_player_trade_with_one_unverified_target_fails_closed(self):
@@ -155,17 +193,16 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             NS(type="message", content=[NS(
                 type="output_text",
                 text=(
-                    "Offer the package.\n"
-                    '<!-- ADVISOR_TARGET_VERIFICATION {"actionable":true,"recommended_targets":['
-                    '{"name":"Verified Incoming","availability_injury_verified":true,'
-                    '"role_minutes_verified":true,"current_public_sources":["Official club"]},'
-                    '{"name":"Unverified Incoming","availability_injury_verified":false,'
-                    '"role_minutes_verified":true,"current_public_sources":["Official club"]}]} -->'
+                    "ignored"
                 ),
                 annotations=[],
             )]),
         ]
-        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        payload = json.dumps({"analysis": "Package review.", "decision": {"actionable": True, "summary": "Offer it.", "targets": [
+            self.target("incoming", "Verified Incoming"),
+            self.target("unverified", "Unverified Incoming", verified=False),
+        ]}})
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text=payload))))
         response = await advisor.finalize_advisor_from_evidence(
             config(), command="/trade propose", question="Propose a trade", evidence=self.packet(),
             command_instructions="Use deterministic packages.", mandatory_web=True,
@@ -174,9 +211,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.text, "HOLD: public verification unavailable.")
         self.assertEqual(response.trace["result_status"], "partial")
         self.assertFalse(response.trace["required_target_research_completed"])
-        self.assertEqual([target["name"] for target in response.trace["recommended_targets"]], [
-            "Verified Incoming", "Unverified Incoming",
-        ])
+        self.assertEqual(response.trace["recommended_targets"], [])
 
     async def test_replacement_target_is_complete_only_when_the_final_target_is_verified(self):
         output = [
@@ -184,26 +219,104 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
             NS(type="message", content=[NS(
                 type="output_text",
                 text=(
-                    "Target B is the verified replacement.\n"
-                    '<!-- ADVISOR_TARGET_VERIFICATION {"actionable":true,"recommended_targets":['
-                    '{"name":"Target B","availability_injury_verified":true,'
-                    '"role_minutes_verified":true,"current_public_sources":["Official club"]}]} -->'
+                    "ignored"
                 ),
                 annotations=[],
             )]),
         ]
-        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="model text"))))
+        payload = json.dumps({"analysis": "Target A was rejected.", "decision": {"actionable": True, "summary": "Use B.", "targets": [
+            self.target("target-b", "Target B"),
+        ]}})
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text=payload))))
         response = await advisor.finalize_advisor_from_evidence(
             config(), command="/watch recommend", question="Recommend a target", evidence=self.packet(),
             command_instructions="Verify the final target.", mandatory_web=True,
             partial_text="HOLD: public verification unavailable.", client=client,
         )
-        self.assertEqual(response.text, "Target B is the verified replacement.")
+        self.assertIn("Add Target B", response.text)
         self.assertTrue(response.trace["required_target_research_completed"])
-        self.assertEqual(response.trace["recommended_targets"], [{
-            "name": "Target B", "availability_injury_verified": True,
-            "role_minutes_verified": True, "current_public_sources": ["Official club"],
-        }])
+        self.assertEqual([target["name"] for target in response.trace["recommended_targets"]], ["Target B"])
+
+    async def test_visible_action_is_rendered_from_every_structured_target(self):
+        payload = json.dumps({"analysis": "Current injury context supports two adds and one trade.", "decision": {
+            "actionable": True, "summary": "Act on all three.", "targets": [
+                self.target("strand", "Jørgen Strand Larsen"),
+                self.target("frimpong", "Jeremie Frimpong"),
+                self.target("incoming", "Verified Incoming"),
+            ],
+        }})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertEqual([target["name"] for target in response.trace["recommended_targets"]], [
+            "Jørgen Strand Larsen", "Jeremie Frimpong", "Verified Incoming",
+        ])
+        self.assertIn("Add Jørgen Strand Larsen", response.text)
+        self.assertIn("Add Jeremie Frimpong", response.text)
+        self.assertIn("Trade for Verified Incoming", response.text)
+
+    async def test_exact_injury_failure_shape_keeps_every_visible_target_in_trace(self):
+        packet = self.packet()
+        packet["data"]["your_roster_player_ids"] = []
+        packet["data"]["beneficiary_candidates"].append({
+            "player_id": "mateta-external", "name": "Jean-Philippe Mateta",
+            "ownership": {"rostered": True, "on_your_team": False},
+        })
+        payload = json.dumps({"analysis": "The injuries create two adds and one buy-low trade.", "decision": {
+            "actionable": True, "summary": "Make the three manual moves.", "targets": [
+                self.target("strand", "Jørgen Strand Larsen"),
+                self.target("frimpong", "Jeremie Frimpong"),
+                self.target("mateta-external", "Jean-Philippe Mateta"),
+            ],
+        }})
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=[NS(type="web_search_call")], output_text=payload,
+        ))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/injury opportunities", question="Find opportunities", evidence=packet,
+            command_instructions="Use current injuries.", mandatory_web=False,
+            partial_text="HOLD: public verification unavailable.", client=client,
+        )
+        self.assertEqual([target["name"] for target in response.trace["recommended_targets"]], [
+            "Jørgen Strand Larsen", "Jeremie Frimpong", "Jean-Philippe Mateta",
+        ])
+        self.assertIn("Trade for Jean-Philippe Mateta", response.text)
+
+    async def test_target_rationale_cannot_contradict_deterministic_ownership(self):
+        payload = json.dumps({"analysis": "One current target is worth considering.", "decision": {
+            "actionable": True, "summary": "Act.", "targets": [
+                {
+                    **self.target("incoming", "Verified Incoming"),
+                    "rationale": "Currently unrostered with a clear role.",
+                },
+            ],
+        }})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertEqual(response.trace["result_status"], "partial")
+        self.assertEqual(response.trace["target_verification_error"], "target_ownership_claim_mismatch")
+
+    async def test_rendered_target_availability_comes_from_current_evidence(self):
+        payload = json.dumps({"analysis": "One current target is worth considering.", "decision": {
+            "actionable": True, "summary": "Act.", "targets": [
+                self.target("incoming", "Verified Incoming"),
+            ],
+        }})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertIn("Current Fantasy availability: rostered in Kick & Run.", response.text)
+        self.assertEqual(response.trace["recommended_targets"][0]["action"], "trade_for")
+
+    async def test_current_roster_player_cannot_be_an_incoming_target(self):
+        payload = json.dumps({"analysis": "Mateta is injured.", "decision": {"actionable": True, "summary": "Buy low.", "targets": [
+            self.target("mateta", "Jean-Philippe Mateta"),
+        ]}})
+        response = await self.finalizer([NS(type="web_search_call")], payload=payload)
+        self.assertEqual(response.trace["result_status"], "partial")
+        self.assertEqual(response.trace["target_verification_error"], "target_already_on_your_team")
+
+    async def test_rejected_or_monitor_only_players_are_not_targets(self):
+        response = await self.finalizer([NS(type="web_search_call")], payload=self.hold(
+            "Discuss Target A as rejected and Target B as monitor-only.", "Neither warrants a move now.",
+        ))
+        self.assertEqual(response.trace["recommended_targets"], [])
+        self.assertIn("HOLD", response.text)
 
 
 class GuidanceTests(unittest.TestCase):

@@ -21,7 +21,7 @@ All 18 currently registered application commands are in `src/fantasy_advisor/dis
 | `/watch stats` | `load_current_watchlist_stats` and `build_player_stat_profile` | deterministic stat card | none | Yes: reuse exact profile. |
 | `/watch outlook` | canonical watchlist (first 12 maximum) + current stats | direct retrieval, then shared finalizer with required public outlook research | none | Yes: facts plus public research. |
 | `/watch recommend` | recommendation context + swap signals | direct retrieval, then shared finalizer with required target research | none | Yes. |
-| `/injury opportunities` | `load_injury_opportunities_context` | direct retrieval, then shared finalizer with required public verification | none | Yes; research stays separate. |
+| `/injury opportunities` | `load_injury_opportunities_context` | deterministic inventory, bounded (max 12) mandatory public timetable research, then shared finalizer | none | Yes; public timeline evidence is passed into finalization without a duplicate broad search. |
 | `/trade propose` | persisted fixture schedule + `load_trade_proposal_context` | direct retrieval, then shared finalizer with required incoming-target research | none | Yes: legal context/packages. |
 | `/guardian done` | `acknowledge_active_events` | acknowledgement card | Guardian JSON | Explicit local action. |
 | `/guardian status` | `active_events` | status card | none | Yes. |
@@ -77,6 +77,7 @@ Discord /ask, normal DM, or /analyze-waivers
 Specialist analytical slash commands
   → command-selected deterministic context builder (no grounding)
   → shared Advisor finalizer with current evidence and bounded public research
+  → structured actionable-target rendering and trace from the same records
 ```
 
 - OpenAI is already the final voice for normal `run_advisor`; its Responses API has web search. Attachments use bounded local normalization/transcription.

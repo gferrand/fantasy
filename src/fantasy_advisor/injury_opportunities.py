@@ -15,6 +15,7 @@ from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, STATS_BASE, SleeperClient, Slee
 OUT_STATUSES = {"OUT", "O", "IR", "IR+"}
 DOUBTFUL_STATUSES = {"GTD", "Q", "QUESTIONABLE", "DOUBTFUL", "D"}
 MAX_OPPORTUNITIES = 8
+MAX_TIMELINE_RESEARCH = 12
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,61 @@ class InjuryResearch:
 
     injuries: tuple[dict[str, Any], ...]
     opportunities: tuple[dict[str, Any], ...]
+    web_search_used: bool = False
+    retry_used: bool = False
+
+
+def injury_timeline_research_context(
+    context: InjuryOpportunitiesContext,
+    *,
+    limit: int = MAX_TIMELINE_RESEARCH,
+) -> dict[str, Any]:
+    """Return the bounded, trade-relevant injury set for current web research.
+
+    Sleeper can mark a large number of players at once.  One web-research pass
+    cannot responsibly establish a return outlook for that whole board, so
+    prioritize rostered assets (where a return date can inform a trade), then
+    confirmed absences and current fantasy impact.  The full Sleeper inventory
+    remains in the Discord report; only its public timetable enrichment is
+    bounded.
+    """
+
+    if not isinstance(limit, int) or not 1 <= limit <= MAX_TIMELINE_RESEARCH:
+        raise ValueError(f"Timeline research limit must be between 1 and {MAX_TIMELINE_RESEARCH}")
+    injuries = list(context.payload.get("injured_players") or [])
+    injuries = [item for item in injuries if isinstance(item, dict)]
+
+    def metric(item: Mapping[str, Any], key: str) -> float:
+        try:
+            return float(item.get(key) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    interesting = [
+        item for item in injuries
+        if bool((item.get("ownership") or {}).get("rostered"))
+        or metric(item, "custom_points") >= 10
+        or metric(item, "minutes") >= 180
+    ]
+    # A quiet early season can leave no player above the normal relevance
+    # thresholds; retain a deterministic fallback rather than making no pass.
+    injuries = interesting or injuries
+    injuries.sort(
+        key=lambda item: (
+            not bool((item.get("ownership") or {}).get("rostered")),
+            item.get("status_category") != "out",
+            -metric(item, "custom_points"),
+            -metric(item, "minutes"),
+            str(item.get("name") or "").casefold(),
+        )
+    )
+    return {
+        "season": context.season,
+        "gameweek": context.gameweek,
+        "retrieved_at": context.retrieved_at,
+        "injured_players": injuries[:limit],
+        "beneficiary_candidates": context.payload.get("beneficiary_candidates") or [],
+    }
 
 
 INJURY_RESEARCH_SCHEMA: dict[str, Any] = {
@@ -44,6 +100,7 @@ INJURY_RESEARCH_SCHEMA: dict[str, Any] = {
     "properties": {
         "injuries": {
             "type": "array",
+            "maxItems": MAX_TIMELINE_RESEARCH,
             "items": {
                 "type": "object",
                 "additionalProperties": False,
@@ -205,6 +262,7 @@ def build_injury_opportunities_context(
     rosters: object,
     users: object,
     stats_rows: object,
+    manager_id: str | None = None,
     retrieved_at: str | None = None,
 ) -> InjuryOpportunitiesContext:
     """Normalize complete Sleeper injury flags and affected-club candidates."""
@@ -220,6 +278,13 @@ def build_injury_opportunities_context(
     user_rows = _array(users, "league users")
     stat_rows = _array(stats_rows, "current season stats")
     owners = _ownership(roster_rows, user_rows)
+    owner_roster = next(
+        (row for row in roster_rows if manager_id is not None and str(row.get("owner_id")) == str(manager_id)),
+        None,
+    )
+    your_player_ids = {
+        str(player_id) for player_id in (owner_roster.get("players") or [])
+    } if isinstance(owner_roster, Mapping) else set()
     stats_by_id: dict[str, Mapping[str, Any]] = {}
     for row in stat_rows:
         player_id = str(row.get("player_id") or "")
@@ -247,7 +312,11 @@ def build_injury_opportunities_context(
             "name": _name(player_id, player),
             "club": str(player.get("team_abbr") or "").upper(),
             "positions": positions,
-            "ownership": {"rostered": owner is not None, "team": owner},
+            "ownership": {
+                "rostered": owner is not None,
+                "team": owner,
+                "on_your_team": player_id in your_player_ids,
+            },
             "starts": _number(stats, "gs"),
             "minutes": _number(stats, "min"),
             "points": _number(stats, "pts_std"),
@@ -288,12 +357,17 @@ def build_injury_opportunities_context(
         "retrieved_at": timestamp,
         "injured_players": injuries,
         "beneficiary_candidates": candidates,
+        # This is current deterministic ownership evidence, not an inference
+        # from player names. The shared finalizer uses it to reject an
+        # impossible recommendation to acquire someone already on the team.
+        "your_roster_player_ids": sorted(your_player_ids),
     }
     return InjuryOpportunitiesContext(season, gameweek, timestamp, payload)
 
 
 def load_injury_opportunities_context(
-    *, client: SleeperClient | None = None, retrieved_at: str | None = None
+    *, client: SleeperClient | None = None, manager_id: str | None = None,
+    retrieved_at: str | None = None,
 ) -> InjuryOpportunitiesContext:
     """Fetch one complete, read-only Sleeper snapshot for the command."""
 
@@ -307,6 +381,7 @@ def load_injury_opportunities_context(
         rosters=sleeper.get_json(f"{API_BASE}/league/{LEAGUE_ID}/rosters"),
         users=sleeper.get_json(f"{API_BASE}/league/{LEAGUE_ID}/users"),
         stats_rows=sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{season}?season_type=regular"),
+        manager_id=manager_id,
         retrieved_at=retrieved_at,
     )
 
@@ -351,6 +426,7 @@ def render_injury_opportunities(
     research: InjuryResearch | None,
     *,
     research_error: str | None = None,
+    researched_player_ids: Iterable[str] | None = None,
 ) -> str:
     """Render every Sleeper flag and only ID-resolved opportunity research."""
 
@@ -364,6 +440,17 @@ def render_injury_opportunities(
     research_by_id = {
         str(item.get("player_id")): item for item in (research.injuries if research else ())
     }
+    researched_ids = None if researched_player_ids is None else {str(item) for item in researched_player_ids}
+    if researched_ids is not None:
+        coverage = (
+            f"Current public return reporting was checked for {len(researched_ids)} priority Fantasy injury asset(s)."
+            if research is not None
+            else f"Current public return reporting could not be completed for {len(researched_ids)} priority Fantasy injury asset(s)."
+        )
+        lines.extend((
+            f"*{coverage} Other listed flags retain Sleeper status only.*",
+            "",
+        ))
     for category, heading in (("out", "🚑 **Out**"), ("doubt", "⚠️ **GTD / Questionable**")):
         selected = [item for item in injuries if item["status_category"] == category]
         if not selected:
@@ -374,7 +461,14 @@ def render_injury_opportunities(
             owner = player["ownership"]["team"]
             ownership = f"Owned · {owner}" if owner else "Unrostered in league"
             detail = _text(item.get("injury_summary"), "Injury details not verified", 170)
-            timeline = _text(item.get("return_window"), "No reliable timetable", 100)
+            if item:
+                timeline = _text(item.get("return_window"), "No reliable timetable", 100)
+            elif researched_ids is not None and player["player_id"] not in researched_ids:
+                timeline = "Not researched in this priority pass"
+            elif research_error:
+                timeline = "Current public timetable unavailable"
+            else:
+                timeline = "No reliable timetable"
             sources = _source_links(item.get("sources"))
             lines.append(
                 f"• **{player['name']}** · {player['club']} · {player['sleeper_status']} · {ownership}\n"

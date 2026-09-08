@@ -89,7 +89,7 @@ from .intelligence_capabilities import (
     get_watchlist_stats,
 )
 from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
-from .injury_opportunities import render_injury_opportunities
+from .injury_opportunities import injury_timeline_research_context, render_injury_opportunities
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -765,26 +765,93 @@ def build_client(config: AppConfig) -> discord.Client:
         deadline = RequestDeadline.start()
         try:
             async with run_lock:
-                context = await bounded_context_load(deadline, get_injury_opportunity_context)
+                context = await bounded_context_load(
+                    deadline, get_injury_opportunity_context, manager_id=EXPECTED_MANAGER_ID,
+                )
+                timeline_context = injury_timeline_research_context(context)
+                researched_player_ids = [str(player["player_id"]) for player in timeline_context["injured_players"]]
+                timeline_trace = {
+                    "timeline_research_selected_count": len(researched_player_ids),
+                    "timeline_research_player_ids": researched_player_ids,
+                    "timeline_research_completed": False,
+                    "timeline_research_web_used": False,
+                    "timeline_research_retry_used": False,
+                    "web_search_used": False,
+                }
+                research = None
+                research_error = None
+                # Keep this single structured public-research pass inside the
+                # command deadline and leave enough time to render its answer.
+                # The terminal slash finalizer consumes the remaining hard
+                # request budget directly, so this bounded research pass does
+                # not need to reserve a second, unused final-answer window.
+                research_budget = min(60.0, deadline.remaining(35.0))
+                if research_budget <= 0:
+                    research_error = "Current public timetable research could not start before the response deadline."
+                else:
+                    try:
+                        research = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                run_injury_web_briefing,
+                                config,
+                                live_context=json.dumps(timeline_context, ensure_ascii=False, separators=(",", ":")),
+                                timeout_seconds=research_budget,
+                            ),
+                            timeout=research_budget,
+                        )
+                        timeline_trace.update({
+                            "timeline_research_completed": True,
+                            "timeline_research_web_used": research.web_search_used,
+                            "timeline_research_retry_used": research.retry_used,
+                            "web_search_used": research.web_search_used,
+                        })
+                    except (AutomationError, TimeoutError) as exc:
+                        LOGGER.warning("Current injury timeline research was unavailable; returning Sleeper inventory", exc_info=True)
+                        research_error = "Current public timetable research was unavailable."
+                report = render_injury_opportunities(
+                    context,
+                    research,
+                    research_error=research_error,
+                    researched_player_ids=researched_player_ids,
+                )
+                evidence = slash_evidence(
+                    context,
+                    capability="get_injury_opportunity_context",
+                    arguments={},
+                    source="Fantasy injury opportunity context",
+                    data={
+                        "injury_inventory": context.payload,
+                        "priority_timeline_research": (
+                            {"injuries": list(research.injuries), "opportunities": list(research.opportunities)}
+                            if research is not None else None
+                        ),
+                    },
+                )
+                evidence["status"] = "complete" if research is not None else "unavailable"
+                evidence["sources"].append({
+                    "source": "Current public injury timeline research",
+                    "retrieved_at": context.retrieved_at,
+                    "stale": False,
+                })
                 result = await finalize_advisor_from_evidence(
                     config,
                     command="/injury opportunities",
-                    question="Find current EPL injuries and likely playing-time beneficiaries.",
-                    evidence=slash_evidence(
-                        context, capability="get_injury_opportunity_context", arguments={}, source="Fantasy injury opportunity context",
-                    ),
-                    mandatory_web=True,
+                    question="Assess the current injury board for buy-low timing and credible playing-time opportunities.",
+                    evidence=evidence,
+                    mandatory_web=False,
+                    web_enabled=False,
                     deadline=deadline,
-                    partial_text=render_injury_opportunities(
-                        context, None,
-                        research_error="Current public verification was unavailable; no beneficiary recommendation is inferred.",
-                    ),
+                    partial_text=report,
+                    trace_fields=timeline_trace,
                     command_instructions=(
-                        "Use deterministic Sleeper injury flags as inventory, but verify material injuries and beneficiaries with current public sources before making an opportunity recommendation. "
-                        "If verification is incomplete, report the inventory and clearly decline to infer a beneficiary."
+                        "Use the supplied full Sleeper injury inventory and the bounded, already-completed public timeline research. "
+                        "Do not perform another general injury search or invent a return date. Surface only supported buy-low or beneficiary implications; otherwise HOLD."
                     ),
                 )
-            await edit_injury_interaction(interaction, result.text)
+                final_text = report if result.trace["result_status"] != "complete" else (
+                    report + "\n\n🧭 **Advisor assessment**\n" + result.text
+                )
+            await edit_injury_interaction(interaction, final_text)
         except SleeperDataError as exc:
             LOGGER.exception("Could not load the current Sleeper injury board")
             await interaction.edit_original_response(

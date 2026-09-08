@@ -78,14 +78,21 @@ compound waiver capability when material. Specialist analytical slash commands
 grounding because the command itself is the explicit router. Each performs its
 known deterministic retrieval, then enters the shared Advisor finalizer with
 current evidence, a bounded deadline, runtime-SHA tracing, and no Codex
-fallback. Commands requiring current football research require a web search;
-recap may finalize from completed-round evidence alone. State and operational
-commands remain direct and model-free.
+fallback. `/injury opportunities` selects no more than 12 relevant injuries
+deterministically, requires one structured public-timetable research pass for
+that set, then gives the result to the shared finalizer without a duplicate
+broad injury search. Commands requiring current football research require a web
+search; recap may finalize from completed-round evidence alone. State and
+operational commands remain direct and model-free.
 
-For an actionable acquisition or trade, the finalizer records each ultimately
-recommended incoming target plus per-target current availability/injury and
-role/minutes verification status and named public sources in the request trace.
-An incomplete target record is fail-closed: the Owner receives the command's
-HOLD/no-action partial response rather than an actionable recommendation.
+For an actionable acquisition or trade, the finalizer receives one strict
+structured decision. It renders the visible manual move section and the trace
+from the same target records, each with current availability/injury,
+role/minutes, and named public-source verification. A current rostered Los
+Blancos player cannot be an incoming target; an add must be currently
+unrostered and a trade target must be currently rostered elsewhere. An
+incomplete or ownership-invalid target record is fail-closed: the Owner
+receives the command's HOLD/no-action partial response rather than an
+actionable recommendation.
 Owner-DM authorization, duplicate suppression, and mention controls remain in
 place.
