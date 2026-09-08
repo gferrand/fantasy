@@ -21,6 +21,10 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(watchlist["StartCalendarInterval"], {"Hour": 8, "Minute": 0})
         self.assertIn("watchlist_report", " ".join(watchlist["ProgramArguments"]))
 
+    def test_paused_transfer_watch_has_no_launchd_definition(self):
+        definitions = dict(INSTALLER.agent_definitions(repo_root=ROOT, python=ROOT / ".venv" / "bin" / "python"))
+        self.assertNotIn("com.ginoferrand.fantasy.transfer-monitor", definitions)
+
     def test_runtime_automation_data_is_seeded_once(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

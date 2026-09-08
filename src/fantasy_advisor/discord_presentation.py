@@ -28,12 +28,28 @@ def waiver_header() -> str:
     return "🏟️ **Los Blancos — Waiver Wire**\n📱 *Phone-friendly view · manual review only*"
 
 
-def scheduled_header(task_name: str, timestamp: str) -> str:
-    return f"📬 **{task_name}**\n🕒 *{timestamp}*"
-
-
 def scheduled_failure(task_name: str, detail: str) -> str:
-    return error_card(f"{task_name} didn’t run", detail)
+    return error_card(f"{task_name} couldn’t refresh", detail)
+
+
+def _task_title(task_id: str, fallback: str) -> str:
+    return {
+        "nightly_recap": "🌙 **Nightly Recap**",
+        "watchlist_report": "👀 **Watchlist Update**",
+        "transfer_monitor": "🚨 **Transfer Watch**",
+    }.get(task_id, f"📬 **{fallback}**")
+
+
+def _task_schedule(task: object) -> str:
+    if str(getattr(task, "schedule_type", "")) == "hourly":
+        return "Hourly"
+    run_at = str(getattr(task, "run_at", "") or "")
+    if run_at:
+        hour, minute = run_at.split(":", 1)
+        display_hour = int(hour) % 12 or 12
+        suffix = "AM" if int(hour) < 12 else "PM"
+        return f"Daily · {display_hour}:{minute} {suffix} ET"
+    return "Scheduled"
 
 
 def task_menu(tasks: Iterable[object]) -> str:
@@ -41,8 +57,13 @@ def task_menu(tasks: Iterable[object]) -> str:
     for task in tasks:
         task_id = str(getattr(task, "id"))
         name = str(getattr(task, "name"))
-        rows.append(f"• **{name}**\n  Run now: `/task {task_id}`")
-    return "📚 **Your scheduled reports**\n\n" + "\n".join(rows)
+        enabled = bool(getattr(task, "enabled", True))
+        state = "Active" if enabled else "Paused"
+        rows.append(
+            f"{_task_title(task_id, name)}\n{_task_schedule(task)} · {state}"
+            + (f"\nRun manually: `/task {task_id}`" if not enabled else "")
+        )
+    return "📚 **Scheduled reports**\n\n" + "\n\n".join(rows)
 
 
 def help_menu() -> str:

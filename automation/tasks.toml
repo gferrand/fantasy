@@ -1,5 +1,6 @@
 # Local task registry. These jobs are launched by macOS launchd, not by
-# ChatGPT Scheduled Tasks. The prompt files remain the source of truth.
+# Local scheduled report registry. Runtime behavior is defined in the Advisor
+# report path; prompt documents describe the durable report contract.
 
 [settings]
 timezone = "America/New_York"
@@ -14,6 +15,7 @@ run_at = "22:00"
 [[tasks]]
 id = "transfer_monitor"
 name = "EPL top-player transfer monitor"
+enabled = false
 prompt_file = "docs/transfer_monitor_task.md"
 schedule_type = "hourly"
 minute_past_hour = 17

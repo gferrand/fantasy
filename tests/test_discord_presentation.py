@@ -6,7 +6,6 @@ from fantasy_advisor.discord_presentation import (
     guardian_acknowledged,
     guardian_status,
     help_menu,
-    scheduled_header,
     task_menu,
     web_briefing_header,
     watchlist_card,
@@ -20,21 +19,34 @@ from fantasy_advisor.watchlist_stats import WatchlistStat, WatchlistStatsReport
 class _Task:
     id = "nightly_recap"
     name = "Los Blancos nightly game-day recap"
+    schedule_type = "daily"
+    run_at = "22:00"
+    enabled = True
 
 
 class DiscordPresentationTests(unittest.TestCase):
     def test_headers_hide_internal_thread_metadata(self):
         self.assertIn("🧠", advisor_header())
         self.assertIn("🌐", web_briefing_header())
-        self.assertIn("📬", scheduled_header("Nightly recap", "Sep 1 · 10:00 PM EDT"))
         self.assertNotIn("Codex task", advisor_header())
 
     def test_task_and_help_menus_are_scannable(self):
         tasks = task_menu([_Task()])
         self.assertIn("📚", tasks)
-        self.assertIn("/task nightly_recap", tasks)
+        self.assertIn("🌙 **Nightly Recap**", tasks)
+        self.assertIn("Daily · 10:00 PM ET · Active", tasks)
         self.assertIn("🏟️", help_menu())
         self.assertIn("👀", help_menu())
+
+    def test_task_menu_marks_paused_transfer_watch_as_manually_runnable(self):
+        paused = type("PausedTask", (), {
+            "id": "transfer_monitor", "name": "EPL top-player transfer monitor",
+            "schedule_type": "hourly", "run_at": None, "enabled": False,
+        })()
+        menu = task_menu([paused])
+        self.assertIn("🚨 **Transfer Watch**", menu)
+        self.assertIn("Hourly · Paused", menu)
+        self.assertIn("Run manually: `/task transfer_monitor`", menu)
 
     def test_watchlist_cards_use_compact_player_rows(self):
         player = WatchlistPlayer("1", "Bukayo Saka", "ARS", ("F", "M"), "2026-09-01T00:00:00+00:00")

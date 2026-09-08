@@ -95,6 +95,13 @@ Codex unchanged. When the task finishes, the runner closes the created tab with
 TAB_ID`, including after a failure or timeout. Allocation failure is retryable
 and prevents the Codex process from starting.
 
+Registered scheduled reports bypass interactive grounding and Discord history.
+They retrieve the known task's current deterministic evidence, use OpenAI as
+the final Advisor voice, and deliver only to the configured Owner bot DM.
+Transfer Watch requires current web research; its registry entry may be paused
+without disabling explicit Owner `/task` execution. Scheduled Codex runs are
+not part of the supported report path.
+
 Legitimate non-browser local execution remains available for work that does not
 need browser capability. Stable league context is embedded in task packets so
 the advisor can make bounded, reproducible use of league data.

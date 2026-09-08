@@ -17,6 +17,7 @@ from fantasy_advisor.automation import (
     BrowserTabUnavailable,
     advisor_context_file,
     CodexResult,
+    ScheduledResult,
     CodexRunError,
     CodexRunner,
     FANTASY_CODEX_MODEL,
@@ -44,6 +45,7 @@ from fantasy_advisor.automation import (
     run_watchlist_web_briefing,
     split_discord_message,
     run_scheduled_task,
+    run_scheduled_advisor,
     task_prompt_for_run,
     thread_id_from_events,
     web_briefing_prompt,
@@ -61,7 +63,6 @@ def test_config() -> AppConfig:
         task_registry_path=ROOT / "automation" / "tasks.toml",
         discord_bot_token=None,
         discord_allowed_user_id=None,
-        discord_scheduled_channel_id=None,
         codex_bin="codex",
         codex_model=FANTASY_CODEX_MODEL,
         codex_reasoning_effort=FANTASY_CODEX_REASONING_EFFORT,
@@ -74,7 +75,7 @@ def test_config() -> AppConfig:
 class AutomationTests(unittest.TestCase):
     def test_environment_cannot_override_fantasy_luna_medium_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             with patch.dict(
                 os.environ,
                 {
@@ -195,26 +196,6 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("Do not claim access to Sleeper", prompt)
         self.assertIn("focused web research", prompt)
 
-    def test_scheduled_discord_configuration_requires_numeric_channel(self):
-        missing = test_config().__class__(
-            **{
-                **test_config().__dict__,
-                "discord_bot_token": "token",
-                "discord_scheduled_channel_id": None,
-            }
-        )
-        with self.assertRaisesRegex(AutomationError, "DISCORD_SCHEDULED_CHANNEL_ID is not configured"):
-            missing.require_scheduled_discord()
-        invalid = test_config().__class__(
-            **{
-                **test_config().__dict__,
-                "discord_bot_token": "token",
-                "discord_scheduled_channel_id": "fantasy",
-            }
-        )
-        with self.assertRaisesRegex(AutomationError, "numeric Discord channel ID"):
-            invalid.require_scheduled_discord()
-
     def test_registry_loads_scheduled_tasks_and_history_file(self):
         registry = load_registry(ROOT / "automation" / "tasks.toml", repo_root=ROOT)
         self.assertEqual([task.id for task in registry.tasks], ["nightly_recap", "transfer_monitor", "watchlist_report"])
@@ -226,6 +207,7 @@ class AutomationTests(unittest.TestCase):
         watchlist = registry.get("watchlist_report")
         self.assertEqual(watchlist.run_at, "08:00")
         self.assertEqual(watchlist.state_file, ROOT / "data" / "automation" / "watchlist_last_result.md")
+        self.assertFalse(registry.get("transfer_monitor").enabled)
 
     def test_watchlist_live_packet_is_scoped_and_empty_list_is_silent(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -412,7 +394,7 @@ class AutomationTests(unittest.TestCase):
             registry_file = root / "tasks.toml"
             registry_file.write_text(
                 '[settings]\ntimezone = "America/New_York"\n\n'
-                '[[tasks]]\nid = "nightly"\nname = "Nightly"\n'
+                '[[tasks]]\nid = "nightly_recap"\nname = "Nightly"\n'
                 'prompt_file = "prompt.md"\nschedule_type = "daily"\nrun_at = "22:00"\n',
                 encoding="utf-8",
             )
@@ -421,7 +403,6 @@ class AutomationTests(unittest.TestCase):
                 task_registry_path=registry_file,
                 discord_bot_token=None,
                 discord_allowed_user_id=None,
-                discord_scheduled_channel_id=None,
                 codex_bin="codex",
                 codex_model=None,
                 codex_reasoning_effort=None,
@@ -434,15 +415,17 @@ class AutomationTests(unittest.TestCase):
                 kind=DISCORD_USER_MESSAGE,
                 content="DISCORD_CONTEXT_MARKER",
             )
-            result = CodexResult("scheduled report", "thread-scheduled", 1.0)
-            with patch("fantasy_advisor.automation.CodexRunner.run", return_value=result) as runner:
-                run_scheduled_task(config, "nightly", deliver=False)
+            result = ScheduledResult("🌙 **Nightly Recap**\n✅ **No action tonight**", "response-1", 1.0, {})
+            with (
+                patch("fantasy_advisor.automation._current_nightly_packet", return_value="CURRENT"),
+                patch("fantasy_advisor.automation.run_scheduled_advisor", return_value=result) as runner,
+            ):
+                run_scheduled_task(config, "nightly_recap", deliver=False)
 
-            scheduled_prompt = runner.call_args.args[0]
-            self.assertIn("Standalone scheduled prompt", scheduled_prompt)
-            self.assertNotIn("DISCORD_CONTEXT_MARKER", scheduled_prompt)
+            self.assertEqual(runner.call_args.kwargs["invocation"], "scheduled")
+            self.assertNotIn("DISCORD_CONTEXT_MARKER", str(runner.call_args))
             packet = build_context_packet(advisor_context_file(config), scheduled_reports=1)
-            self.assertIn("scheduled report", packet)
+            self.assertIn("Nightly Recap", packet)
 
     def test_state_persistence_is_atomic_from_callers_perspective(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -461,13 +444,62 @@ class AutomationTests(unittest.TestCase):
             self.assertIn("thread-1", state_file.read_text(encoding="utf-8"))
             self.assertFalse(state_file.with_suffix(".md.tmp").exists())
 
+    def test_empty_watchlist_returns_a_visible_confirmation_without_codex(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            registry_file = root / "tasks.toml"
+            registry_file.write_text(
+                '[[tasks]]\nid = "watchlist_report"\nname = "Watchlist"\n'
+                'prompt_file = "prompt.md"\nschedule_type = "daily"\nrun_at = "08:00"\n',
+                encoding="utf-8",
+            )
+            config = test_config().__class__(**{
+                **test_config().__dict__, "repo_root": root, "task_registry_path": registry_file,
+            })
+            with patch("fantasy_advisor.automation.CodexRunner.run", side_effect=AssertionError("no Codex")):
+                result = run_scheduled_task(config, "watchlist_report", deliver=False)
+            self.assertIn("Watchlist Update", result.text)
+            self.assertIn("No players on your watchlist", result.text)
+            self.assertFalse(result.trace["codex_used"])
+
+    def test_transfer_manual_run_is_available_while_schedule_is_paused(self):
+        task = load_registry(ROOT / "automation" / "tasks.toml", repo_root=ROOT).get("transfer_monitor")
+        self.assertFalse(task.enabled)
+        result = ScheduledResult("🚨 **Transfer Watch**\n✅ **No material transfer update this hour.**", None, 0.1, {}, False)
+        with patch("fantasy_advisor.automation.run_scheduled_advisor", return_value=result) as runner:
+            actual = run_scheduled_task(test_config(), "transfer_monitor", deliver=False, invocation="manual")
+        self.assertEqual(actual, result)
+        self.assertEqual(runner.call_args.kwargs["invocation"], "manual")
+
+    def test_scheduled_openai_finalization_requires_transfer_web_research_and_never_uses_codex(self):
+        task = TaskSpec("transfer_monitor", "Transfer", ROOT / "x", "hourly")
+        response = MagicMock(
+            output=[MagicMock(type="web_search_call")],
+            output_text=json.dumps({
+                "status": "no_change", "material_update": False,
+                "report": "ignored because the delivery normalizer owns this card",
+            }),
+            id="response-1",
+        )
+        client = MagicMock()
+        client.responses.create.return_value = response
+        config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "key"})
+        with patch("fantasy_advisor.automation.CodexRunner.run", side_effect=AssertionError("no Codex")):
+            result = run_scheduled_advisor(
+                config, task, invocation="manual", evidence="current public task", previous_state="none", client=client,
+            )
+        self.assertEqual(result.text, "🚨 **Transfer Watch**\n✅ **No material transfer update this hour.**")
+        self.assertTrue(result.trace["web_search_used"])
+        self.assertFalse(result.trace["codex_used"])
+        self.assertEqual(client.responses.create.call_args.kwargs["tool_choice"], "required")
+
     def test_outbox_is_removed_only_after_delivery(self):
         class FakeTransport:
             def __init__(self):
                 self.sent = []
 
-            def send_channel(self, channel_id, report):
-                self.sent.append((channel_id, report))
+            def send_dm(self, user_id, report):
+                self.sent.append((user_id, report))
 
         with tempfile.TemporaryDirectory() as temporary:
             config = AppConfig(
@@ -475,7 +507,6 @@ class AutomationTests(unittest.TestCase):
                 task_registry_path=Path(temporary) / "tasks.toml",
                 discord_bot_token="token",
                 discord_allowed_user_id="123",
-                discord_scheduled_channel_id="789",
                 codex_bin="codex",
                 codex_model=None,
                 codex_reasoning_effort=None,
@@ -492,16 +523,16 @@ class AutomationTests(unittest.TestCase):
             )
             transport = FakeTransport()
             flush_outbox(config, transport)
-            self.assertEqual(transport.sent, [("789", "report")])
+            self.assertEqual(transport.sent, [("123", "report")])
             self.assertFalse(report_file.exists())
 
-    def test_automatic_scheduled_run_posts_to_configured_channel(self):
+    def test_automatic_scheduled_run_posts_only_to_owner_dm(self):
         class FakeTransport:
             def __init__(self):
                 self.sent = []
 
-            def send_channel(self, channel_id, report):
-                self.sent.append((channel_id, report))
+            def send_dm(self, user_id, report):
+                self.sent.append((user_id, report))
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -509,7 +540,7 @@ class AutomationTests(unittest.TestCase):
             registry_file = root / "tasks.toml"
             registry_file.write_text(
                 '[settings]\ntimezone = "America/New_York"\n\n'
-                '[[tasks]]\nid = "nightly"\nname = "Nightly"\n'
+                '[[tasks]]\nid = "nightly_recap"\nname = "Nightly"\n'
                 'prompt_file = "prompt.md"\nschedule_type = "daily"\nrun_at = "22:00"\n',
                 encoding="utf-8",
             )
@@ -519,32 +550,31 @@ class AutomationTests(unittest.TestCase):
                     "repo_root": root,
                     "task_registry_path": registry_file,
                     "discord_bot_token": "token",
-                    "discord_scheduled_channel_id": "789",
+                    "discord_allowed_user_id": "123",
+                    "openai_api_key": "key",
                 }
             )
             transport = FakeTransport()
-            result = CodexResult("scheduled report", "thread-1", 1.0)
+            result = ScheduledResult("🌙 **Nightly Recap**\n✅ **No action tonight**", "response-1", 1.0, {})
             with (
-                patch("fantasy_advisor.automation.CodexRunner.run", return_value=result),
+                patch("fantasy_advisor.automation._current_nightly_packet", return_value="CURRENT"),
+                patch("fantasy_advisor.automation.run_scheduled_advisor", return_value=result),
                 patch("fantasy_advisor.discord_transport.DiscordTransport", return_value=transport),
             ):
-                run_scheduled_task(config, "nightly")
+                run_scheduled_task(config, "nightly_recap")
             self.assertEqual(len(transport.sent), 1)
-            self.assertEqual(transport.sent[0][0], "789")
-            self.assertIn("scheduled report", transport.sent[0][1])
+            self.assertEqual(transport.sent[0][0], "123")
+            self.assertIn("Nightly Recap", transport.sent[0][1])
             self.assertFalse(list((root / "data" / "automation" / "outbox").glob("*.md")))
 
-    def test_failed_scheduled_run_is_queued_for_channel_retry_without_dm_fallback(self):
+    def test_failed_scheduled_run_is_queued_for_owner_dm_retry(self):
         class FailingTransport:
             def __init__(self):
-                self.channel_attempts = []
-
-            def send_channel(self, channel_id, report):
-                self.channel_attempts.append((channel_id, report))
-                raise AutomationError("channel unavailable")
+                self.dm_attempts = []
 
             def send_dm(self, user_id, report):
-                raise AssertionError("scheduled failures must never fall back to DM")
+                self.dm_attempts.append((user_id, report))
+                raise AutomationError("DM unavailable")
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -552,7 +582,7 @@ class AutomationTests(unittest.TestCase):
             registry_file = root / "tasks.toml"
             registry_file.write_text(
                 '[settings]\ntimezone = "America/New_York"\n\n'
-                '[[tasks]]\nid = "nightly"\nname = "Nightly"\n'
+                '[[tasks]]\nid = "nightly_recap"\nname = "Nightly"\n'
                 'prompt_file = "prompt.md"\nschedule_type = "daily"\nrun_at = "22:00"\n',
                 encoding="utf-8",
             )
@@ -562,23 +592,24 @@ class AutomationTests(unittest.TestCase):
                     "repo_root": root,
                     "task_registry_path": registry_file,
                     "discord_bot_token": "token",
-                    "discord_scheduled_channel_id": "789",
+                    "discord_allowed_user_id": "123",
+                    "openai_api_key": "key",
                 }
             )
             transport = FailingTransport()
             with (
                 patch(
-                    "fantasy_advisor.automation.CodexRunner.run",
-                    side_effect=AutomationError("Codex failed"),
+                    "fantasy_advisor.automation._current_nightly_packet",
+                    side_effect=AutomationError("Sleeper unavailable"),
                 ),
                 patch("fantasy_advisor.discord_transport.DiscordTransport", return_value=transport),
             ):
-                with self.assertRaisesRegex(AutomationError, "Codex failed"):
-                    run_scheduled_task(config, "nightly")
-            self.assertEqual(transport.channel_attempts[0][0], "789")
+                with self.assertRaisesRegex(AutomationError, "Sleeper unavailable"):
+                    run_scheduled_task(config, "nightly_recap")
+            self.assertEqual(transport.dm_attempts[0][0], "123")
             queued = list((root / "data" / "automation" / "outbox").glob("*.md"))
             self.assertEqual(len(queued), 1)
-            self.assertIn("Nightly didn’t run", queued[0].read_text(encoding="utf-8"))
+            self.assertIn("Nightly Recap couldn’t refresh", queued[0].read_text(encoding="utf-8"))
 
     def test_discord_channel_state_is_local_and_atomic(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -587,7 +618,6 @@ class AutomationTests(unittest.TestCase):
                 task_registry_path=Path(temporary) / "tasks.toml",
                 discord_bot_token="token",
                 discord_allowed_user_id="123",
-                discord_scheduled_channel_id="789",
                 codex_bin="codex",
                 codex_model=None,
                 codex_reasoning_effort=None,

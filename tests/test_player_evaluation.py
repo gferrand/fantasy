@@ -16,7 +16,7 @@ from fantasy_advisor.sleeper import API_BASE, STATS_BASE, SleeperClient, Sleeper
 def config(root: Path) -> AppConfig:
     return AppConfig(
         repo_root=root, task_registry_path=root / "automation/tasks.toml",
-        discord_bot_token=None, discord_allowed_user_id="123", discord_scheduled_channel_id=None,
+        discord_bot_token=None, discord_allowed_user_id="123",
         codex_bin="codex", codex_model=None, codex_reasoning_effort=None,
         codex_sandbox="read-only", codex_timeout_seconds=60, codex_ephemeral=False,
     )

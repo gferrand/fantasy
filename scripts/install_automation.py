@@ -128,6 +128,8 @@ def agent_definitions(
         ),
     ]
     for task in tasks if tasks is not None else task_registry(repo_root):
+        if not getattr(task, "enabled", True):
+            continue
         label = f"{AGENT_PREFIX}.{task.id.replace('_', '-')}"
         if task.schedule_type == "daily":
             try:
@@ -299,7 +301,6 @@ def main(argv: list[str] | None = None) -> int:
 
         config = AppConfig.from_environment(repo_root=ROOT)
         config.require_discord()
-        config.require_scheduled_discord()
         duplicate_containers = running_fantasy_discord_containers()
         if duplicate_containers:
             names = ", ".join(duplicate_containers)

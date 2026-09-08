@@ -31,7 +31,6 @@ def catalog_test_config(root: Path) -> AppConfig:
         task_registry_path=root / "automation" / "tasks.toml",
         discord_bot_token=None,
         discord_allowed_user_id=None,
-        discord_scheduled_channel_id=None,
         codex_bin="codex",
         codex_model=FANTASY_CODEX_MODEL,
         codex_reasoning_effort=FANTASY_CODEX_REASONING_EFFORT,

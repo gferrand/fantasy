@@ -17,7 +17,7 @@ players rather than elite, expensive cornerstones.
 - [`league_context.md`](league_context.md) — canonical league constants, rules, validation policy, and current roster.
 - [`docs/architecture.md`](docs/architecture.md) — system boundaries and planned data flow.
 - [`docs/local_automation.md`](docs/local_automation.md) — local Discord advisor setup and private player catalog maintenance.
-- [`docs/scheduled_tasks.md`](docs/scheduled_tasks.md) — reusable prompts for ChatGPT Scheduled Tasks.
+- [`docs/scheduled_tasks.md`](docs/scheduled_tasks.md) — historical ChatGPT Scheduled Task prompt references.
 - [`docs/nightly_recap_task.md`](docs/nightly_recap_task.md) — the daily 10:00 PM Eastern game-day recap task definition.
 - [`docs/transfer_monitor_task.md`](docs/transfer_monitor_task.md) — the hourly league-wide EPL transfer monitor definition.
 - [`data/README.md`](data/README.md) — cache layout and freshness expectations.
@@ -26,7 +26,12 @@ players rather than elite, expensive cornerstones.
 
 ## Current status
 
-The nightly recap task is active in ChatGPT Scheduled Tasks at 10:00 PM Eastern. It recaps Los Blancos activity, completed league trades, waiver-auction targets, and immediate free-agent options, while preparing for the next seven days with source-triangulated starter outlooks and a custom-scoring lineup recommendation. The project itself remains read-only and does not mutate Sleeper state.
+The local scheduler runs the nightly recap at 10:00 PM Eastern and the
+watchlist report at 8:00 AM Eastern, delivering both to the Owner bot DM.
+Transfer Watch remains available for `/task transfer_monitor` but is paused
+until the January transfer window. Scheduled reports use current evidence and
+the OpenAI Fantasy Advisor; the project remains read-only and never mutates
+Sleeper state.
 
 The private Discord advisor includes `/injury opportunities`, which scans every
 active Sleeper EPL player marked Out or GTD/Questionable and reports current,
@@ -34,7 +39,9 @@ source-backed recovery outlooks plus roster-aware playing-time beneficiaries.
 Long reports are delivered as a sequence of Discord messages, never as an
 attachment.
 
-GitHub Actions is configured to refresh a validated compact Sleeper feed hourly and publish it through GitHub Pages. The Scheduled Task should consume that feed rather than parse Sleeper's large raw API responses directly.
+GitHub Actions refreshes a validated compact Sleeper feed hourly and publishes
+it through GitHub Pages. Local scheduled reports consume that feed rather than
+parse large raw API responses directly.
 
 ## Design rule
 

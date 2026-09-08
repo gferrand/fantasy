@@ -15,6 +15,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _is_due(task: TaskSpec, now: datetime) -> bool:
+    if not task.enabled:
+        return False
     if task.schedule_type == "hourly":
         return task.minute_past_hour == now.minute
     if task.schedule_type == "daily" and task.run_at:
@@ -28,6 +30,8 @@ def _next_task_time(tasks: tuple[TaskSpec, ...], now: datetime) -> datetime:
 
     candidates: list[datetime] = []
     for task in tasks:
+        if not task.enabled:
+            continue
         if task.schedule_type == "hourly" and task.minute_past_hour is not None:
             candidate = now.replace(minute=task.minute_past_hour, second=0, microsecond=0)
             if candidate <= now:

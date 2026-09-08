@@ -28,7 +28,7 @@ class SchedulerTimingTests(unittest.TestCase):
     def _config(self):
         return AppConfig(
             repo_root=ROOT, task_registry_path=ROOT / "tasks.toml", discord_bot_token="token",
-            discord_allowed_user_id="123", discord_scheduled_channel_id=None, codex_bin="codex",
+            discord_allowed_user_id="123", codex_bin="codex",
             codex_model=FANTASY_CODEX_MODEL, codex_reasoning_effort=FANTASY_CODEX_REASONING_EFFORT,
             codex_sandbox="read-only", codex_timeout_seconds=60, codex_ephemeral=False,
         )
@@ -44,6 +44,18 @@ class SchedulerTimingTests(unittest.TestCase):
             TaskSpec("daily", "Daily", ROOT / "x", "daily", run_at="22:00"),
         )
         self.assertEqual(_next_task_time(tasks, now), datetime(2026, 9, 3, 11, 17, tzinfo=timezone.utc))
+
+    def test_disabled_task_is_excluded_from_due_and_next_run_calculation(self):
+        now = datetime(2026, 9, 3, 10, 17, 5, tzinfo=timezone.utc)
+        paused_hourly = TaskSpec(
+            "transfer_monitor", "Transfer", ROOT / "x", "hourly", minute_past_hour=17, enabled=False,
+        )
+        active_daily = TaskSpec("daily", "Daily", ROOT / "x", "daily", run_at="22:00")
+        self.assertFalse(scheduler._is_due(paused_hourly, now.replace(second=0)))
+        self.assertEqual(
+            _next_task_time((paused_hourly, active_daily), now),
+            datetime(2026, 9, 3, 22, 0, tzinfo=timezone.utc),
+        )
 
     def test_sleep_uses_exact_nearest_known_target(self):
         now = datetime(2026, 9, 3, 10, 0, tzinfo=timezone.utc)

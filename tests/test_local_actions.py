@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 
 def config(root):
-    return AppConfig(repo_root=root, task_registry_path=root / "automation/tasks.toml", discord_bot_token=None, discord_allowed_user_id="owner", discord_scheduled_channel_id=None, codex_bin="codex", codex_model=None, codex_reasoning_effort=None, codex_sandbox="read-only", codex_timeout_seconds=60, codex_ephemeral=False)
+    return AppConfig(repo_root=root, task_registry_path=root / "automation/tasks.toml", discord_bot_token=None, discord_allowed_user_id="owner", codex_bin="codex", codex_model=None, codex_reasoning_effort=None, codex_sandbox="read-only", codex_timeout_seconds=60, codex_ephemeral=False)
 
 
 def test_watchlist_actions_are_owner_only_and_idempotent():
