@@ -72,15 +72,16 @@ class ProjectSetupTests(unittest.TestCase):
 
         browser_rules = (engineering_docs / "BROWSER_AUTH.md").read_text()
         self.assertIn(
-            "infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE",
+            "Fantasy browser agents create and close their own task tabs",
             browser_rules,
         )
         self.assertIn(
-            "infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID",
+            "do not create, attach to,\nquery, validate, wait for, or acknowledge tab cleanup through Infrastructure",
             browser_rules,
         )
-        self.assertEqual(browser_rules.count("infra-opt workspace"), 2)
-        self.assertNotIn("workspace touch", browser_rules)
+        self.assertIn("passive one-hour abandoned-tab sweep", browser_rules)
+        self.assertNotIn("infra-opt workspace", browser_rules)
+        self.assertNotIn("allocator", browser_rules)
         self.assertIn("## Discord saved-password login", browser_rules)
         self.assertIn("click or focus only **Email or Phone Number**", browser_rules)
         self.assertIn("Select the **first saved credential**", browser_rules)
