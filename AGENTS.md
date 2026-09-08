@@ -2,7 +2,7 @@
 
 This file is a map, not an encyclopedia. Keep always-loaded guidance short. Read the focused documents below when their topic applies.
 
-<!-- INFRA-STANDARDS:BEGIN version="2026-09-05.3" sha256="8b69d1de54f4bbaf137f8d6ad1a89b5a6683d48036a8d3cf99e1002b6f9a52ca" -->
+<!-- INFRA-STANDARDS:BEGIN version="2026-09-08.2" sha256="3ee1becb289562b3b5595d695252d8da806c4e2729047757f341e1f85b28e1f5" -->
 # Infrastructure Standards
 
 These standards apply to every project and every agent working on the Mac infrastructure.
@@ -70,12 +70,11 @@ These standards apply to every project and every agent working on the Mac infras
 
 ## Shared Chrome
 
-- At the start of browser work, create a task tab with `infra-opt workspace create --project PROJECT --agent-id TASK_ID --purpose SAFE_PURPOSE`.
-- When the task is finished, close that tab with `infra-opt workspace close --project PROJECT --agent-id TASK_ID --tab-id TAB_ID`.
-- If any workspace command fails, reports a stale or unavailable heartbeat, or times out, stop browser work and send the Infrastructure Agent one alert containing only the project, task ID, failed command, safe error code, and UTC timestamp. Do not include URLs, page content, credentials, or browser history.
-- Do not retry repeatedly, reload the extension, restart Chrome, create an unmanaged tab, or troubleshoot the allocator. Wait for Infrastructure to reply that the allocator is healthy, then retry the original command once.
-- The Infrastructure Agent owns allocator recovery. On the first alert, it immediately verifies the failure from live metadata, reconciles any partially created tab, applies the smallest safe repair when the failure is real, and runs an Infrastructure-owned create/touch/close smoke test. It sends one conclusive reply: either `Chrome allocator healthy — retry now` or a concrete blocker and next action.
-- Duplicate reports for the same failure are one incident. Keep coordination to the initial alert and Infrastructure's conclusive reply unless a genuinely new blocker requires one clarification.
+- Browser-capable agents create and close their own task tabs using their own browser context and chosen cleanup mechanism.
+- Agents must never create, attach to, query, validate, wait for, or acknowledge tab cleanup through Infrastructure. Never pass raw tab IDs between unrelated browser-control APIs.
+- Infrastructure's one-hour idle sweep is passive recovery only. It may close an abandoned eligible inactive non-anchor tab, including an untracked or owner-created tab; active, pinned, audible, captured, discarded, and protected tabs are excluded.
+- A browser-control failure is the task agent's operational failure, not proof of an Infrastructure, workspace, registry, or product-data failure. Do not create placeholder observations or misattribute it to a business-data validation.
+- The legacy `infra-opt workspace create`, `touch`, and `close` commands remain temporarily available only for older workers. New browser instructions and task checks must not use them or any Infrastructure guard status or metadata.
 
 ## Governance
 

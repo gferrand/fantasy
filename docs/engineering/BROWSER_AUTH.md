@@ -4,36 +4,15 @@ Use this document for browser work, authenticated web services, saved-login flow
 
 ## Shared Chrome
 
-At the start of browser work, create a task-owned tab:
+Fantasy browser agents create and close their own task tabs in their own browser
+context using their chosen cleanup mechanism. They do not create, attach to,
+query, validate, wait for, or acknowledge tab cleanup through Infrastructure,
+and they never pass raw tab IDs between unrelated browser-control APIs.
 
-`infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose SAFE_PURPOSE`
-
-When finished, close it:
-
-`infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id TAB_ID`
-
-If a workspace command fails, times out, or reports a stale or unavailable heartbeat:
-
-* stop browser work;
-* alert Infrastructure once with only the project, task ID, failed command, safe error code, and UTC timestamp;
-* do not include URLs, page content, credentials, or browser history;
-* do not repeatedly retry;
-* do not reload the extension;
-* do not restart Chrome;
-* do not create an unmanaged tab;
-* do not troubleshoot the allocator yourself.
-
-Infrastructure owns allocator recovery, including verification and reconciliation, the smallest safe repair, and its own create/touch/close smoke test.
-
-Wait for Infrastructure's conclusive response:
-
-`Chrome allocator healthy — retry now`
-
-or a concrete blocker and next action.
-
-Retry the original command once only after Infrastructure reports healthy.
-
-Duplicate reports for the same failure are one incident. Do not create repeated alerts unless a genuinely new blocker appears.
+Infrastructure provides only a passive one-hour abandoned-tab sweep. A
+browser-control failure is the task agent's operational failure; it does not
+trigger Infrastructure allocation, guard or metadata checks, incident alerts,
+or retry permission.
 
 ## General web-service saved-login procedure
 
@@ -110,4 +89,4 @@ Never:
 
 If the first saved credential is unavailable or rejected, or a user-only challenge remains, stop and report the exact blocker.
 
-Keep all Discord verification in the Owner-controlled **Fantasy EPL Advisor** DM and follow the task-owned Shared Chrome lifecycle above.
+Keep all Discord verification in the Owner-controlled **Fantasy EPL Advisor** DM and follow the Fantasy-owned Shared Chrome lifecycle above.
