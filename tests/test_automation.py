@@ -46,6 +46,9 @@ from fantasy_advisor.automation import (
     split_discord_message,
     run_scheduled_task,
     run_scheduled_advisor,
+    scheduled_report_schema,
+    suppress_discord_link_embeds,
+    _scheduled_response_payload,
     task_prompt_for_run,
     thread_id_from_events,
     web_briefing_prompt,
@@ -56,6 +59,7 @@ from fantasy_advisor.automation import (
 from fantasy_advisor.context_store import DISCORD_USER_MESSAGE, build_context_packet
 from fantasy_advisor.player_catalog import refresh_player_catalog
 from fantasy_advisor.watchlist import add_watchlist_player
+from fantasy_advisor.watchlist_stats import WatchlistStat, WatchlistStatsReport
 
 def test_config() -> AppConfig:
     return AppConfig(
@@ -212,19 +216,23 @@ class AutomationTests(unittest.TestCase):
     def test_watchlist_live_packet_is_scoped_and_empty_list_is_silent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
-            (root / "public").mkdir()
-            core = {"schema_version": 1, "complete": True, "league_id": "1378147559444348928", "retrieved_at": "2026-08-25T00:00:00+00:00", "round": 2, "league": {"season": "2026"}, "state": {"display_week": 2}, "stats": [{"player_id": "10", "stats": {"gp": 2, "min": 180}}]}
             catalog = {"10": {"player_id": "10", "full_name": "Watched Player", "team_abbr": "ARS", "fantasy_positions": ["M"], "competitions": ["epl"], "active": True, "status": "A"}}
-            (root / "public" / "sleeper_feed.json").write_text(json.dumps(core), encoding="utf-8")
             config = test_config().__class__(**{**test_config().__dict__, "repo_root": root})
             self.assertIsNone(build_watchlist_live_packet(config))
             refresh_player_catalog(root / "data" / "automation" / "player_catalog.sqlite3", catalog)
-            add_watchlist_player(watchlist_file(config), {"player_id": "10", "name": "Watched Player", "club": "ARS", "positions": ["M"]})
-            with patch("fantasy_advisor.automation.urlopen", side_effect=OSError("offline")):
+            watched, _ = add_watchlist_player(watchlist_file(config), {"player_id": "10", "name": "Watched Player", "club": "ARS", "positions": ["M"]})
+            stats = WatchlistStatsReport(
+                season="2026", week=3, retrieved_at="now",
+                entries=(WatchlistStat(watched, 12.0, 2.0, 2.0, 180.0, None, None, None, None, None, None, True),),
+            )
+            with (
+                patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
+                patch("fantasy_advisor.lineup_alerts.load_fixture_schedule", return_value={"events": []}),
+            ):
                 packet = build_watchlist_live_packet(config)
-            self.assertIn("PERSONAL WATCHLIST LIVE SNAPSHOT", packet)
+            self.assertIn("CURRENT CANONICAL WATCHLIST EVIDENCE", packet)
             self.assertIn("Watched Player", packet)
-            self.assertIn('"gp":2', packet)
+            self.assertIn('"games":2.0', packet)
             self.assertNotIn("DISCORD_CONTEXT_MARKER", packet)
 
     def test_prompt_extraction_and_interactive_guardrails(self):
@@ -492,6 +500,122 @@ class AutomationTests(unittest.TestCase):
         self.assertTrue(result.trace["web_search_used"])
         self.assertFalse(result.trace["codex_used"])
         self.assertEqual(client.responses.create.call_args.kwargs["tool_choice"], "required")
+
+    def test_nightly_contract_uses_verified_targets_and_precise_scoring_language(self):
+        task = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        evidence = "CURRENT CANONICAL DETERMINISTIC FANTASY EVIDENCE\n" + json.dumps({
+            "waiver_context": {"available_candidates": [{
+                "player_id": "candidate", "name": "Verified Candidate",
+                "next_fixture": {"opponent": "Fulham", "venue": "home", "kickoff_utc": "2026-09-12T12:00:00+00:00"},
+            }]},
+        })
+        valid = {
+            "status": "complete", "material_update": True,
+            "report": "🚨 **Action needed**\nExact fixture evidence is current.",
+            "recommended_targets": [{
+                "player_id": "candidate", "name": "Verified Candidate", "rationale": "Current role is secure.",
+                "availability_injury_verified": True, "role_minutes_verified": True,
+                "current_public_sources": [{"title": "Club", "url": "https://club.example/news"}],
+            }],
+        }
+        report, _, _, _ = _scheduled_response_payload(task, json.dumps(valid), evidence=evidence)
+        self.assertIn("vs Fulham", report)
+        self.assertIn("Verified Candidate", report)
+        self.assertEqual(scheduled_report_schema(task)["required"], ["status", "material_update", "report", "recommended_targets"])
+
+        invalid = {**valid, "report": "Projected +31.25-point gain."}
+        with self.assertRaisesRegex(AutomationError, "projection"):
+            _scheduled_response_payload(task, json.dumps(invalid), evidence=evidence)
+
+        gtd = {**valid, "recommended_targets": [{**valid["recommended_targets"][0], "rationale": "GTD but worth adding."}]}
+        with self.assertRaisesRegex(AutomationError, "uncertain"):
+            _scheduled_response_payload(task, json.dumps(gtd), evidence=evidence)
+
+        quiet = {**valid, "report": "✅ **No action tonight**\nNo verified pickup move tonight.", "recommended_targets": []}
+        rendered, _, _, _ = _scheduled_response_payload(task, json.dumps(quiet), evidence=evidence)
+        self.assertEqual(rendered.casefold().count("no verified pickup move tonight"), 1)
+
+    def test_watchlist_contract_requires_exact_structured_coverage(self):
+        task = TaskSpec("watchlist_report", "Watchlist", ROOT / "x", "daily")
+        evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\nUse only canonical players.\nJSON:\n" + json.dumps({
+            "players": [{"player_id": "one"}, {"player_id": "two"}],
+        })
+        base = {
+            "status": "no_change", "material_update": False,
+            "report": "✅ **No material changes**\nBoth players were checked.",
+        }
+        incomplete = {**base, "research": [{
+            "player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": [],
+        }]}
+        with self.assertRaisesRegex(AutomationError, "every selected player"):
+            _scheduled_response_payload(task, json.dumps(incomplete), evidence=evidence)
+        complete = {**base, "research": [
+            {"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
+            {"player_id": "two", "outcome": "verified_update", "summary": "Role improved.", "sources": [{"title": "BBC", "url": "https://bbc.example/story"}]},
+        ]}
+        report, _, _, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
+        self.assertIn("No material changes", report)
+        self.assertIn("**Player** — [BBC](<https://bbc.example/story>)", report)
+
+    def test_nightly_and_watchlist_require_web_and_watchlist_retries_once_for_coverage(self):
+        config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "key"})
+        nightly = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        nightly_evidence = "CURRENT CANONICAL DETERMINISTIC FANTASY EVIDENCE\n" + json.dumps({
+            "waiver_context": {"available_candidates": []},
+        })
+        nightly_response = MagicMock(
+            output=[MagicMock(type="web_search_call")],
+            output_text=json.dumps({
+                "status": "no_change", "material_update": False,
+                "report": "✅ **No action tonight**", "recommended_targets": [],
+            }), id="nightly-response",
+        )
+        nightly_client = MagicMock()
+        nightly_client.responses.create.return_value = nightly_response
+        result = run_scheduled_advisor(
+            config, nightly, invocation="manual", evidence=nightly_evidence,
+            previous_state="none", client=nightly_client,
+        )
+        self.assertIn("No verified pickup move tonight", result.text)
+        self.assertEqual(nightly_client.responses.create.call_args.kwargs["tool_choice"], "required")
+        self.assertTrue(result.trace["web_search_used"])
+        self.assertFalse(result.trace["codex_used"])
+
+        watchlist = TaskSpec("watchlist_report", "Watchlist", ROOT / "x", "daily")
+        watchlist_evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\n" + json.dumps({
+            "players": [{"player_id": "one"}, {"player_id": "two"}],
+        })
+        incomplete = MagicMock(
+            output=[MagicMock(type="web_search_call")],
+            output_text=json.dumps({
+                "status": "partial", "material_update": False, "report": "Partial.",
+                "research": [{"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []}],
+            }), id="watch-1",
+        )
+        complete = MagicMock(
+            output=[MagicMock(type="web_search_call")],
+            output_text=json.dumps({
+                "status": "no_change", "material_update": False, "report": "✅ **No material changes**",
+                "research": [
+                    {"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
+                    {"player_id": "two", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
+                ],
+            }), id="watch-2",
+        )
+        watch_client = MagicMock()
+        watch_client.responses.create.side_effect = [incomplete, complete]
+        run_scheduled_advisor(
+            config, watchlist, invocation="manual", evidence=watchlist_evidence,
+            previous_state="none", client=watch_client,
+        )
+        self.assertEqual(watch_client.responses.create.call_count, 2)
+        self.assertEqual(watch_client.responses.create.call_args.kwargs["tool_choice"], "required")
+
+    def test_scheduled_sources_use_discord_embed_suppression(self):
+        self.assertEqual(
+            suppress_discord_link_embeds("[Official](https://example.com/report)"),
+            "[Official](<https://example.com/report>)",
+        )
 
     def test_outbox_is_removed_only_after_delivery(self):
         class FakeTransport:

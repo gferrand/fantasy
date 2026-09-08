@@ -270,6 +270,17 @@ still send short confirmation cards so scheduled activity is visible.
 The state, remembered DM channel, outbox, and advisor context store are local
 and are not used as a source of truth for current football facts.
 
+Nightly and Watchlist reports use the same current deterministic capability
+contracts as the interactive Advisor before one bounded required public-research
+pass. Deterministic Sleeper ownership, scoring, roster, gameweek and fixture
+facts win any conflict with public reporting. Nightly acquisition advice is
+rendered only from structured targets with current ownership, fixture,
+availability, role/minutes, and source validation; an unverified candidate is
+withheld. Watchlist research covers each selected player exactly once, with one
+bounded corrective retry for an omitted result. Scheduled source links use
+Discord's compact-link form to suppress webpage previews. Transfer Watch remains
+manual-only and schedule-paused.
+
 ## Conversation context
 
 The local `data/automation/advisor_context.sqlite3` database is shared by the

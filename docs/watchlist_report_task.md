@@ -1,18 +1,26 @@
 # Daily Premier League watchlist report
 
 This local task runs at 8:00 AM America/New_York for one private Discord user.
-It receives a `PERSONAL WATCHLIST LIVE SNAPSHOT` assembled before execution.
+It receives `CURRENT CANONICAL WATCHLIST EVIDENCE` assembled before execution.
 The local scheduler finalizes it directly through the OpenAI Advisor in the
 Owner bot DM, without conversation history or interactive grounding. An empty
 watchlist produces a concise confirmation card rather than a silent run.
+
+The first 12 canonical watched players are checked in one bounded current-public
+research pass. Each receives exactly one structured outcome: verified update,
+no current public update found, insufficient current evidence, or research
+failed. A missing player gets one corrective retry; a second incomplete result
+is an honest partial report. Current Sleeper stats and the maintained fixture
+schedule are deterministic authority. Source links are compact to suppress
+Discord webpage previews.
 
 ```text
 Produce a compact daily status report for the personal Premier League watchlist.
 This is observation only: do not recommend, simulate, or imply any Sleeper roster
 transaction, pickup, waiver, trade, or lineup action.
 
-The supplied PERSONAL WATCHLIST LIVE SNAPSHOT is authoritative for which players
-are watched, current Sleeper metadata, and the active league evidence window. It
+The supplied CURRENT CANONICAL WATCHLIST EVIDENCE is authoritative for which
+players are watched, current Sleeper stats, and deterministic fixtures. It
 contains no Discord conversation context; do not request or rely on such context.
 
 For every watched player, give:
@@ -25,9 +33,9 @@ For every watched player, give:
   active Premier League season; otherwise say so plainly;
 - `No material update` when there is no verified change today.
 
-If `active_in_current_premier_league_index` is false, keep the player in the
-report and state that Sleeper no longer lists them in the current Premier League
-index. Do not silently delete them and do not guess a destination or availability.
+If current Sleeper stats are unavailable, keep the player in the report and
+state that the current deterministic stats row was unavailable. Do not silently
+delete them and do not guess a destination or availability.
 
 The ACTIVE EVIDENCE WINDOW is binding. Exclude previous-season, preseason, cup,
 European, youth, and career statistics or articles by default. A recent article
