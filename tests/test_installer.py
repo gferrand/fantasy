@@ -25,6 +25,15 @@ class InstallerTests(unittest.TestCase):
         definitions = dict(INSTALLER.agent_definitions(repo_root=ROOT, python=ROOT / ".venv" / "bin" / "python"))
         self.assertNotIn("com.ginoferrand.fantasy.transfer-monitor", definitions)
 
+    @patch.object(INSTALLER, "launchctl")
+    @patch.object(INSTALLER.Path, "unlink")
+    @patch.object(INSTALLER.Path, "exists", return_value=True)
+    def test_paused_task_is_booted_out_and_its_generated_plist_removed(self, exists, unlink, launchctl):
+        paused = type("Task", (), {"id": "transfer_monitor", "enabled": False})()
+        INSTALLER.pause_disabled_task_agents((paused,), uid=501)
+        self.assertEqual(launchctl.call_args.args[:2], ("bootout", "gui/501"))
+        unlink.assert_called_once()
+
     def test_runtime_automation_data_is_seeded_once(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

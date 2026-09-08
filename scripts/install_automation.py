@@ -277,6 +277,20 @@ def uninstall(definitions: list[tuple[str, dict[str, Any]]], *, uid: int) -> Non
         print(f"Stopped {label}; definition left at {target}")
 
 
+def pause_disabled_task_agents(tasks: tuple[Any, ...], *, uid: int) -> None:
+    """Remove launchd definitions for schedule-disabled registry tasks."""
+
+    for task in tasks:
+        if getattr(task, "enabled", True):
+            continue
+        label = f"{AGENT_PREFIX}.{task.id.replace('_', '-')}"
+        target = plist_path(label)
+        launchctl("bootout", f"gui/{uid}", str(target), check=False)
+        if target.exists():
+            target.unlink()
+        print(f"Paused {label}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install fantasy advisor launchd agents")
     choice = parser.add_mutually_exclusive_group(required=True)
@@ -301,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
 
         config = AppConfig.from_environment(repo_root=ROOT)
         config.require_discord()
+        tasks = task_registry(ROOT)
         duplicate_containers = running_fantasy_discord_containers()
         if duplicate_containers:
             names = ", ".join(duplicate_containers)
@@ -315,6 +330,7 @@ def main(argv: list[str] | None = None) -> int:
             python_gate=runtime_root / "scripts" / "run_python_after_startup.sh",
             served_sha=runtime_sha(ROOT),
         )
+        pause_disabled_task_agents(tasks, uid=os.getuid())
         install(definitions, uid=os.getuid())
         return 0
     definitions = agent_definitions(python=args.python, repo_root=ROOT)
