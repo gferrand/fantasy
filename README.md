@@ -40,8 +40,9 @@ Long reports are delivered as a sequence of Discord messages, never as an
 attachment.
 
 GitHub Actions refreshes a validated compact Sleeper feed hourly and publishes
-it through GitHub Pages. Local scheduled reports consume that feed rather than
-parse large raw API responses directly.
+it through GitHub Pages. Scheduled reports use bounded live capability packets:
+Nightly uses current roster/fixture/waiver evidence and Watchlist resolves each
+saved player against the current Sleeper EPL catalog.
 
 ## Design rule
 

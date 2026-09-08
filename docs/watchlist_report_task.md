@@ -11,8 +11,13 @@ research pass. Each receives exactly one structured outcome: verified update,
 no current public update found, insufficient current evidence, or research
 failed. A missing player gets one corrective retry; a second incomplete result
 is an honest partial report. Current Sleeper stats and the maintained fixture
-schedule are deterministic authority. Source links are compact to suppress
-Discord webpage previews.
+schedule are deterministic authority. Each saved player is resolved by ID
+against the current Sleeper EPL catalog before display: the saved club and
+position are historical audit fields, never current identity. If that identity
+is unresolved, current club, position, and fixture guidance are withheld.
+Scores are always labeled `Sleeper standard: N pts`; the card separates current
+GW from `stats through` the last completed GW and uses America/New_York for
+human times. Source links include their fact date and suppress previews.
 
 ```text
 Produce a compact daily status report for the personal Premier League watchlist.

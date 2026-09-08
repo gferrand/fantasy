@@ -172,6 +172,11 @@ DISCORD MOBILE PRESENTATION (binding)
    - Treat official lineups as definitive. Before publication, assign High, Medium, or Low source-based confidence, include source timestamps and direct links, and surface conflicts.
 
 4. Lineup actions
+   - The scheduled runtime renders every start, bench, hold, or monitor action
+     only from a structured action record. A start/bench/hold needs current
+     roster membership, a deterministic fixture, current availability and
+     role/minutes evidence, and dated public sources; freeform report prose
+     must not contain a lineup directive.
    - Recommend only changes, bench-order moves, or contingency swaps that improve the provisional lineup fitting `F F M M M D D D GK FM_FLEX MD_FLEX`.
    - Explain the fantasy reason using expected minutes, role, set pieces, defensive actions, clean-sheet potential, matchup, rotation risk, and the live scoring map.
    - Identify no more than three players whose status should be rechecked before kickoff. Do not restate the full lineup unless it changes.

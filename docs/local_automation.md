@@ -273,13 +273,18 @@ and are not used as a source of truth for current football facts.
 Nightly and Watchlist reports use the same current deterministic capability
 contracts as the interactive Advisor before one bounded required public-research
 pass. Deterministic Sleeper ownership, scoring, roster, gameweek and fixture
-facts win any conflict with public reporting. Nightly acquisition advice is
-rendered only from structured targets with current ownership, fixture,
-availability, role/minutes, and source validation; an unverified candidate is
-withheld. Watchlist research covers each selected player exactly once, with one
-bounded corrective retry for an omitted result. Scheduled source links use
-Discord's compact-link form to suppress webpage previews. Transfer Watch remains
-manual-only and schedule-paused.
+facts win any conflict with public reporting. Nightly renders a pickup only from
+an exact current add/drop pair and renders start, bench, hold, or monitor only
+from a structured roster action with a current fixture and dated public
+availability/role evidence. An unverified candidate or action is withheld.
+Watchlist resolves current club, position, EPL membership, and active status by
+player ID from the live Sleeper EPL catalog; the saved club/position is history,
+never current report identity. It labels scores as `Sleeper standard`, separates
+the current GW from the last completed GW, and uses America/New_York for human
+dates. Watchlist research covers each selected player exactly once, with one
+bounded corrective retry for an omitted result. Scheduled source links include
+the source fact date and use Discord's compact-link form to suppress previews.
+Transfer Watch remains manual-only and schedule-paused.
 
 ## Conversation context
 

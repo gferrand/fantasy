@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 import os
@@ -26,6 +26,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from urllib.error import URLError
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
 from .context_store import (
     SCHEDULED_REPORT,
@@ -47,6 +48,7 @@ from .player_catalog import (
 )
 from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, SleeperClient, SleeperDataError
 from .watchlist import WatchlistPlayer, list_watchlist
+from .gameweek import latest_completed_gameweek
 
 
 ROOT = Path(os.environ.get("FANTASY_REPO_ROOT", Path(__file__).resolve().parents[2]))
@@ -1804,28 +1806,56 @@ SCHEDULED_REPORT_SCHEMA = {
 # Scheduled reports have deliberately smaller, task-specific contracts than the
 # interactive Advisor.  The model supplies prose, but the scheduler owns the
 # deterministic packet and validates the fields that can lead to an action.
+PUBLIC_EVIDENCE_SOURCE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "title": {"type": "string"},
+        "url": {"type": "string"},
+        "as_of": {"type": "string"},
+        "retrieved_at": {"type": "string"},
+        "as_of_precision": {"type": "string", "enum": ["timestamp", "date", "unknown"]},
+        "evidence_type": {"type": "string", "enum": [
+            "recent_match", "club_team_news", "manager_update",
+            "reputable_reporting", "ongoing_timetable",
+        ]},
+        "covers_next_fixture": {"type": "boolean"},
+    },
+    "required": ["title", "url", "as_of", "retrieved_at", "as_of_precision", "evidence_type", "covers_next_fixture"],
+}
+
 SCHEDULED_TARGET_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
-        "player_id": {"type": "string"},
-        "name": {"type": "string"},
+        "add_player_id": {"type": "string"},
+        "add_name": {"type": "string"},
+        "drop_player_id": {"type": "string"},
+        "drop_name": {"type": "string"},
+        "position": {"type": "string"},
+        "current_season_point_gain": {"type": "number"},
+        "recommendation_status": {"type": "string"},
         "rationale": {"type": "string"},
         "availability_injury_verified": {"type": "boolean"},
         "role_minutes_verified": {"type": "boolean"},
-        "current_public_sources": {
-            "type": "array", "minItems": 1, "maxItems": 3,
-            "items": {
-                "type": "object", "additionalProperties": False,
-                "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
-                "required": ["title", "url"],
-            },
-        },
+        "availability_sources": {"type": "array", "minItems": 1, "maxItems": 3, "items": PUBLIC_EVIDENCE_SOURCE_SCHEMA},
+        "role_sources": {"type": "array", "minItems": 1, "maxItems": 3, "items": PUBLIC_EVIDENCE_SOURCE_SCHEMA},
     },
     "required": [
-        "player_id", "name", "rationale", "availability_injury_verified",
-        "role_minutes_verified", "current_public_sources",
+        "add_player_id", "add_name", "drop_player_id", "drop_name", "position", "current_season_point_gain", "recommendation_status", "rationale", "availability_injury_verified",
+        "role_minutes_verified", "availability_sources", "role_sources",
     ],
+}
+
+LINEUP_ACTION_SCHEMA: dict[str, Any] = {
+    "type": "object", "additionalProperties": False,
+    "properties": {
+        "player_id": {"type": "string"}, "action": {"type": "string", "enum": ["start", "bench", "hold", "monitor"]},
+        "rationale": {"type": "string"}, "availability_verified": {"type": "boolean"},
+        "role_minutes_verified": {"type": "boolean"},
+        "current_public_sources": {"type": "array", "minItems": 1, "maxItems": 3, "items": PUBLIC_EVIDENCE_SOURCE_SCHEMA},
+    },
+    "required": ["player_id", "action", "rationale", "availability_verified", "role_minutes_verified", "current_public_sources"],
 }
 
 WATCHLIST_RESEARCH_SCHEMA: dict[str, Any] = {
@@ -1843,11 +1873,7 @@ WATCHLIST_RESEARCH_SCHEMA: dict[str, Any] = {
         "summary": {"type": "string"},
         "sources": {
             "type": "array", "maxItems": 3,
-            "items": {
-                "type": "object", "additionalProperties": False,
-                "properties": {"title": {"type": "string"}, "url": {"type": "string"}},
-                "required": ["title", "url"],
-            },
+            "items": PUBLIC_EVIDENCE_SOURCE_SCHEMA,
         },
     },
     "required": ["player_id", "outcome", "summary", "sources"],
@@ -1863,6 +1889,10 @@ def scheduled_report_schema(task: TaskSpec) -> dict[str, Any]:
             "type": "array", "maxItems": 3, "items": SCHEDULED_TARGET_SCHEMA,
         }
         schema["required"].append("recommended_targets")
+        schema["properties"]["lineup_actions"] = {
+            "type": "array", "maxItems": 6, "items": LINEUP_ACTION_SCHEMA,
+        }
+        schema["required"].append("lineup_actions")
     elif task.id == "watchlist_report":
         schema["properties"]["research"] = {
             "type": "array", "maxItems": 12, "items": WATCHLIST_RESEARCH_SCHEMA,
@@ -2012,11 +2042,14 @@ PREVIOUS REPORT STATE (non-authoritative):
         return shared + """
 Current public research is mandatory. Create a concise `🌙 **Nightly Recap**` for Los Blancos. Lead with `🚨 **Action needed**` or `✅ **No action tonight**`. Use the canonical deterministic packet for roster membership, ownership, scoring, fixtures, kickoff, gameweek, waiver status, and league activity; web research may enrich but never replace those facts.
 
-Do not put acquisition instructions in `report`. Put every visible acquisition recommendation exclusively in `recommended_targets`; the scheduler renders those records. A target is allowed only when it is current deterministic-unrostered, has its exact deterministic next fixture, and current public research verifies both availability/injury and material role/minutes. If that verification is insufficient, return no target and write `No verified pickup move tonight.` Never call a current-season scoring difference a projection, expected gain, or future gain. It may be used silently for ranking, or precisely described as a current-season Kick & Run scoring signal. Do not make a confident start/bench change without current public role/availability research; if research is incomplete, preserve the exact roster/fixture fact and state that there is no verified lineup adjustment. Do not ask the Owner to check or verify publicly retrievable injury, availability, role, or lineup facts; withhold the conclusion instead. Do not describe old news as new unless it changed today or is essential current-decision context. `material_update` is true only when an action-worthy change exists.
+Do not put an acquisition or lineup instruction in `report`. Put every visible acquisition recommendation exclusively in `recommended_targets`; each must exactly match one deterministic `roster_swap_recommendations` add/drop pair (including IDs, names, position, current-season signal, and status), then verify the incoming player's current availability and role. If no exact pair qualifies, return no target and write `No verified pickup move tonight.` A researched unrostered player without an exact pair is observation-only, never a move. Do not call a current-season scoring difference a projection, expected gain, or future gain. It may be used silently for ranking, or precisely described as a current-season Kick & Run scoring signal.
+
+Put every start, bench, hold, or monitor decision exclusively in `lineup_actions`; the scheduler renders them. Start/bench/hold require roster membership, a deterministic upcoming fixture, current availability, current material role/minutes, and valid public sources. `monitor` is non-actionable and may describe uncertainty, but any factual injury or role statement still needs a source. Do not ask the Owner to check facts that public research can retrieve. For all public source records: `as_of` is the date/time of the football fact, not retrieval; keep `retrieved_at` separate. Use a full timestamp when available. If only a date is available, return YYYY-MM-DD with `as_of_precision=date`; unknown dates are supplemental only. Availability is normally at most seven days old. For a fixture within 72 hours, availability needs a timestamp within 72 hours, except a dated ongoing timetable explicitly covering that fixture. Role/minutes evidence must be current 2026/27 Premier League evidence no older than 21 days; prefer the last three PL fixtures. Do not describe old news as new unless it changed today or is essential current-decision context. `material_update` is true only when an action-worthy change exists.
 """
     if task.id == "watchlist_report":
         return shared + """
-Current public research is mandatory. Create a concise `👀 **Watchlist Update**` using the canonical watched players in the supplied evidence. Return exactly one structured `research` result for every selected player ID. Use `no_current_public_update_found` only after researching that player and finding no material update; do not confuse it with `research_failed`. This is observation-only: never recommend a transaction. Use deterministic Sleeper facts and fixtures exactly as supplied. Make the visible report change-oriented: show meaningful changes, then summarize quiet players together. Do not promote an old signing, contract, transfer, or historical article as a current material change unless its status changed today or it is essential to a current selection decision. If no material change is verified, say so clearly. `material_update` is true only for a material player change.
+Current public research is mandatory. Create a concise `👀 **Watchlist Update**` using the canonical watched players in the supplied evidence. Return exactly one structured `research` result for every selected player ID. Use `no_current_public_update_found` only after researching that player and finding no material update; do not confuse it with `research_failed`. This is observation-only: never recommend a transaction. Use deterministic Sleeper facts and fixtures exactly as supplied. Describe `points` only as `Sleeper standard: N pts` and never as Kick & Run points. The card must distinguish the current display GW from the last completed GW exactly as supplied, and show human dates in America/New_York. Make the visible report change-oriented: a `verified_update` means a real current-world development (availability, role/selection, transfer/current club, or manager news), never a numerical stats change alone. On a first run or without such a verified development, use `Current status` or `Stats refreshed`, not a movement claim. Do not promote an old signing, contract, transfer, or historical article as a current material change unless its status changed today or it is essential to a current selection decision. If no material change is verified, say so clearly. `material_update` is true only for a material player change. Source records use the same `as_of`/`retrieved_at` rule as above.
+`club_when_added` and `positions_when_added` are historical audit fields only: never render them as a player's current identity. If `current_identity.resolved` is false, say current club/positions/fixture are unavailable and do not give fixture guidance.
 """
     if task.id == "transfer_monitor":
         return shared + """
@@ -2035,6 +2068,22 @@ def _scheduled_evidence_json(evidence: str) -> dict[str, Any]:
         raise AutomationError("Scheduled deterministic evidence was invalid") from exc
 
 
+def _source_as_of(source: dict[str, Any]) -> datetime | None:
+    """Parse a public fact's timestamp without mistaking retrieval for evidence."""
+
+    value = str(source.get("as_of") or "").strip()
+    precision = source.get("as_of_precision")
+    try:
+        if precision == "timestamp":
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+        if precision == "date" and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            return datetime.fromisoformat(value).replace(tzinfo=ZoneInfo("Europe/London")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+    return None
+
+
 def _valid_public_sources(sources: object) -> bool:
     return isinstance(sources, list) and all(
         isinstance(source, dict)
@@ -2042,11 +2091,53 @@ def _valid_public_sources(sources: object) -> bool:
         and isinstance(source.get("url"), str)
         and urlsplit(source["url"]).scheme in {"http", "https"}
         and bool(urlsplit(source["url"]).netloc)
+        and isinstance(source.get("retrieved_at"), str) and bool(source["retrieved_at"].strip())
+        and source.get("as_of_precision") in {"timestamp", "date", "unknown"}
+        and source.get("evidence_type") in {
+            "recent_match", "club_team_news", "manager_update", "reputable_reporting", "ongoing_timetable",
+        }
+        and isinstance(source.get("covers_next_fixture"), bool)
+        and (source.get("as_of_precision") == "unknown" or _source_as_of(source) is not None)
         for source in sources
     )
 
 
-def _validate_nightly_targets(payload: dict[str, Any], evidence: str) -> list[dict[str, Any]]:
+def _fresh_sources(
+    sources: object, *, now: datetime, max_age: timedelta, match_window: bool = False,
+) -> bool:
+    if not _valid_public_sources(sources):
+        return False
+    for source in sources:
+        assert isinstance(source, dict)
+        as_of = _source_as_of(source)
+        if as_of is None or as_of > now + timedelta(minutes=5) or now - as_of > max_age:
+            continue
+        if not match_window:
+            return True
+        # A date alone cannot establish the 72-hour window except when the
+        # source explicitly says an ongoing timetable covers this fixture.
+        if source.get("evidence_type") == "ongoing_timetable" and source.get("covers_next_fixture") is True:
+            return True
+        if source.get("as_of_precision") == "timestamp" and now - as_of <= timedelta(hours=72):
+            return True
+    return False
+
+
+def _fixture_within_72_hours(fixture: object, *, now: datetime) -> bool:
+    if not isinstance(fixture, dict):
+        return False
+    try:
+        kickoff = datetime.fromisoformat(str(fixture.get("kickoff_utc") or "").replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if kickoff.tzinfo is None:
+        return False
+    return timedelta(0) <= kickoff.astimezone(timezone.utc) - now <= timedelta(hours=72)
+
+
+def _validate_nightly_targets(
+    payload: dict[str, Any], evidence: str, *, now: datetime | None = None,
+) -> list[dict[str, Any]]:
     """Enforce the same target contract that protects analytical commands."""
 
     packet = _scheduled_evidence_json(evidence)
@@ -2056,6 +2147,13 @@ def _validate_nightly_targets(payload: dict[str, Any], evidence: str) -> list[di
         str(candidate.get("player_id") or ""): candidate
         for candidate in candidates if isinstance(candidate, dict)
     }
+    swaps = waiver.get("roster_swap_recommendations") if isinstance(waiver, dict) else []
+    swaps = swaps if isinstance(swaps, list) else []
+    exact_pairs = {
+        (str(row.get("add", {}).get("player_id") or ""), str(row.get("drop", {}).get("player_id") or "")): row
+        for row in swaps if isinstance(row, dict) and isinstance(row.get("add"), dict) and isinstance(row.get("drop"), dict)
+    }
+    current = now or datetime.now(timezone.utc)
     targets = payload.get("recommended_targets")
     if not isinstance(targets, list) or len(targets) > 3:
         raise AutomationError("Nightly Recap returned invalid recommended targets")
@@ -2064,15 +2162,22 @@ def _validate_nightly_targets(payload: dict[str, Any], evidence: str) -> list[di
     for target in targets:
         if not isinstance(target, dict):
             raise AutomationError("Nightly Recap returned invalid recommended targets")
-        player_id = str(target.get("player_id") or "").strip()
+        player_id = str(target.get("add_player_id") or "").strip()
+        drop_id = str(target.get("drop_player_id") or "").strip()
         candidate = inventory.get(player_id)
+        pair = exact_pairs.get((player_id, drop_id))
         if (
             candidate is None or player_id in seen
-            or str(candidate.get("name") or "").casefold() != str(target.get("name") or "").strip().casefold()
+            or pair is None
+            or str(candidate.get("name") or "").casefold() != str(target.get("add_name") or "").strip().casefold()
+            or str(pair["drop"].get("name") or "").casefold() != str(target.get("drop_name") or "").strip().casefold()
+            or str(pair.get("position") or "").upper() != str(target.get("position") or "").upper()
+            or pair.get("recommendation_status") != target.get("recommendation_status")
+            or pair.get("current_season_point_gain") != target.get("current_season_point_gain")
             or target.get("availability_injury_verified") is not True
             or target.get("role_minutes_verified") is not True
-            or not target.get("current_public_sources")
-            or not _valid_public_sources(target.get("current_public_sources"))
+            or not _fresh_sources(target.get("availability_sources"), now=current, max_age=timedelta(days=7), match_window=_fixture_within_72_hours(candidate.get("next_fixture"), now=current))
+            or not _fresh_sources(target.get("role_sources"), now=current, max_age=timedelta(days=21))
         ):
             raise AutomationError("Nightly Recap target did not satisfy current verification")
         if candidate.get("next_fixture") is None:
@@ -2082,9 +2187,10 @@ def _validate_nightly_targets(payload: dict[str, Any], evidence: str) -> list[di
         seen.add(player_id)
         normalized.append({
             "player_id": player_id,
-            "name": str(target["name"]).strip(),
+            "name": str(target["add_name"]).strip(),
+            "drop_name": str(target["drop_name"]).strip(),
             "rationale": str(target.get("rationale") or "").strip(),
-            "sources": target["current_public_sources"],
+            "sources": [*target["availability_sources"], *target["role_sources"]],
             "fixture": candidate["next_fixture"],
         })
     return normalized
@@ -2095,6 +2201,7 @@ def _render_compact_sources(sources: list[dict[str, Any]]) -> str:
 
     return " · ".join(
         f"[{str(source['title']).strip()}](<{str(source['url']).strip()}>)"
+        + (f" · {str(source.get('as_of') or '').strip()}" if str(source.get("as_of") or "").strip() else "")
         for source in sources
     )
 
@@ -2110,14 +2217,80 @@ def _render_nightly_targets(report: str, targets: list[dict[str, Any]]) -> str:
         if "no verified pickup move tonight" in report.casefold():
             return report.rstrip()
         return report.rstrip() + "\n\n🎯 **Pickups**\nNo verified pickup move tonight."
-    lines = [report.rstrip(), "", "🎯 **Verified pickups**"]
+    lines = [report.rstrip(), "", "🎯 **Verified roster moves**"]
     for target in targets:
         fixture = target["fixture"]
         venue = "vs" if fixture.get("venue") == "home" else "at"
         lines.extend((
-            f"**{target['name']}** — {target['rationale']}",
+            f"✅ ADD **{target['name']}** · DROP **{target['drop_name']}**",
+            target["rationale"],
             f"{venue} {fixture.get('opponent')} · {fixture.get('kickoff_utc')}",
             _render_compact_sources(target["sources"]),
+        ))
+    return "\n".join(lines)
+
+
+def _validate_nightly_lineup_actions(
+    payload: dict[str, Any], evidence: str, *, now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    packet = _scheduled_evidence_json(evidence)
+    roster = packet.get("your_roster") if isinstance(packet, dict) else []
+    roster = roster if isinstance(roster, list) else []
+    roster_by_id = {
+        str(player.get("player_id") or ""): player
+        for player in roster if isinstance(player, dict)
+    }
+    fixtures = packet.get("next_roster_fixtures") if isinstance(packet, dict) else []
+    fixtures = fixtures if isinstance(fixtures, list) else []
+    fixture_by_player = {
+        player_id: row
+        for row in fixtures if isinstance(row, dict)
+        for player_id in (row.get("roster_player_ids") or [])
+    }
+    actions = payload.get("lineup_actions")
+    if not isinstance(actions, list) or len(actions) > 6:
+        raise AutomationError("Nightly Recap returned invalid lineup actions")
+    current = now or datetime.now(timezone.utc)
+    normalized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in actions:
+        if not isinstance(item, dict):
+            raise AutomationError("Nightly Recap returned invalid lineup actions")
+        player_id = str(item.get("player_id") or "").strip()
+        action = item.get("action")
+        player = roster_by_id.get(player_id)
+        sources = item.get("current_public_sources")
+        if player is None or player_id in seen or action not in {"start", "bench", "hold", "monitor"} or not _valid_public_sources(sources):
+            raise AutomationError("Nightly Recap lineup action did not satisfy current verification")
+        if action in {"start", "bench", "hold"}:
+            fixture = fixture_by_player.get(player_id)
+            if (
+                fixture is None
+                or item.get("availability_verified") is not True
+                or item.get("role_minutes_verified") is not True
+                or not _fresh_sources(sources, now=current, max_age=timedelta(days=7), match_window=_fixture_within_72_hours({"kickoff_utc": fixture.get("kickoff_utc")}, now=current))
+                or not _fresh_sources(sources, now=current, max_age=timedelta(days=21))
+            ):
+                raise AutomationError("Nightly Recap lineup action did not satisfy current verification")
+        seen.add(player_id)
+        normalized.append({
+            "name": str(player.get("name") or player.get("full_name") or "Player").strip(),
+            "action": action,
+            "rationale": str(item.get("rationale") or "").strip(),
+            "sources": sources,
+        })
+    return normalized
+
+
+def _render_nightly_lineup_actions(report: str, actions: list[dict[str, Any]]) -> str:
+    if not actions:
+        return report.rstrip()
+    labels = {"start": "▶️ START", "bench": "⏸️ BENCH", "hold": "✅ HOLD", "monitor": "👀 MONITOR"}
+    lines = [report.rstrip(), "", "📋 **Lineup actions**"]
+    for action in actions:
+        lines.extend((
+            f"{labels[action['action']]} **{action['name']}** — {action['rationale']}",
+            _render_compact_sources(action["sources"][:3]),
         ))
     return "\n".join(lines)
 
@@ -2145,6 +2318,80 @@ def _watchlist_research_complete(payload: dict[str, Any], evidence: str) -> bool
     )
 
 
+def _validate_watchlist_presentation(report: str, payload: dict[str, Any], evidence: str) -> None:
+    """Prevent common model shortcuts from reintroducing stale or ambiguous cards."""
+
+    packet = _scheduled_evidence_json(evidence)
+    current_week = packet.get("current_gameweek") if isinstance(packet, dict) else None
+    completed_week = packet.get("last_completed_gameweek") if isinstance(packet, dict) else None
+    players = packet.get("players") if isinstance(packet, dict) else []
+    if current_week is not None and f"GW{current_week}" not in report.replace("GW ", "GW"):
+        raise AutomationError("Watchlist Update did not state the current gameweek")
+    if completed_week is not None and f"through GW{completed_week}" not in report.replace("through GW ", "through GW"):
+        raise AutomationError("Watchlist Update did not state the completed gameweek")
+    if isinstance(players, list) and any(
+        isinstance(player, dict) and (player.get("current_sleeper_stats") or {}).get("found")
+        for player in players
+    ) and "sleeper standard:" not in report.casefold():
+        raise AutomationError("Watchlist Update did not label Sleeper standard points")
+    for match in re.finditer(r"\b\d+(?:\.\d+)?\s*(?:points|pts)\b", report, re.IGNORECASE):
+        if "sleeper standard:" not in report[max(0, match.start() - 24):match.start()].casefold():
+            raise AutomationError("Watchlist Update used an ambiguous points label")
+    if re.search(r"kick\s*&\s*run.{0,40}\b(?:points|pts)\b", report, re.IGNORECASE):
+        raise AutomationError("Watchlist Update mislabels Sleeper standard points")
+    research = payload.get("research") if isinstance(payload.get("research"), list) else []
+    if not any(isinstance(item, dict) and item.get("outcome") == "verified_update" for item in research):
+        if re.search(r"\bmeaningful\s+(?:movement|change|update)\b", report, re.IGNORECASE):
+            raise AutomationError("Watchlist Update claimed movement without a verified public update")
+    for player in players if isinstance(players, list) else []:
+        if not isinstance(player, dict):
+            continue
+        old_club = str(player.get("club_when_added") or "").strip()
+        identity = player.get("current_identity") if isinstance(player.get("current_identity"), dict) else {}
+        current_club = str(identity.get("current_club") or "").strip()
+        if old_club and old_club != current_club and old_club.casefold() in report.casefold():
+            raise AutomationError("Watchlist Update rendered a historical club as current")
+    human_time = str(packet.get("retrieved_at_america_new_york") or "").strip() if isinstance(packet, dict) else ""
+    if human_time and human_time != "Unavailable" and human_time.split(",", 1)[0] not in report:
+        raise AutomationError("Watchlist Update did not use the America/New_York report date")
+
+
+def _normalize_watchlist_presentation(report: str, evidence: str) -> str:
+    """Make deterministic report metadata and Sleeper's scoring label unambiguous."""
+
+    packet = _scheduled_evidence_json(evidence)
+    current_week = packet.get("current_gameweek") if isinstance(packet, dict) else None
+    completed_week = packet.get("last_completed_gameweek") if isinstance(packet, dict) else None
+    season = str(packet.get("season") or "").strip() if isinstance(packet, dict) else ""
+    updated = str(packet.get("retrieved_at_america_new_york") or "").strip() if isinstance(packet, dict) else ""
+    lines = [
+        line for line in report.strip().splitlines()
+        if not (
+            ("premier league" in line.casefold() and ("gw" in line.casefold() or "stats through" in line.casefold()))
+            or re.fullmatch(r"\s*👀\s*\*{0,2}watchlist update\*{0,2}\s*", line, re.IGNORECASE)
+        )
+    ]
+    if season and current_week is not None:
+        season_label = f"{season}/{str(int(season) + 1)[-2:]}" if season.isdigit() else season
+        stats_label = f" · stats through GW{completed_week}" if completed_week is not None else ""
+        updated_label = f" · {updated}" if updated and updated != "Unavailable" else ""
+        lines.insert(0, f"{season_label} Premier League · GW{current_week}{stats_label}{updated_label}")
+    normalized = "\n".join(lines)
+    normalized = re.sub(
+        r"\bSleeper\s*:\s*(\d+(?:\.\d+)?)\s*(?:points?|pts)\b",
+        r"Sleeper standard: \1 pts", normalized, flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\bSleeper standard:\s*(\d+(?:\.\d+)?)\s*points?\b",
+        r"Sleeper standard: \1 pts", normalized, flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"(?<=—\s)(\d+(?:\.\d+)?)\s*points?\b",
+        r"Sleeper standard: \1 pts", normalized, flags=re.IGNORECASE,
+    )
+    return normalized
+
+
 def _render_watchlist_sources(report: str, payload: dict[str, Any], evidence: str) -> str:
     """Keep current-report sourcing visible without Discord preview cards."""
 
@@ -2161,6 +2408,19 @@ def _render_watchlist_sources(report: str, payload: dict[str, Any], evidence: st
         if isinstance(sources, list) and sources:
             rows.append(f"**{names.get(str(item.get('player_id') or ''), 'Player')}** — {_render_compact_sources(sources)}")
     return report.rstrip() if not rows else report.rstrip() + "\n\n🔗 **Sources**\n" + "\n".join(rows)
+
+
+def _contains_unstructured_lineup_instruction(report: str) -> bool:
+    """Reject present-tense lineup directives outside the checked action records."""
+
+    plain = re.sub(r"[*_`]+", "", report)
+    patterns = (
+        r"\b(?:should|must|please|you need to)\s+(?:start|bench|sit|hold)\b",
+        r"\b(?:start|bench|sit|hold)\s+[A-Z][\w .'-]+",
+        r"\b(?:leave|keep)\s+.+?\s+(?:on the bench|out of (?:the )?(?:xi|lineup))\b",
+        r"\b(?:put|move)\s+.+?\s+(?:into|out of)\s+(?:the )?(?:xi|lineup)\b",
+    )
+    return any(re.search(pattern, plain, re.IGNORECASE) for pattern in patterns)
 
 
 def _scheduled_response_payload(task: TaskSpec, text: str, *, evidence: str) -> tuple[str, bool, str, dict[str, Any]]:
@@ -2184,12 +2444,42 @@ def _scheduled_response_payload(task: TaskSpec, text: str, *, evidence: str) -> 
             re.IGNORECASE,
         ):
             raise AutomationError("Nightly Recap placed an acquisition recommendation outside verified targets")
+        if _contains_unstructured_lineup_instruction(report):
+            raise AutomationError("Nightly Recap placed a lineup instruction outside verified actions")
         report = _render_nightly_targets(report, _validate_nightly_targets(payload, evidence))
+        report = _render_nightly_lineup_actions(report, _validate_nightly_lineup_actions(payload, evidence))
     if task.id == "watchlist_report":
         if not _watchlist_research_complete(payload, evidence):
             raise AutomationError("Watchlist Update did not account for every selected player")
+        report = _normalize_watchlist_presentation(report, evidence)
+        _validate_watchlist_presentation(report, payload, evidence)
         report = _render_watchlist_sources(report, payload, evidence)
     return report.strip(), material_update, status, payload
+
+
+def _actionable_evidence_records(task: TaskSpec, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keep a small, non-private trace of sources used for visible decisions."""
+
+    collections: list[object] = []
+    if task.id == "nightly_recap":
+        collections.extend(item.get("availability_sources") for item in payload.get("recommended_targets", []) if isinstance(item, dict))
+        collections.extend(item.get("role_sources") for item in payload.get("recommended_targets", []) if isinstance(item, dict))
+        collections.extend(item.get("current_public_sources") for item in payload.get("lineup_actions", []) if isinstance(item, dict))
+    elif task.id == "watchlist_report":
+        collections.extend(item.get("sources") for item in payload.get("research", []) if isinstance(item, dict) and item.get("outcome") == "verified_update")
+    records: list[dict[str, Any]] = []
+    for sources in collections:
+        if not isinstance(sources, list):
+            continue
+        for source in sources:
+            if not isinstance(source, dict) or not _valid_public_sources([source]):
+                continue
+            record = {key: source.get(key) for key in ("title", "url", "as_of", "retrieved_at", "as_of_precision", "evidence_type")}
+            if record not in records:
+                records.append(record)
+            if len(records) >= 12:
+                return records
+    return records
 
 
 def _normalize_scheduled_report(task: TaskSpec, report: str, *, material_update: bool) -> str:
@@ -2198,9 +2488,16 @@ def _normalize_scheduled_report(task: TaskSpec, report: str, *, material_update:
     heading = scheduled_report_heading(task.id)
     if task.id == "transfer_monitor" and not material_update:
         return f"{heading}\n✅ **No material transfer update this hour.**"
-    if report.startswith(heading):
-        return report
-    return f"{heading}\n\n{report}"
+    body = report.strip()
+    # The model is instructed to use the card title, but it can repeat that
+    # line after an urgency label. Delivery owns exactly one stable title.
+    emoji = re.escape(heading.split(" ", 1)[0])
+    title = re.escape(scheduled_report_title(task.id))
+    title_line = re.compile(
+        rf"(?mi)^\s*{emoji}\s+\*{{0,2}}{title}\*{{0,2}}\s*$"
+    )
+    body = title_line.sub("", body).strip()
+    return heading if not body else f"{heading}\n\n{body}"
 
 
 def run_scheduled_advisor(
@@ -2289,6 +2586,7 @@ def run_scheduled_advisor(
         "delivery_suppressed": False,
         "result_status": status,
         "elapsed_seconds": round(time.monotonic() - started, 2),
+        "actionable_evidence": _actionable_evidence_records(task, payload),
     })
     LOGGER.info("scheduled_advisor_trace %s", json.dumps(trace, sort_keys=True))
     return ScheduledResult(
@@ -2378,25 +2676,60 @@ def build_watchlist_live_packet(config: AppConfig) -> str | None:
         )
     except (AutomationError, SleeperDataError, OSError, ValueError) as exc:
         raise AutomationError(f"Could not build watchlist live packet: {exc}") from exc
+    # A saved watchlist row is historical identity only. Fetch the same
+    # current Sleeper EPL catalog that powers live player resolution so a
+    # transfer cannot leave an old club or fixture in an Owner report.
+    try:
+        live_catalog = SleeperClient().get_json(SLEEPER_EPL_PLAYERS_URL)
+        live_catalog = live_catalog if isinstance(live_catalog, dict) else {}
+    except (SleeperDataError, OSError, ValueError):
+        live_catalog = {}
     stats_by_player = {entry.player.player_id: entry for entry in stats_report.entries}
     players: list[dict[str, Any]] = []
     for watched_player in watched:
         current = stats_by_player.get(watched_player.player_id)
+        raw = live_catalog.get(watched_player.player_id)
+        raw = raw if isinstance(raw, dict) else None
+        club = str(raw.get("team_abbr") or "").strip().upper() if raw else ""
+        positions = [str(value).upper() for value in (raw.get("fantasy_positions") or []) if str(value).strip()] if raw else []
+        competitions = {str(value).casefold() for value in (raw.get("competitions") or [])} if raw else set()
+        active = raw.get("active") if raw else None
+        status = str(raw.get("status") or "").strip() if raw else ""
+        resolved = bool(raw and club and positions and "epl" in competitions and active is True)
+        identity = {
+            "resolved": resolved,
+            "current_name": str(raw.get("full_name") or watched_player.name).strip() if raw else None,
+            "current_club": club or None,
+            "current_positions": positions,
+            "current_epl_membership": "epl" in competitions if raw else None,
+            "active": active,
+            "status": status or None,
+            "reason": None if resolved else "Current Sleeper EPL identity could not be safely resolved",
+        }
         players.append(
             {
                 "player_id": watched_player.player_id,
-                "canonical_name": watched_player.name,
+                "canonical_name": identity["current_name"] or watched_player.name,
                 "club_when_added": watched_player.club,
                 "positions_when_added": list(watched_player.positions),
                 "added_at": watched_player.added_at,
+                "current_identity": identity,
                 "current_sleeper_stats": {
-                    "found": current.found, "points": current.points, "games": current.games,
+                    "found": current.found, "sleeper_standard_points": current.points, "games": current.games,
                     "starts": current.starts, "minutes": current.minutes,
                     "injury_status": current.injury_status, "updated_at": current.updated_at,
                 } if current is not None else {"found": False},
-                "next_fixture": fixtures.get(watched_player.club.upper()),
+                "next_fixture": fixtures.get(club) if resolved else None,
             }
         )
+    try:
+        retrieved = datetime.fromisoformat(str(stats_report.retrieved_at).replace("Z", "+00:00"))
+        if retrieved.tzinfo is None:
+            retrieved = retrieved.replace(tzinfo=timezone.utc)
+        retrieved_et = retrieved.astimezone(ZoneInfo("America/New_York")).strftime("%b %-d, %Y %-I:%M %p ET")
+    except (TypeError, ValueError):
+        retrieved_et = "Unavailable"
+    completed_week = latest_completed_gameweek({"season": stats_report.season, "display_week": stats_report.week}) if stats_report.week else None
     packet = {
         "authority": {
             "watchlist": "canonical local watchlist",
@@ -2405,8 +2738,11 @@ def build_watchlist_live_packet(config: AppConfig) -> str | None:
         },
         "watchlist_count": len(players),
         "season": stats_report.season,
-        "gameweek": stats_report.week,
+        "current_gameweek": stats_report.week,
+        "last_completed_gameweek": completed_week,
         "retrieved_at": stats_report.retrieved_at,
+        "retrieved_at_america_new_york": retrieved_et,
+        "scoring_label": "Sleeper standard",
         "players": players,
     }
     return (
