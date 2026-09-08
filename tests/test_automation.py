@@ -531,9 +531,13 @@ class AutomationTests(unittest.TestCase):
         with self.assertRaisesRegex(AutomationError, "uncertain"):
             _scheduled_response_payload(task, json.dumps(gtd), evidence=evidence)
 
+        quiet = {**valid, "report": "✅ **No action tonight**\nNo verified pickup move tonight.", "recommended_targets": []}
+        rendered, _, _, _ = _scheduled_response_payload(task, json.dumps(quiet), evidence=evidence)
+        self.assertEqual(rendered.casefold().count("no verified pickup move tonight"), 1)
+
     def test_watchlist_contract_requires_exact_structured_coverage(self):
         task = TaskSpec("watchlist_report", "Watchlist", ROOT / "x", "daily")
-        evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\n" + json.dumps({
+        evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\nUse only canonical players.\nJSON:\n" + json.dumps({
             "players": [{"player_id": "one"}, {"player_id": "two"}],
         })
         base = {
@@ -551,6 +555,7 @@ class AutomationTests(unittest.TestCase):
         ]}
         report, _, _, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
         self.assertIn("No material changes", report)
+        self.assertIn("**Player** — [BBC](<https://bbc.example/story>)", report)
 
     def test_nightly_and_watchlist_require_web_and_watchlist_retries_once_for_coverage(self):
         config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "key"})

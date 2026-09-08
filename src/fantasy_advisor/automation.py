@@ -1887,6 +1887,17 @@ def scheduled_report_heading(task_id: str) -> str:
     }.get(task_id, "📬 **Scheduled Report**")
 
 
+def _scheduled_capabilities(task_id: str) -> list[str]:
+    if task_id == "watchlist_report":
+        return ["get_watchlist_stats", "load_fixture_schedule"]
+    if task_id == "nightly_recap":
+        return [
+            "get_league_context", "get_gameweek_prepare_context",
+            "load_fixture_schedule", "get_waiver_context", "get_league_activity",
+        ]
+    return []
+
+
 def _current_nightly_packet(config: AppConfig) -> str:
     """Build Nightly evidence through the accepted current capability contracts.
 
@@ -1939,6 +1950,7 @@ def _current_nightly_packet(config: AppConfig) -> str:
         for candidate in candidates if isinstance(candidate, dict)
     ]
     swaps = waiver_data.get("roster_swap_recommendations") if isinstance(waiver_data.get("roster_swap_recommendations"), list) else []
+    now = datetime.now(timezone.utc)
     fixture_rows = [
         {
             "event_id": fixture.event_id,
@@ -1947,7 +1959,7 @@ def _current_nightly_packet(config: AppConfig) -> str:
             "away": fixture.away,
             "roster_player_ids": [str(player.get("player_id") or "") for player in fixture.players],
         }
-        for fixture in roster_fixture_rows
+        for fixture in roster_fixture_rows if fixture.kickoff > now
     ]
     packet = {
         "authority": {
@@ -2000,11 +2012,11 @@ PREVIOUS REPORT STATE (non-authoritative):
         return shared + """
 Current public research is mandatory. Create a concise `🌙 **Nightly Recap**` for Los Blancos. Lead with `🚨 **Action needed**` or `✅ **No action tonight**`. Use the canonical deterministic packet for roster membership, ownership, scoring, fixtures, kickoff, gameweek, waiver status, and league activity; web research may enrich but never replace those facts.
 
-Do not put acquisition instructions in `report`. Put every visible acquisition recommendation exclusively in `recommended_targets`; the scheduler renders those records. A target is allowed only when it is current deterministic-unrostered, has its exact deterministic next fixture, and current public research verifies both availability/injury and material role/minutes. If that verification is insufficient, return no target and write `No verified pickup move tonight.` Never call a current-season scoring difference a projection, expected gain, or future gain. It may be used silently for ranking, or precisely described as a current-season Kick & Run scoring signal. Do not make a confident start/bench change without current public role/availability research; if research is incomplete, preserve the exact roster/fixture fact and state that there is no verified lineup adjustment. Do not describe old news as new unless it changed today or is essential current-decision context. `material_update` is true only when an action-worthy change exists.
+Do not put acquisition instructions in `report`. Put every visible acquisition recommendation exclusively in `recommended_targets`; the scheduler renders those records. A target is allowed only when it is current deterministic-unrostered, has its exact deterministic next fixture, and current public research verifies both availability/injury and material role/minutes. If that verification is insufficient, return no target and write `No verified pickup move tonight.` Never call a current-season scoring difference a projection, expected gain, or future gain. It may be used silently for ranking, or precisely described as a current-season Kick & Run scoring signal. Do not make a confident start/bench change without current public role/availability research; if research is incomplete, preserve the exact roster/fixture fact and state that there is no verified lineup adjustment. Do not ask the Owner to check or verify publicly retrievable injury, availability, role, or lineup facts; withhold the conclusion instead. Do not describe old news as new unless it changed today or is essential current-decision context. `material_update` is true only when an action-worthy change exists.
 """
     if task.id == "watchlist_report":
         return shared + """
-Current public research is mandatory. Create a concise `👀 **Watchlist Update**` using the canonical watched players in the supplied evidence. Return exactly one structured `research` result for every selected player ID. Use `no_current_public_update_found` only after researching that player and finding no material update; do not confuse it with `research_failed`. This is observation-only: never recommend a transaction. Use deterministic Sleeper facts and fixtures exactly as supplied. Make the visible report change-oriented: show meaningful changes, then summarize quiet players together. If no material change is verified, say so clearly. `material_update` is true only for a material player change.
+Current public research is mandatory. Create a concise `👀 **Watchlist Update**` using the canonical watched players in the supplied evidence. Return exactly one structured `research` result for every selected player ID. Use `no_current_public_update_found` only after researching that player and finding no material update; do not confuse it with `research_failed`. This is observation-only: never recommend a transaction. Use deterministic Sleeper facts and fixtures exactly as supplied. Make the visible report change-oriented: show meaningful changes, then summarize quiet players together. Do not promote an old signing, contract, transfer, or historical article as a current material change unless its status changed today or it is essential to a current selection decision. If no material change is verified, say so clearly. `material_update` is true only for a material player change.
 """
     if task.id == "transfer_monitor":
         return shared + """
@@ -2016,9 +2028,9 @@ Current web research is mandatory. Create `🚨 **Transfer Watch**` for material
 def _scheduled_evidence_json(evidence: str) -> dict[str, Any]:
     """Read the JSON payload after a task packet's stable prose prefix."""
 
-    marker = "\n"
     try:
-        return json.loads(evidence.split(marker, 1)[1])
+        payload = evidence.split("JSON:\n", 1)[1] if "JSON:\n" in evidence else evidence.split("\n", 1)[1]
+        return json.loads(payload)
     except (IndexError, json.JSONDecodeError) as exc:
         raise AutomationError("Scheduled deterministic evidence was invalid") from exc
 
@@ -2095,6 +2107,8 @@ def suppress_discord_link_embeds(text: str) -> str:
 
 def _render_nightly_targets(report: str, targets: list[dict[str, Any]]) -> str:
     if not targets:
+        if "no verified pickup move tonight" in report.casefold():
+            return report.rstrip()
         return report.rstrip() + "\n\n🎯 **Pickups**\nNo verified pickup move tonight."
     lines = [report.rstrip(), "", "🎯 **Verified pickups**"]
     for target in targets:
@@ -2131,6 +2145,24 @@ def _watchlist_research_complete(payload: dict[str, Any], evidence: str) -> bool
     )
 
 
+def _render_watchlist_sources(report: str, payload: dict[str, Any], evidence: str) -> str:
+    """Keep current-report sourcing visible without Discord preview cards."""
+
+    packet = _scheduled_evidence_json(evidence)
+    names = {
+        str(player.get("player_id") or ""): str(player.get("canonical_name") or "Player")
+        for player in packet.get("players", []) if isinstance(player, dict)
+    }
+    rows = []
+    for item in payload.get("research", []):
+        if not isinstance(item, dict) or item.get("outcome") != "verified_update":
+            continue
+        sources = item.get("sources")
+        if isinstance(sources, list) and sources:
+            rows.append(f"**{names.get(str(item.get('player_id') or ''), 'Player')}** — {_render_compact_sources(sources)}")
+    return report.rstrip() if not rows else report.rstrip() + "\n\n🔗 **Sources**\n" + "\n".join(rows)
+
+
 def _scheduled_response_payload(task: TaskSpec, text: str, *, evidence: str) -> tuple[str, bool, str, dict[str, Any]]:
     try:
         payload = json.loads(text)
@@ -2153,8 +2185,10 @@ def _scheduled_response_payload(task: TaskSpec, text: str, *, evidence: str) -> 
         ):
             raise AutomationError("Nightly Recap placed an acquisition recommendation outside verified targets")
         report = _render_nightly_targets(report, _validate_nightly_targets(payload, evidence))
-    if task.id == "watchlist_report" and not _watchlist_research_complete(payload, evidence):
-        raise AutomationError("Watchlist Update did not account for every selected player")
+    if task.id == "watchlist_report":
+        if not _watchlist_research_complete(payload, evidence):
+            raise AutomationError("Watchlist Update did not account for every selected player")
+        report = _render_watchlist_sources(report, payload, evidence)
     return report.strip(), material_update, status, payload
 
 
@@ -2195,7 +2229,7 @@ def run_scheduled_advisor(
         "surface": "discord_scheduled_dm",
         "task_id": task.id,
         "invocation": invocation,
-        "capabilities": ["watchlist_live_snapshot"] if task.id == "watchlist_report" else ["compact_sleeper_feed"] if task.id == "nightly_recap" else [],
+        "capabilities": _scheduled_capabilities(task.id),
         "web_search_used": False,
         "codex_used": False,
         "delivery": "owner_dm",
@@ -2553,7 +2587,7 @@ def run_scheduled_task(
                         "surface": "discord_scheduled_dm",
                         "task_id": task.id,
                         "invocation": invocation,
-                        "capabilities": ["watchlist_live_snapshot"],
+                        "capabilities": _scheduled_capabilities(task.id),
                         "web_search_used": False,
                         "codex_used": False,
                         "delivery": "owner_dm",
@@ -2588,7 +2622,7 @@ def run_scheduled_task(
             "surface": "discord_scheduled_dm",
             "task_id": task.id,
             "invocation": invocation,
-            "capabilities": ["watchlist_live_snapshot"] if task.id == "watchlist_report" else ["compact_sleeper_feed"] if task.id == "nightly_recap" else [],
+            "capabilities": _scheduled_capabilities(task.id),
             "web_search_used": False,
             "codex_used": False,
             "delivery": "owner_dm",
