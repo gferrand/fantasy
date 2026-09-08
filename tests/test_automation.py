@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 import sys
@@ -47,6 +48,8 @@ from fantasy_advisor.automation import (
     run_scheduled_task,
     run_scheduled_advisor,
     scheduled_report_schema,
+    _normalize_scheduled_report,
+    _normalize_watchlist_presentation,
     suppress_discord_link_embeds,
     _scheduled_response_payload,
     task_prompt_for_run,
@@ -228,12 +231,53 @@ class AutomationTests(unittest.TestCase):
             with (
                 patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
                 patch("fantasy_advisor.lineup_alerts.load_fixture_schedule", return_value={"events": []}),
+                patch("fantasy_advisor.automation.SleeperClient.get_json", return_value=catalog),
             ):
                 packet = build_watchlist_live_packet(config)
             self.assertIn("CURRENT CANONICAL WATCHLIST EVIDENCE", packet)
             self.assertIn("Watched Player", packet)
             self.assertIn('"games":2.0', packet)
             self.assertNotIn("DISCORD_CONTEXT_MARKER", packet)
+
+    def test_watchlist_uses_current_sleeper_identity_and_eastern_report_time(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            config = test_config().__class__(**{**test_config().__dict__, "repo_root": root})
+            watched, _ = add_watchlist_player(
+                watchlist_file(config), {"player_id": "10", "name": "Moved Player", "club": "AAA", "positions": ["M"]},
+            )
+            stats = WatchlistStatsReport(
+                season="2026", week=4, retrieved_at="2026-09-08T01:00:00+00:00",
+                entries=(WatchlistStat(watched, 31.0, 3.0, 3.0, 270.0, None, None, None, None, None, None, True),),
+            )
+            current = {"10": {"player_id": "10", "full_name": "Moved Player", "team_abbr": "BBB", "fantasy_positions": ["F"], "competitions": ["epl"], "active": True, "status": "ACTIVE"}}
+            with (
+                patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
+                patch("fantasy_advisor.lineup_alerts.load_fixture_schedule", return_value={"events": []}),
+                patch("fantasy_advisor.automation._next_fixtures_by_club", return_value={"BBB": {"opponent": "Fulham", "venue": "home", "kickoff_utc": "2026-09-12T12:00:00+00:00"}}),
+                patch("fantasy_advisor.automation.SleeperClient.get_json", return_value=current),
+            ):
+                packet = build_watchlist_live_packet(config)
+            payload = json.loads(packet.split("JSON:\n", 1)[1])
+            player = payload["players"][0]
+            self.assertEqual(player["current_identity"]["current_club"], "BBB")
+            self.assertEqual(player["next_fixture"]["opponent"], "Fulham")
+            self.assertEqual(player["current_sleeper_stats"]["sleeper_standard_points"], 31.0)
+            self.assertEqual(payload["current_gameweek"], 4)
+            self.assertEqual(payload["last_completed_gameweek"], 3)
+            self.assertIn("Sep 7", payload["retrieved_at_america_new_york"])
+
+            current["10"]["active"] = False
+            with (
+                patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
+                patch("fantasy_advisor.lineup_alerts.load_fixture_schedule", return_value={"events": []}),
+                patch("fantasy_advisor.automation._next_fixtures_by_club", return_value={"BBB": {"opponent": "Fulham"}}),
+                patch("fantasy_advisor.automation.SleeperClient.get_json", return_value=current),
+            ):
+                unresolved = build_watchlist_live_packet(config)
+            unresolved_player = json.loads(unresolved.split("JSON:\n", 1)[1])["players"][0]
+            self.assertFalse(unresolved_player["current_identity"]["resolved"])
+            self.assertIsNone(unresolved_player["next_fixture"])
 
     def test_prompt_extraction_and_interactive_guardrails(self):
         registry = load_registry(ROOT / "automation" / "tasks.toml", repo_root=ROOT)
@@ -507,21 +551,28 @@ class AutomationTests(unittest.TestCase):
             "waiver_context": {"available_candidates": [{
                 "player_id": "candidate", "name": "Verified Candidate",
                 "next_fixture": {"opponent": "Fulham", "venue": "home", "kickoff_utc": "2026-09-12T12:00:00+00:00"},
+            }], "roster_swap_recommendations": [{
+                "add": {"player_id": "candidate", "name": "Verified Candidate"},
+                "drop": {"player_id": "drop", "name": "Roster Player"},
+                "position": "M", "current_season_point_gain": 2.0, "recommendation_status": "manual_review_required",
             }]},
+            "your_roster": [], "next_roster_fixtures": [],
         })
+        source = {"title": "Club", "url": "https://club.example/news", "as_of": "2026-09-08T05:00:00+00:00", "retrieved_at": "2026-09-08T05:01:00+00:00", "as_of_precision": "timestamp", "evidence_type": "club_team_news", "covers_next_fixture": False}
         valid = {
             "status": "complete", "material_update": True,
             "report": "🚨 **Action needed**\nExact fixture evidence is current.",
             "recommended_targets": [{
-                "player_id": "candidate", "name": "Verified Candidate", "rationale": "Current role is secure.",
+                "add_player_id": "candidate", "add_name": "Verified Candidate", "drop_player_id": "drop", "drop_name": "Roster Player", "position": "M", "current_season_point_gain": 2.0, "recommendation_status": "manual_review_required", "rationale": "Current role is secure.",
                 "availability_injury_verified": True, "role_minutes_verified": True,
-                "current_public_sources": [{"title": "Club", "url": "https://club.example/news"}],
+                "availability_sources": [source], "role_sources": [source],
             }],
+            "lineup_actions": [],
         }
         report, _, _, _ = _scheduled_response_payload(task, json.dumps(valid), evidence=evidence)
         self.assertIn("vs Fulham", report)
         self.assertIn("Verified Candidate", report)
-        self.assertEqual(scheduled_report_schema(task)["required"], ["status", "material_update", "report", "recommended_targets"])
+        self.assertEqual(scheduled_report_schema(task)["required"], ["status", "material_update", "report", "recommended_targets", "lineup_actions"])
 
         invalid = {**valid, "report": "Projected +31.25-point gain."}
         with self.assertRaisesRegex(AutomationError, "projection"):
@@ -531,9 +582,37 @@ class AutomationTests(unittest.TestCase):
         with self.assertRaisesRegex(AutomationError, "uncertain"):
             _scheduled_response_payload(task, json.dumps(gtd), evidence=evidence)
 
+        wrong_pair = {**valid, "recommended_targets": [{**valid["recommended_targets"][0], "current_season_point_gain": 3.0}]}
+        with self.assertRaisesRegex(AutomationError, "target did not satisfy"):
+            _scheduled_response_payload(task, json.dumps(wrong_pair), evidence=evidence)
+
         quiet = {**valid, "report": "✅ **No action tonight**\nNo verified pickup move tonight.", "recommended_targets": []}
         rendered, _, _, _ = _scheduled_response_payload(task, json.dumps(quiet), evidence=evidence)
         self.assertEqual(rendered.casefold().count("no verified pickup move tonight"), 1)
+
+    def test_nightly_lineup_actions_require_fresh_structured_evidence(self):
+        task = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        now = datetime.now(timezone.utc)
+        fixture = (now + timedelta(hours=24)).isoformat()
+        source = {"title": "Manager update", "url": "https://club.example/update", "as_of": now.isoformat(), "retrieved_at": now.isoformat(), "as_of_precision": "timestamp", "evidence_type": "manager_update", "covers_next_fixture": False}
+        evidence = "CURRENT CANONICAL DETERMINISTIC FANTASY EVIDENCE\n" + json.dumps({
+            "waiver_context": {"available_candidates": [], "roster_swap_recommendations": []},
+            "your_roster": [{"player_id": "owned", "name": "Roster Player"}],
+            "next_roster_fixtures": [{"kickoff_utc": fixture, "roster_player_ids": ["owned"]}],
+        })
+        payload = {
+            "status": "complete", "material_update": True, "report": "🚨 **Action needed**\nCurrent availability is verified.",
+            "recommended_targets": [],
+            "lineup_actions": [{"player_id": "owned", "action": "start", "rationale": "Named fit with a current role.", "availability_verified": True, "role_minutes_verified": True, "current_public_sources": [source]}],
+        }
+        report, _, _, _ = _scheduled_response_payload(task, json.dumps(payload), evidence=evidence)
+        self.assertIn("START **Roster Player**", report)
+        with self.assertRaisesRegex(AutomationError, "lineup instruction"):
+            _scheduled_response_payload(task, json.dumps({**payload, "report": "Start Roster Player tonight."}), evidence=evidence)
+        date_only = {**source, "as_of": now.date().isoformat(), "as_of_precision": "date"}
+        invalid = {**payload, "lineup_actions": [{**payload["lineup_actions"][0], "current_public_sources": [date_only]}]}
+        with self.assertRaisesRegex(AutomationError, "lineup action"):
+            _scheduled_response_payload(task, json.dumps(invalid), evidence=evidence)
 
     def test_watchlist_contract_requires_exact_structured_coverage(self):
         task = TaskSpec("watchlist_report", "Watchlist", ROOT / "x", "daily")
@@ -549,13 +628,27 @@ class AutomationTests(unittest.TestCase):
         }]}
         with self.assertRaisesRegex(AutomationError, "every selected player"):
             _scheduled_response_payload(task, json.dumps(incomplete), evidence=evidence)
+        source = {"title": "BBC", "url": "https://bbc.example/story", "as_of": "2026-09-08", "retrieved_at": "2026-09-08T12:00:00+00:00", "as_of_precision": "date", "evidence_type": "reputable_reporting", "covers_next_fixture": False}
         complete = {**base, "research": [
             {"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
-            {"player_id": "two", "outcome": "verified_update", "summary": "Role improved.", "sources": [{"title": "BBC", "url": "https://bbc.example/story"}]},
+            {"player_id": "two", "outcome": "verified_update", "summary": "Role improved.", "sources": [source]},
         ]}
         report, _, _, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
         self.assertIn("No material changes", report)
         self.assertIn("**Player** — [BBC](<https://bbc.example/story>)", report)
+
+    def test_watchlist_normalizer_owns_week_and_sleeper_standard_labels(self):
+        evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\nJSON:\n" + json.dumps({
+            "season": "2026", "current_gameweek": 4, "last_completed_gameweek": 3,
+            "retrieved_at_america_new_york": "Sep 7, 2026 9:00 PM ET",
+        })
+        report = _normalize_watchlist_presentation(
+            "👀 **Watchlist Update**\n2026/27 Premier League · through GW4\nPlayer — 31.0 points\nOther: Sleeper: 4.5 points", evidence,
+        )
+        self.assertIn("2026/27 Premier League · GW4 · stats through GW3 · Sep 7", report)
+        self.assertIn("Sleeper standard: 31.0 pts", report)
+        self.assertIn("Sleeper standard: 4.5 pts", report)
+        self.assertNotIn("Watchlist Update", report)
 
     def test_nightly_and_watchlist_require_web_and_watchlist_retries_once_for_coverage(self):
         config = test_config().__class__(**{**test_config().__dict__, "openai_api_key": "key"})
@@ -567,7 +660,7 @@ class AutomationTests(unittest.TestCase):
             output=[MagicMock(type="web_search_call")],
             output_text=json.dumps({
                 "status": "no_change", "material_update": False,
-                "report": "✅ **No action tonight**", "recommended_targets": [],
+                "report": "✅ **No action tonight**", "recommended_targets": [], "lineup_actions": [],
             }), id="nightly-response",
         )
         nightly_client = MagicMock()
@@ -615,6 +708,24 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(
             suppress_discord_link_embeds("[Official](https://example.com/report)"),
             "[Official](<https://example.com/report>)",
+        )
+
+    def test_scheduled_heading_is_not_duplicated_when_model_omits_bold_markers(self):
+        task = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        self.assertEqual(
+            _normalize_scheduled_report(task, "🌙 Nightly Recap\n✅ **No action tonight**", material_update=False),
+            "🌙 **Nightly Recap**\n\n✅ **No action tonight**",
+        )
+
+    def test_scheduled_heading_removes_model_duplicate_after_urgency_label(self):
+        task = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        self.assertEqual(
+            _normalize_scheduled_report(
+                task,
+                "🌙 **Nightly Recap**\n\n🚨 **Action needed**\n\n🌙 **Nightly Recap**\n\nNo verified pickup move tonight.",
+                material_update=True,
+            ),
+            "🌙 **Nightly Recap**\n\n🚨 **Action needed**\n\nNo verified pickup move tonight.",
         )
 
     def test_outbox_is_removed_only_after_delivery(self):
