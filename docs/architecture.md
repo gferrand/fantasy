@@ -87,13 +87,11 @@ context SQLite database retains
 separate timestamped private-evidence events alongside recent conversation.
 See [interactive advisor flow](discord-request-routing.md).
 
-Browser-capable specialized and recurring analysis creates a task tab with
-`infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose
-SAFE_PURPOSE` before launching local `codex exec`. The complete request reaches
-Codex unchanged. When the task finishes, the runner closes the created tab with
-`infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id
-TAB_ID`, including after a failure or timeout. Allocation failure is retryable
-and prevents the Codex process from starting.
+Browser-capable specialized and recurring analysis creates and closes its own
+task tab in its own browser context using its chosen cleanup mechanism. It does
+not create, attach to, query, validate, wait for, or acknowledge tab cleanup
+through Infrastructure. Infrastructure provides only a passive one-hour sweep
+of abandoned eligible tabs. The complete request reaches Codex unchanged.
 
 Registered scheduled reports bypass interactive grounding and Discord history.
 They retrieve the known task's current deterministic evidence, use OpenAI as
