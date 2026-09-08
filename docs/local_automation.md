@@ -1,7 +1,8 @@
-# Local Codex automation
+# Local Fantasy automation
 
 The fantasy project now owns its recurring runs. macOS `launchd` starts one
-personal Discord app gateway and three scheduled dispatchers:
+personal Discord app gateway and two active scheduled dispatchers. Transfer
+Watch remains registered but is paused until the January transfer window:
 
 ```text
 launchd
@@ -9,24 +10,14 @@ launchd
   ├─ 22:00 nightly recap   │
   └─ :17 every hour        │
                            v
-              create a Fantasy task tab
+          current Fantasy evidence + web research
                            |
                            v
-             local `codex exec` task
+                 OpenAI Fantasy Advisor
                            |
                            v
-                 close the task tab
-                           |
-                           v
-                 GF Control Room #fantasy
+                    Owner bot DM only
 ```
-
-Every browser-capable scheduled or Discord Codex job starts by creating a tab
-with `infra-opt workspace create --project fantasy --agent-id TASK_ID --purpose
-SAFE_PURPOSE`. The runner then supplies the complete, unmodified request to
-local `codex exec`. When the task finishes, the runner closes the created tab
-with `infra-opt workspace close --project fantasy --agent-id TASK_ID --tab-id
-TAB_ID`. The same close cleanup runs after success, failure, or timeout.
 
 Normal `/ask` and plain Discord messages use OpenAI as the final advisor,
 with optional bounded read-only Codex retrieval of private facts. PDFs, text
@@ -44,20 +35,18 @@ preprocessing: voice transcription continues to use
 `gpt-4.1-mini`.
 
 The app's commands are installed to the Discord user account and remain DM-only.
-The bot is also installed in GF Control Room with outbound `View Channel` and
-`Send Messages` access limited to `#fantasy`. The durable on-demand entry point
+The durable on-demand entry point
 is `/ask`, with `/tasks` and `/task` for registered jobs. `/injury opportunities`
 provides the complete Sleeper EPL injury board and likely beneficiaries. The gateway also
 retains ordinary one-to-one DM handling where Discord exposes message content.
 Every guild message, group DM, and non-allowlisted author is ignored before it
 can start a Codex task.
 
-On-demand interactions reply in the personal Fantasy Advisor DM. Automatic
-scheduled reports, failures, and outbox retries post only to the configured
-server channel. Fixture-aware lineup alerts are the deliberate exception: they
-arrive in the personal Fantasy Advisor DM because they are time-sensitive and
-private. Each automatic message is retained in the local outbox until Discord
-accepts delivery; unavailable scheduled-report delivery never falls back to DM.
+On-demand interactions, automatic scheduled reports, visible failures, outbox
+retries, and fixture-aware lineup alerts all arrive in the personal Fantasy
+Advisor DM. Scheduled delivery opens the Owner DM from `DISCORD_ALLOWED_USER_ID`
+for every send; it never uses or falls back to a server channel. Each automatic
+message is retained in the local outbox until Discord accepts delivery.
 
 ## One-time setup
 
@@ -75,14 +64,11 @@ Portal](https://discord.com/developers/applications). Enable the Message
 Content Intent for the bot and install it with both the user-install / “Add to
 my apps” flow and a server installation in GF Control Room. Discord's
 [user-installable app guide](https://docs.discord.com/developers/tutorials/developing-a-user-installable-app)
-describes the user flow. Limit the server role or channel overwrite to `View
-Channel` and `Send Messages` in `#fantasy`. The token, allowlisted account ID,
-and scheduled destination belong in `.env`:
+describes the user flow. The token and allowlisted account ID belong in `.env`:
 
 ```env
 DISCORD_BOT_TOKEN=the_bot_token
 DISCORD_ALLOWED_USER_ID=your_numeric_user_id
-DISCORD_SCHEDULED_CHANNEL_ID=1543477414191964232
 ```
 
 The token is a secret. Keep `.env` local and never commit it. The bot will not
@@ -210,7 +196,7 @@ Codex is not a normal roster or league-data path. The bot replies in the same pe
 DM with the result. `/tasks` lists registered jobs, and
 `/task nightly_recap`, `/task transfer_monitor`, or `/task watchlist_report` runs a registered job
 immediately in the DM. Text DMs remain supported when Discord exposes them to
-the bot. Only automatic scheduler invocations post to `#fantasy`.
+the bot. Automatic scheduler invocations also post only to the Owner DM.
 
 ## Attachments and voice notes
 
@@ -273,12 +259,14 @@ and never infers a recovery window.
 The complete report is split across ordinary Discord DM messages when needed;
 the command does not send report attachments.
 
-The transfer monitor stores its last successful result under the ignored
+The transfer monitor is currently schedule-paused (`enabled = false`) but may
+be run at any time with `/task transfer_monitor`. It stores its last successful result under the ignored
 `data/automation/` directory so the next local task can compare only new or
-materially changed reports. Scheduled reports are written to a local outbox
-before Discord delivery and removed only after successful posting to
-`#fantasy`, so a temporary Discord outage is retried on the next scheduled
-invocation without a DM fallback. Failure notices use the same durable path.
+materially changed reports. Scheduled reports and concise failure cards are
+written to a local outbox before Owner-DM delivery and removed only after
+successful posting, so a temporary Discord outage is retried on the next
+scheduled invocation. Empty watchlists and no-material Transfer Watch runs
+still send short confirmation cards so scheduled activity is visible.
 The state, remembered DM channel, outbox, and advisor context store are local
 and are not used as a source of truth for current football facts.
 
@@ -298,10 +286,11 @@ the packet. Both the web-research and Codex routes treat saved material as
 continuity only. Codex must recheck player, fixture, injury, club, and
 availability facts; the web route independently verifies current public news.
 
-Scheduled runs never load Discord conversation context. They run their normal
-standalone prompts and only write their completed reports to the store for
-future interactive questions. `/task` follows the same standalone behavior,
-even though it is launched from Discord.
+Scheduled runs never load Discord conversation context. They use their known
+task type to retrieve current deterministic evidence, optionally research the
+public web (mandatory for Transfer Watch), and finalize directly through the
+OpenAI Advisor with no grounding or Codex run. `/task` follows the same
+standalone behavior, even though it is launched from Discord.
 
 The stores are created automatically on their first relevant run. The manually
 refreshed `data/automation/player_catalog.sqlite3` is a private Sleeper player
@@ -310,21 +299,21 @@ Both are ignored by git and remain in the runtime mirror because `sync_runtime`
 preserves the generated `data/automation/` directory.
 
 Discord-originated Codex questions use a 120-second timeout by default so a
-hung local CLI cannot block the private advisor indefinitely. Scheduled reports
-retain the separate `CODEX_TIMEOUT_SECONDS` value (1800 seconds by default).
+hung local CLI cannot block the private advisor indefinitely. Scheduled Advisor
+calls are bounded to the smaller of `CODEX_TIMEOUT_SECONDS` and 180 seconds.
 Override the interactive limit with `CODEX_INTERACTIVE_TIMEOUT_SECONDS` in the
 local `.env` if a longer research window is necessary.
 
 ## Migration from ChatGPT Scheduled Tasks
 
 Keep the existing ChatGPT Scheduled Tasks enabled only until the local nightly
-task has run successfully and a `#fantasy` post has arrived. Then disable the old
+task has run successfully and an Owner-DM report has arrived. Then disable the old
 ChatGPT schedules manually to avoid duplicate reports. This repository does
 not delete or modify those external tasks.
 
 The Workspace Agents trigger API can start a workspace agent but currently does
 not provide the completed agent response to the caller, so it is not the right
-transport for this local DM workflow. The local Codex CLI gives the dispatcher
-both the task thread ID and final response needed for delivery. See the
+transport for this local DM workflow. The local OpenAI Advisor produces the
+final report directly. See the
 [official Codex documentation index](https://learn.chatgpt.com/docs/llms.txt) and
 [Workspace Agents trigger documentation](https://developers.openai.com/workspace-agents/trigger-runs).

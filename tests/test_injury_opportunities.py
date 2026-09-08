@@ -166,7 +166,6 @@ class InjuryWebTests(unittest.TestCase):
             task_registry_path=ROOT / "automation" / "tasks.toml",
             discord_bot_token=None,
             discord_allowed_user_id="123",
-            discord_scheduled_channel_id=None,
             codex_bin="codex",
             codex_model=FANTASY_CODEX_MODEL,
             codex_reasoning_effort=FANTASY_CODEX_REASONING_EFFORT,

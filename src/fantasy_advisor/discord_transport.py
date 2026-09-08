@@ -1,9 +1,8 @@
 """Small Discord REST client used by scheduled, non-gateway jobs.
 
 The scheduled launchd jobs do not need to keep a Discord gateway connection
-open. They post completed Codex reports to one configured server channel, so
-this module intentionally uses the Python standard library instead of importing
-discord.py.
+open. They open the configured Owner DM for each report, so this module uses
+the Python standard library instead of importing discord.py.
 """
 
 from __future__ import annotations

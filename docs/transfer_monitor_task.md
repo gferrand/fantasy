@@ -1,17 +1,22 @@
-# Hourly EPL Transfer Monitor Task
+# EPL Transfer Watch Report Definition
 
-## ChatGPT Scheduled Task settings
+## Local scheduler settings
 
 | Setting | Value |
 | --- | --- |
 | Name | `EPL top-player transfer monitor` |
-| Schedule | Every hour |
+| Schedule | Hourly when enabled; currently paused |
 | Time zone | `America/New_York` |
 | Coverage | League-wide major player transfers involving EPL clubs |
 | Output | Only new or materially changed transfer developments |
 | Permissions | Read-only; no Sleeper actions |
 
-## Complete task prompt
+Transfer Watch is schedule-disabled in `automation/tasks.toml` until the
+January transfer window, but the Owner may run `/task transfer_monitor` for
+verification. The local scheduler uses current required web research and the
+OpenAI Advisor; this document is its report behavior specification.
+
+## Report behavior specification
 
 ```text
 You are my read-only EPL transfer-news advisor. Run this briefing every hour in America/New_York.

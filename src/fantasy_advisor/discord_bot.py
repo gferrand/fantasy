@@ -19,7 +19,6 @@ from .automation import (
     AppConfig,
     AutomationError,
     EXPECTED_MANAGER_ID,
-    build_report_header,
     claim_discord_message,
     load_local_player_catalog,
     load_advisor_context,
@@ -243,8 +242,9 @@ def build_client(config: AppConfig) -> discord.Client:
                 config,
                 task_id,
                 deliver=False,
+                invocation="manual",
             )
-            return build_report_header(task, result) + result.text, False, result.thread_id, None
+            return result.text, False, result.thread_id, None
 
         if not waiver_analysis:
             result = await run_advisor(

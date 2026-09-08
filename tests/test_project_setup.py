@@ -17,7 +17,6 @@ class ProjectSetupTests(unittest.TestCase):
             task_registry_path=ROOT / "automation" / "tasks.toml",
             discord_bot_token="test",
             discord_allowed_user_id="1",
-            discord_scheduled_channel_id="2",
             codex_bin="codex",
             codex_model="gpt-5.6-luna",
             codex_reasoning_effort="medium",
@@ -153,7 +152,8 @@ class ProjectSetupTests(unittest.TestCase):
     def test_transfer_monitor_task_is_hourly_and_read_only(self):
         task = (ROOT / "docs" / "transfer_monitor_task.md").read_text()
         self.assertIn("EPL top-player transfer monitor", task)
-        self.assertIn("Every hour", task)
+        self.assertIn("Hourly when enabled; currently paused", task)
+        self.assertIn("/task transfer_monitor", task)
         self.assertIn("America/New_York", task)
         self.assertIn("✅ TRANSFER WATCH", task)
         self.assertIn("CONFIRMED, ADVANCED REPORT, or RUMOR", task)

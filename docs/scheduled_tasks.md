@@ -1,6 +1,9 @@
-# ChatGPT Scheduled Task Prompts
+# Legacy ChatGPT Scheduled Task Prompts
 
-These prompts are templates for recurring ChatGPT Scheduled Tasks. They are intentionally read-only and advisory. Paste the relevant prompt into ChatGPT when creating a task, then choose the schedule there.
+These are historical prompt references only. Production recurring reports run
+through the local scheduler, retrieve current evidence, finalize directly with
+the OpenAI Advisor, and deliver only to the Owner bot DM. Do not create new
+ChatGPT Scheduled Tasks from these templates.
 
 The implemented nightly 10:00 PM Eastern recap is a lean decision-preparation briefing: actionable roster news, the next one to three fixtures, lineup changes, significant league trades, and pickup opportunities. It always sends a brief quiet-day report. Its complete schedule and copy-ready prompt are in [`nightly_recap_task.md`](nightly_recap_task.md). The hourly transfer monitor has its complete definition in [`transfer_monitor_task.md`](transfer_monitor_task.md).
 

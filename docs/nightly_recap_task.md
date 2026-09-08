@@ -1,6 +1,6 @@
-# Nightly Los Blancos Recap Task
+# Nightly Los Blancos Recap Report Definition
 
-## ChatGPT Scheduled Task settings
+## Local scheduler settings
 
 | Setting | Value |
 | --- | --- |
@@ -11,9 +11,13 @@
 | Output | Concise briefing in the task conversation |
 | Permissions | Read-only; no Sleeper actions |
 
-The scheduled task should use the durable compact feed below as its primary Sleeper data source. The feed is rebuilt hourly by GitHub Actions from live Sleeper endpoints and published through GitHub Pages. The embedded context below is fallback guidance only; it is not authoritative for the current roster, scoring map, or player IDs.
+The local scheduler retrieves a current validated compact Sleeper feed and
+finalizes the report with OpenAI in the Owner bot DM. This document preserves
+the report contract; it is not executed through ChatGPT Scheduled Tasks or
+Codex. The embedded context below is fallback guidance only, not authority for
+the current roster, scoring map, or player IDs.
 
-## Complete task prompt
+## Report behavior specification
 
 ```text
 You are my read-only fantasy EPL advisor. Run this briefing every day at 10:00 PM America/New_York.

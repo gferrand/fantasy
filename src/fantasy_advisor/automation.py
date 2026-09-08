@@ -1,7 +1,8 @@
 """Local task orchestration for the fantasy advisor.
 
-The project owns the schedule. Each invocation starts a real local Codex CLI
-task, captures its final response, and optionally delivers it through Discord.
+The project owns the schedule. Interactive legacy workflows may start a local
+Codex CLI task; known scheduled reports retrieve current evidence and finalize
+directly with the OpenAI Advisor before optional Owner-DM delivery.
 The module deliberately uses only the standard library so the scheduler can
 start before the optional Discord gateway dependency is imported.
 """
@@ -12,6 +13,7 @@ import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -30,7 +32,7 @@ from .context_store import (
     build_context_packet,
     claim_discord_message as claim_context_discord_message,
 )
-from .discord_presentation import scheduled_failure, scheduled_header
+from .discord_presentation import scheduled_failure
 from .injury_opportunities import (
     INJURY_RESEARCH_SCHEMA,
     InjuryResearch,
@@ -61,6 +63,7 @@ FANTASY_WEB_MODEL = "gpt-5.6-luna"
 FANTASY_WEB_REASONING_EFFORT = "medium"
 BROWSER_PROJECT = "fantasy"
 BROWSER_COMMAND_TIMEOUT_SECONDS = 50
+LOGGER = logging.getLogger(__name__)
 
 
 class AutomationError(RuntimeError):
@@ -76,6 +79,7 @@ class TaskSpec:
     run_at: str | None = None
     minute_past_hour: int | None = None
     state_file: Path | None = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -97,7 +101,6 @@ class AppConfig:
     task_registry_path: Path
     discord_bot_token: str | None
     discord_allowed_user_id: str | None
-    discord_scheduled_channel_id: str | None
     codex_bin: str
     codex_model: str | None
     codex_reasoning_effort: str | None
@@ -157,9 +160,6 @@ class AppConfig:
             task_registry_path=task_registry_path or repo_root / "automation" / "tasks.toml",
             discord_bot_token=os.environ.get("DISCORD_BOT_TOKEN", "").strip() or None,
             discord_allowed_user_id=os.environ.get("DISCORD_ALLOWED_USER_ID", "").strip() or None,
-            discord_scheduled_channel_id=(
-                os.environ.get("DISCORD_SCHEDULED_CHANNEL_ID", "").strip() or None
-            ),
             openai_api_key=os.environ.get("OPENAI_API_KEY", "").strip() or None,
             openai_audio_transcription_model=(
                 os.environ.get("OPENAI_AUDIO_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe").strip()
@@ -196,15 +196,6 @@ class AppConfig:
         if not self.discord_allowed_user_id.isdigit():
             raise AutomationError("DISCORD_ALLOWED_USER_ID must be a numeric Discord user ID")
 
-    def require_scheduled_discord(self) -> None:
-        if not self.discord_bot_token:
-            raise AutomationError("DISCORD_BOT_TOKEN is not configured")
-        if not self.discord_scheduled_channel_id:
-            raise AutomationError("DISCORD_SCHEDULED_CHANNEL_ID is not configured")
-        if not self.discord_scheduled_channel_id.isdigit():
-            raise AutomationError("DISCORD_SCHEDULED_CHANNEL_ID must be a numeric Discord channel ID")
-
-
 @dataclass(frozen=True)
 class CodexResult:
     text: str
@@ -224,6 +215,23 @@ class WebResult:
     response_id: str | None
     elapsed_seconds: float
     trace: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ScheduledResult:
+    """A presentation-ready scheduled report produced by the OpenAI Advisor."""
+
+    text: str
+    response_id: str | None
+    elapsed_seconds: float
+    trace: dict[str, Any]
+    material_update: bool = False
+
+    @property
+    def thread_id(self) -> str | None:
+        """Compatibility identifier for local report/context persistence."""
+
+        return self.response_id
 
 
 class CodexRunError(AutomationError):
@@ -547,6 +555,7 @@ def load_registry(path: Path, *, repo_root: Path = ROOT) -> TaskRegistry:
                     if item.get("state_file") is not None
                     else None
                 ),
+                enabled=parse_bool(str(item.get("enabled", True))),
             )
         )
         if tasks[-1].state_file is not None and repo_root not in tasks[-1].state_file.parents:
@@ -612,13 +621,13 @@ def task_prompt_for_run(task: TaskSpec, *, runtime_context: str | None = None) -
     return f"{prompt}\n\nLOCAL RUN HISTORY\n{history}\n"
 
 
-def persist_task_state(task: TaskSpec, result: CodexResult) -> None:
+def persist_task_state(task: TaskSpec, result: CodexResult | ScheduledResult) -> None:
     if task.state_file is None:
         return
     task.state_file.parent.mkdir(parents=True, exist_ok=True)
     content = (
         f"# Last successful local result for `{task.id}`\n\n"
-        f"Codex task: `{result.thread_id or 'local'}`\n\n"
+        f"Advisor response: `{result.thread_id or 'local'}`\n\n"
         f"{result.text.strip()}\n"
     )
     temporary = task.state_file.with_suffix(task.state_file.suffix + ".tmp")
@@ -1780,9 +1789,199 @@ def split_discord_message(text: str, *, limit: int = 2000) -> list[str]:
     return chunks
 
 
-def build_report_header(task: TaskSpec, result: CodexResult) -> str:
-    timestamp = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M %Z")
-    return scheduled_header(task.name, timestamp) + "\n\n"
+SCHEDULED_REPORT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "status": {"type": "string", "enum": ["complete", "partial", "no_change"]},
+        "material_update": {"type": "boolean"},
+        "report": {"type": "string", "minLength": 1},
+    },
+    "required": ["status", "material_update", "report"],
+}
+
+
+def scheduled_report_title(task_id: str) -> str:
+    return {
+        "nightly_recap": "Nightly Recap",
+        "watchlist_report": "Watchlist Update",
+        "transfer_monitor": "Transfer Watch",
+    }.get(task_id, "Scheduled Report")
+
+
+def scheduled_report_heading(task_id: str) -> str:
+    return {
+        "nightly_recap": "🌙 **Nightly Recap**",
+        "watchlist_report": "👀 **Watchlist Update**",
+        "transfer_monitor": "🚨 **Transfer Watch**",
+    }.get(task_id, "📬 **Scheduled Report**")
+
+
+def _current_nightly_packet(config: AppConfig) -> str:
+    """Return only the current deterministic league facts useful to the recap."""
+
+    feed, source = _load_live_compact_feed(config)
+    users = feed.get("users") if isinstance(feed.get("users"), list) else []
+    rosters = feed.get("rosters") if isinstance(feed.get("rosters"), list) else []
+    roster = next(
+        (item for item in rosters if isinstance(item, dict) and str(item.get("owner_id")) == EXPECTED_MANAGER_ID),
+        {},
+    )
+    player_ids = {str(player_id) for player_id in (roster.get("players") or [])}
+    players = feed.get("players") if isinstance(feed.get("players"), dict) else {}
+    stats = feed.get("stats") if isinstance(feed.get("stats"), list) else []
+    packet = {
+        "source": source,
+        "retrieved_at": feed["retrieved_at"],
+        "evidence_window": premier_league_evidence_window(feed),
+        "league": feed.get("league"),
+        "state": feed.get("state"),
+        "manager": next(
+            (user for user in users if isinstance(user, dict) and str(user.get("user_id")) == EXPECTED_MANAGER_ID),
+            {"team_name": "Los Blancos"},
+        ),
+        "roster": roster,
+        "roster_players": {player_id: players[player_id] for player_id in player_ids if player_id in players},
+        "roster_stats": [
+            row for row in stats
+            if isinstance(row, dict) and str(row.get("player_id")) in player_ids
+        ],
+        "completed_trades_today": feed.get("completed_trades_today"),
+        "available_players": (feed.get("available_players") or [])[:8],
+        "team_swap_recommendations": (feed.get("team_swap_recommendations") or [])[:6],
+    }
+    return "CURRENT DETERMINISTIC FANTASY EVIDENCE\n" + json.dumps(packet, ensure_ascii=False, separators=(",", ":"))
+
+
+def _previous_task_state(task: TaskSpec) -> str:
+    if task.state_file is None or not task.state_file.exists():
+        return "No previous successful report is available."
+    previous = task.state_file.read_text(encoding="utf-8").strip()
+    return previous[-12000:] if previous else "The previous successful report was empty."
+
+
+def scheduled_report_instructions(task: TaskSpec, *, invocation: str, evidence: str, previous_state: str) -> str:
+    """Build the direct, non-grounding Advisor contract for one known report."""
+
+    shared = f"""You are the read-only Fantasy Advisor preparing a known scheduled report for one private Discord DM.
+The scheduler already selected the report type. Do not route, ground, ask follow-up questions, discuss implementation, or use Discord conversation history.
+Use supplied deterministic evidence only for private Fantasy facts. Previous state is a change-detection aid, never current authority. Use current web research only for public football facts, and never invent a source, current roster fact, transfer story, injury, or transaction.
+Return JSON that conforms exactly to the requested schema. The `report` value must be phone-first Discord Markdown: short cards, blank lines between sections, bold player names, no tables, code blocks, internal IDs, generic task wrappers, or process commentary.
+Invocation: {invocation}.
+
+CURRENT EVIDENCE:
+{evidence}
+
+PREVIOUS REPORT STATE (non-authoritative):
+{previous_state}
+"""
+    if task.id == "nightly_recap":
+        return shared + """
+Create a concise `🌙 **Nightly Recap**` for Los Blancos. Lead with `🚨 **Action needed**` or `✅ **No action tonight**`. Include only decision-relevant roster news, next fixtures/lineup implications, significant league trades, and worthwhile pickup considerations supported by the current evidence or current research. On a quiet or incomplete-evidence run, keep the card short and explicitly state what could not be refreshed. `material_update` is true only when an action-worthy change exists.
+"""
+    if task.id == "watchlist_report":
+        return shared + """
+Create a concise `👀 **Watchlist Update**` using the canonical watched players in the supplied evidence. For each player, give only verified current role, availability, fixture, or news context; say when current public outlook could not be refreshed. This is observation-only: never recommend a transaction. Keep an otherwise quiet report compact. `material_update` is true only for a material player change.
+"""
+    if task.id == "transfer_monitor":
+        return shared + """
+Current web research is mandatory. Create `🚨 **Transfer Watch**` for material current Premier League transfer developments only. Clearly distinguish confirmed, advanced reporting, and rumor; include current reputable source links, publication timing/confidence, EPL relevance, and Fantasy impact where useful. Never repeat an unchanged prior story as new. If there is no material update, return exactly `🚨 **Transfer Watch**\\n✅ **No material transfer update this hour.**` with `status=no_change` and `material_update=false`.
+"""
+    raise AutomationError(f"No scheduled Advisor definition exists for {task.id!r}")
+
+
+def _scheduled_response_payload(text: str) -> tuple[str, bool, str]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise AutomationError("OpenAI scheduled report returned invalid structured output") from exc
+    if not isinstance(payload, dict):
+        raise AutomationError("OpenAI scheduled report returned an invalid payload")
+    status = payload.get("status")
+    material_update = payload.get("material_update")
+    report = payload.get("report")
+    if status not in {"complete", "partial", "no_change"} or not isinstance(material_update, bool) or not isinstance(report, str) or not report.strip():
+        raise AutomationError("OpenAI scheduled report did not satisfy its response contract")
+    return report.strip(), material_update, status
+
+
+def _normalize_scheduled_report(task: TaskSpec, report: str, *, material_update: bool) -> str:
+    """Guarantee the stable, task-specific card heading at the delivery boundary."""
+
+    heading = scheduled_report_heading(task.id)
+    if task.id == "transfer_monitor" and not material_update:
+        return f"{heading}\n✅ **No material transfer update this hour.**"
+    if report.startswith(heading):
+        return report
+    return f"{heading}\n\n{report}"
+
+
+def run_scheduled_advisor(
+    config: AppConfig,
+    task: TaskSpec,
+    *,
+    invocation: str,
+    evidence: str,
+    previous_state: str,
+    client: Any = None,
+) -> ScheduledResult:
+    """Finalize a known scheduled report without interactive grounding or Codex."""
+
+    if not config.openai_api_key:
+        raise AutomationError("OPENAI_API_KEY is required for scheduled Fantasy reports")
+    if client is None:
+        try:
+            from openai import OpenAI
+        except ImportError as exc:  # pragma: no cover - declared dependency
+            raise AutomationError("The OpenAI Python SDK is not installed") from exc
+        client = OpenAI(api_key=config.openai_api_key, timeout=min(config.codex_timeout_seconds, 180))
+    started = time.monotonic()
+    trace: dict[str, Any] = {
+        "request_id": os.urandom(12).hex(),
+        "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+        "surface": "discord_scheduled_dm",
+        "task_id": task.id,
+        "invocation": invocation,
+        "capabilities": ["watchlist_live_snapshot"] if task.id == "watchlist_report" else ["compact_sleeper_feed"] if task.id == "nightly_recap" else [],
+        "web_search_used": False,
+        "codex_used": False,
+        "delivery": "owner_dm",
+        "result_status": "failed",
+    }
+    request: dict[str, Any] = {
+        "model": config.openai_web_model,
+        "reasoning": {"effort": config.openai_web_reasoning_effort},
+        "instructions": scheduled_report_instructions(task, invocation=invocation, evidence=evidence, previous_state=previous_state),
+        "input": f"Generate the {task.id} report now.",
+        "store": False,
+        "timeout": min(config.codex_timeout_seconds, 180),
+        "text": {"format": {"type": "json_schema", "name": "scheduled_fantasy_report", "strict": True, "schema": SCHEDULED_REPORT_SCHEMA}},
+        "tools": [{"type": "web_search_preview", "search_context_size": "medium"}],
+        "tool_choice": "required" if task.id == "transfer_monitor" else "auto",
+    }
+    try:
+        response = client.responses.create(**request)
+    except Exception as exc:
+        raise AutomationError("OpenAI scheduled report could not complete") from exc
+    trace["web_search_used"] = _response_used_web_search(response)
+    if task.id == "transfer_monitor" and not trace["web_search_used"]:
+        raise AutomationError("Transfer Watch required current public research but none completed")
+    report, material_update, status = _scheduled_response_payload(str(getattr(response, "output_text", "") or ""))
+    report = _normalize_scheduled_report(task, report, material_update=material_update)
+    trace.update({
+        "material_update": material_update,
+        "delivery_suppressed": False,
+        "result_status": status,
+        "elapsed_seconds": round(time.monotonic() - started, 2),
+    })
+    LOGGER.info("scheduled_advisor_trace %s", json.dumps(trace, sort_keys=True))
+    return ScheduledResult(
+        text=report,
+        response_id=str(getattr(response, "id", "") or "").strip() or None,
+        elapsed_seconds=trace["elapsed_seconds"],
+        trace=trace,
+        material_update=material_update,
+    )
 
 
 def advisor_context_file(config: AppConfig) -> Path:
@@ -1947,7 +2146,12 @@ def persist_discord_channel_id(config: AppConfig, channel_id: str) -> None:
     temporary.replace(path)
 
 
-def persist_outbox_report(config: AppConfig, task: TaskSpec, result: CodexResult, report: str) -> Path:
+def persist_outbox_report(
+    config: AppConfig,
+    task: TaskSpec,
+    result: CodexResult | ScheduledResult,
+    report: str,
+) -> Path:
     """Persist a report before attempting network delivery."""
 
     return persist_outbox_message(config, task.id, result.thread_id, report)
@@ -1982,7 +2186,7 @@ def flush_outbox(config: AppConfig, transport: Any) -> None:
         report = report_file.read_text(encoding="utf-8").strip()
         if not report:
             raise AutomationError(f"Scheduled report outbox file is empty: {report_file}")
-        transport.send_channel(config.discord_scheduled_channel_id, report)
+        transport.send_dm(config.discord_allowed_user_id or "", report)
         report_file.unlink()
 
 
@@ -1993,56 +2197,110 @@ def run_scheduled_task(
     deliver: bool = True,
     persist_state: bool = True,
     persist_context: bool = True,
-) -> CodexResult:
+    invocation: str = "scheduled",
+) -> ScheduledResult:
+    """Run a known report directly through the Advisor and optionally deliver it."""
+
+    if invocation not in {"scheduled", "manual"}:
+        raise AutomationError("Scheduled invocation must be 'scheduled' or 'manual'")
     registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
     task = registry.get(task_id)
-    runtime_context = build_watchlist_live_packet(config) if task.id == "watchlist_report" else None
-    if task.id == "watchlist_report" and runtime_context is None:
-        # An empty personal watchlist is intentionally silent: no Codex task,
-        # state update, conversation event, or misleading Discord DM.
-        return CodexResult(text="WATCHLIST_EMPTY", thread_id=None, elapsed_seconds=0.0)
+    started = time.monotonic()
     transport = None
     if deliver:
-        config.require_scheduled_discord()
+        config.require_discord()
         from .discord_transport import DiscordTransport
 
         transport = DiscordTransport(config.discord_bot_token)
         flush_outbox(config, transport)
     try:
-        result = CodexRunner(config).run(
-            task_prompt_for_run(task, runtime_context=runtime_context),
-            label=task.id,
-        )
+        if task.id == "watchlist_report":
+            runtime_context = build_watchlist_live_packet(config)
+            if runtime_context is None:
+                result = ScheduledResult(
+                    text="👀 **Watchlist Update**\n✅ **No players on your watchlist yet.**",
+                    response_id=None,
+                    elapsed_seconds=0.0,
+                    trace={
+                        "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+                        "surface": "discord_scheduled_dm",
+                        "task_id": task.id,
+                        "invocation": invocation,
+                        "capabilities": ["watchlist_live_snapshot"],
+                        "web_search_used": False,
+                        "codex_used": False,
+                        "delivery": "owner_dm",
+                        "result_status": "no_change",
+                        "material_update": False,
+                        "delivery_suppressed": False,
+                        "elapsed_seconds": 0.0,
+                    },
+                )
+            else:
+                result = run_scheduled_advisor(
+                    config, task, invocation=invocation, evidence=runtime_context,
+                    previous_state=_previous_task_state(task),
+                )
+        elif task.id == "nightly_recap":
+            result = run_scheduled_advisor(
+                config, task, invocation=invocation, evidence=_current_nightly_packet(config),
+                previous_state=_previous_task_state(task),
+            )
+        elif task.id == "transfer_monitor":
+            result = run_scheduled_advisor(
+                config, task, invocation=invocation,
+                evidence="No private Fantasy evidence is needed for this public-current-news task.",
+                previous_state=_previous_task_state(task),
+            )
+        else:
+            raise AutomationError(f"No scheduled Advisor definition exists for {task.id!r}")
     except AutomationError as exc:
+        failure_trace = {
+            "request_id": os.urandom(12).hex(),
+            "runtime_sha": os.environ.get("FANTASY_RUNTIME_SHA", "unknown"),
+            "surface": "discord_scheduled_dm",
+            "task_id": task.id,
+            "invocation": invocation,
+            "capabilities": ["watchlist_live_snapshot"] if task.id == "watchlist_report" else ["compact_sleeper_feed"] if task.id == "nightly_recap" else [],
+            "web_search_used": False,
+            "codex_used": False,
+            "delivery": "owner_dm",
+            "result_status": "failed",
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+        }
+        LOGGER.info("scheduled_advisor_trace %s", json.dumps(failure_trace, sort_keys=True))
         if deliver:
             try:
-                failure_report = scheduled_failure(task.name, str(exc)[-1800:])
+                failure_report = scheduled_failure(
+                    scheduled_report_title(task.id),
+                    "No verified report was sent. I’ll try again on the next scheduled run.",
+                )
                 failure_file = persist_outbox_message(config, task.id, "failed", failure_report)
-                transport.send_channel(config.discord_scheduled_channel_id, failure_report)
+                transport.send_dm(config.discord_allowed_user_id or "", failure_report)
                 failure_file.unlink()
             except AutomationError:
-                # Preserve the Codex failure in launchd's stderr if Discord is
+                # Preserve the Advisor failure in launchd's stderr if Discord is
                 # also unavailable; the next scheduled run can retry cleanly.
                 pass
         raise
     if persist_state:
         persist_task_state(task, result)
-    report = build_report_header(task, result) + result.text
+    report = result.text
     if persist_context:
-        # Scheduled prompts intentionally do not read Discord context. Their
+        # Scheduled reports intentionally do not read Discord context. Their
         # completed reports become reference material for future interactive
-        # Discord tasks only after the scheduled Codex run has finished.
+        # Discord tasks only after the standalone Advisor run has finished.
         persist_advisor_context_event(
             config,
             kind=SCHEDULED_REPORT,
             content=report,
             task_id=task.id,
-            thread_id=result.thread_id,
-            metadata={"source": "scheduled_task", "delivered": deliver},
+            thread_id=result.response_id,
+            metadata={"source": "scheduled_task", "delivered": deliver, "trace": result.trace},
         )
     if deliver:
         report_file = persist_outbox_report(config, task, result, report)
-        transport.send_channel(config.discord_scheduled_channel_id, report)
+        transport.send_dm(config.discord_allowed_user_id or "", report)
         report_file.unlink()
     return result
 
@@ -2078,7 +2336,7 @@ def run_interactive_task(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run a local fantasy Codex task")
+    parser = argparse.ArgumentParser(description="Run a local Fantasy Advisor task")
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--task", help="registered scheduled task ID")
     choice.add_argument("--query", help="one-off read-only question for a new Codex task")
@@ -2091,7 +2349,8 @@ def main(argv: list[str] | None = None) -> int:
     registry = load_registry(config.task_registry_path, repo_root=config.repo_root)
     if args.list_tasks:
         for task in registry.tasks:
-            print(f"{task.id}\t{task.name}\t{task.schedule_type}")
+            state = "active" if task.enabled else "paused"
+            print(f"{task.id}\t{task.name}\t{task.schedule_type}\t{state}")
         return 0
 
     if args.task:

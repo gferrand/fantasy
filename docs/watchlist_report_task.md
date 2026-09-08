@@ -2,6 +2,9 @@
 
 This local task runs at 8:00 AM America/New_York for one private Discord user.
 It receives a `PERSONAL WATCHLIST LIVE SNAPSHOT` assembled before execution.
+The local scheduler finalizes it directly through the OpenAI Advisor in the
+Owner bot DM, without conversation history or interactive grounding. An empty
+watchlist produces a concise confirmation card rather than a silent run.
 
 ```text
 Produce a compact daily status report for the personal Premier League watchlist.
