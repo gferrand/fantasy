@@ -20,6 +20,10 @@ Docker:  container scheduler                 │
                     Owner bot DM only
 ```
 
+The reproducible scheduler image, external environment-file setup, canonical
+data bind mounts, verification, and rollback procedure are documented in
+[Scheduler Compose operations](scheduler_compose.md).
+
 Normal `/ask` and plain Discord messages use OpenAI as the final advisor,
 with optional bounded read-only Codex retrieval of private facts. PDFs, text
 attachments, and voice notes share the same pipeline and 120-second deadline.
@@ -238,14 +242,19 @@ Then refresh and restart only the native Discord agent with
 existing scheduler container with the health check above. Do not start the
 launchd scheduled agents. After the three-minute start period, require both
 component probes to return `0`, then run the existing owner-DM Discord smoke
-check and a scheduler dry run through the normal host-controlled path.
+check and verify the scheduler registry and health through supported paths:
 
-If either probe stays nonzero, the Discord DM smoke fails, or the scheduler dry
-run fails, restore the recorded native runtime revision and previous scheduler
-image digest, restart those same two components, and repeat the old-version
-health/smoke checks. The heartbeat schema has no database migration and old
-code ignores these files, so rollback does not require deleting application
-state.
+```bash
+.venv/bin/python -m fantasy_advisor.automation --list-tasks
+.venv/bin/python -m fantasy_advisor.health --component scheduler
+```
+
+If either probe stays nonzero, the Discord DM smoke fails, or the scheduler
+task-list check fails, restore the recorded native runtime revision and previous
+scheduler image digest, restart those same two components, and repeat the
+old-version health/smoke checks. The heartbeat schema has no database migration
+and old code ignores these files, so rollback does not require deleting
+application state.
 
 To stop the agents without deleting their definitions:
 

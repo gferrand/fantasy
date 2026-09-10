@@ -1,0 +1,45 @@
+name: gf-fantasy
+
+services:
+  scheduler:
+    image: ${FANTASY_SCHEDULER_IMAGE:-gf-fantasy-scheduler:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "-m", "fantasy_advisor.scheduler"]
+    env_file:
+      - ${FANTASY_ENV_FILE:?set FANTASY_ENV_FILE to an external environment file}
+    environment:
+      FANTASY_REPO_ROOT: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - type: bind
+        source: ${FANTASY_HOST_ROOT:?set FANTASY_HOST_ROOT to the canonical persistent root}/data
+        target: /app/data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${FANTASY_HOST_ROOT:?set FANTASY_HOST_ROOT to the canonical persistent root}/reports
+        target: /app/reports
+        bind:
+          create_host_path: false
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    mem_limit: 384m
+    cpus: 0.25
+    pids_limit: 128
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    healthcheck:
+      test: ["CMD", "python", "-m", "fantasy_advisor.health", "--component", "scheduler"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
