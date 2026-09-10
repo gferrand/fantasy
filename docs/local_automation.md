@@ -1,15 +1,16 @@
 # Local Fantasy automation
 
-The fantasy project now owns its recurring runs. macOS `launchd` starts one
-personal Discord app gateway and two active scheduled dispatchers. Transfer
+The fantasy project now owns its recurring runs. In the deployed split-runtime
+topology, macOS `launchd` starts the personal Discord app gateway and the
+container-native scheduler runs the active scheduled dispatchers. Transfer
 Watch remains registered but is paused until the January transfer window:
 
 ```text
-launchd
-  ├─ Discord gateway + `/ask` commands ──┐
-  ├─ 22:00 nightly recap   │
-  └─ :17 every hour        │
-                           v
+launchd: Discord gateway + `/ask` commands ──┐
+Docker:  container scheduler                 │
+  ├─ 22:00 nightly recap                     │
+  └─ 08:00 watchlist report                  │
+                                             v
           current Fantasy evidence + web research
                            |
                            v
@@ -77,8 +78,8 @@ respond to server messages or DMs from anyone whose numeric ID does not match
 
 The scheduler downloads the complete published Premier League season calendar
 once and then uses that private local copy for the season; it does not refresh
-the calendar for reschedules. It calculates the exact next alert time and
-sleeps until then rather than checking fixtures every minute. At each published
+the calendar for reschedules. It calculates the exact next alert time and wakes
+at least once per minute to publish local health activity. At each published
 fixture alert window, it reads the current Los Blancos roster and sends a
 private, read-only lineup check only when one or more currently rostered
 players are involved. So a player dropped before a later club fixture produces
@@ -124,11 +125,16 @@ instead of sending it to Discord.
 
 ## Enable and inspect
 
-After the token and user ID are set, install the agents:
+After the token and user ID are set, install only the native Discord agent when
+the Docker scheduler is authoritative:
 
 ```bash
-.venv/bin/python scripts/install_automation.py --install
+.venv/bin/python scripts/install_automation.py --install-discord
 ```
+
+`--install` remains available for an all-launchd deployment. Never combine its
+scheduled agents with the Docker scheduler, because that would duplicate
+scheduled work.
 
 Run exactly one persistent Discord listener. The installer refuses to start
 the launchd listener while a Fantasy Discord Compose service is running,
@@ -140,19 +146,106 @@ On the first launchd install, existing `data/automation` state (including the
 watchlist) seeds the protected runtime copy. Later installs preserve the
 runtime's mutable state instead of replacing it with checkout data.
 
-This writes only these four explicit user LaunchAgents and loads them:
+An all-launchd installation writes the explicit user LaunchAgents for Discord
+and each enabled registry task. The split-runtime production topology loads
+only:
 
 - `com.ginoferrand.fantasy.discord` — persistent DM listener
-- `com.ginoferrand.fantasy.nightly-recap` — daily at 22:00
-- `com.ginoferrand.fantasy.transfer-monitor` — hourly at minute 17
 
 Logs are written to `~/Library/Logs/fantasy-*.log`. Useful checks are:
 
 ```bash
 launchctl print gui/$UID/com.ginoferrand.fantasy.discord
-launchctl print gui/$UID/com.ginoferrand.fantasy.nightly-recap
 tail -f ~/Library/Logs/fantasy-discord-bot.log
 ```
+
+## Application health
+
+Both long-running application components publish small atomic heartbeat files
+under ignored `data/automation/health/` state. This is application activity,
+not a process check:
+
+- Discord refreshes its heartbeat once per minute only while the gateway says
+  it is ready. A running but disconnected listener therefore becomes stale.
+- The container scheduler refreshes once per loop and at least once per minute.
+  Before a synchronous scheduled task, fixture load, lineup check, or Guardian
+  check, it publishes a bounded busy lease for `CODEX_TIMEOUT_SECONDS` plus 180
+  seconds of cleanup overhead, capped at 3,600 seconds. A completed operation
+  returns the scheduler to idle without clearing unrelated prior failures.
+  This avoids declaring a legitimate operation stale merely because it runs
+  longer than the three-minute idle threshold, without adding a heartbeat
+  thread.
+
+Each heartbeat is a versioned JSON object with this schema:
+
+```json
+{
+  "schema_version": 1,
+  "component": "scheduler",
+  "status": "healthy",
+  "state": "idle",
+  "updated_at": 1789063200.0,
+  "busy_until": null,
+  "unhealthy_components": []
+}
+```
+
+`component` is `discord` or `scheduler`; `status` is `healthy` or
+`unhealthy`; and `state` is `idle` or `busy`. An idle record requires
+`busy_until: null`. A busy record requires a finite Unix timestamp after
+`updated_at` and no more than 3,600 seconds later. `unhealthy_components` is a
+unique list of non-empty strings and must be empty when `status` is `healthy`.
+The writer sorts and deduplicates that list.
+
+The probe reads only local state, performs no network request, emits one JSON
+object, and exits `0` only for a fresh healthy heartbeat. Missing, malformed,
+future-dated, explicitly unhealthy, expired-busy, or more-than-three-minute-old
+idle state exits nonzero. A healthy busy state remains healthy only through its
+lease deadline; this is why a stuck operation eventually fails closed. A stuck
+idle scheduler fails when `updated_at` exceeds the normal age limit:
+
+```bash
+.venv/bin/fantasy-healthcheck --component discord
+.venv/bin/fantasy-healthcheck --component scheduler
+```
+
+Infrastructure should execute the Discord probe from the native runtime working
+directory. For the Docker scheduler, configure the existing private container
+with the equivalent of this service-local health check; it does not open a port
+or contact Discord, Sleeper, OpenAI, or the host:
+
+```yaml
+healthcheck:
+  test: ["CMD", "python", "-m", "fantasy_advisor.health", "--component", "scheduler"]
+  interval: 60s
+  timeout: 5s
+  retries: 3
+  start_period: 180s
+```
+
+Keep the existing writable `data/automation` mount available to the scheduler.
+Infrastructure may alert on the JSON `reason`; it must not treat `container
+running` or a launchd PID as application health. The probe deliberately does
+not include credentials, task output, Discord identifiers, or raw error text.
+
+### Safe deployment and rollback
+
+Host coordination is required because production uses two runtimes. Before
+deployment, record the current native runtime revision and scheduler image
+digest, and confirm there is exactly one Discord listener and one scheduler.
+Then refresh and restart only the native Discord agent with
+`scripts/install_automation.py --install-discord`; rebuild and recreate only the
+existing scheduler container with the health check above. Do not start the
+launchd scheduled agents. After the three-minute start period, require both
+component probes to return `0`, then run the existing owner-DM Discord smoke
+check and a scheduler dry run through the normal host-controlled path.
+
+If either probe stays nonzero, the Discord DM smoke fails, or the scheduler dry
+run fails, restore the recorded native runtime revision and previous scheduler
+image digest, restart those same two components, and repeat the old-version
+health/smoke checks. The heartbeat schema has no database migration and old
+code ignores these files, so rollback does not require deleting application
+state.
 
 To stop the agents without deleting their definitions:
 

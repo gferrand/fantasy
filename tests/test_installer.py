@@ -15,6 +15,14 @@ SPEC.loader.exec_module(INSTALLER)
 
 
 class InstallerTests(unittest.TestCase):
+    def test_discord_definition_can_be_selected_without_scheduled_agents(self):
+        definitions = INSTALLER.agent_definitions(
+            repo_root=ROOT,
+            python=ROOT / ".venv" / "bin" / "python",
+        )
+        discord_only = INSTALLER.discord_agent_definitions(definitions)
+        self.assertEqual([label for label, _ in discord_only], ["com.ginoferrand.fantasy.discord"])
+
     def test_watchlist_task_generates_an_eight_am_launchd_definition(self):
         definitions = dict(INSTALLER.agent_definitions(repo_root=ROOT, python=ROOT / ".venv" / "bin" / "python"))
         watchlist = definitions["com.ginoferrand.fantasy.watchlist-report"]

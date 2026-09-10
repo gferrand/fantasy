@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 fantasy-dispatch = "fantasy_advisor.automation:main"
 fantasy-discord-bot = "fantasy_advisor.discord_bot:main"
+fantasy-healthcheck = "fantasy_advisor.health:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

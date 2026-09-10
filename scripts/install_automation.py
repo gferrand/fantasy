@@ -164,6 +164,18 @@ def agent_definitions(
     return definitions
 
 
+def discord_agent_definitions(
+    definitions: list[tuple[str, dict[str, Any]]],
+) -> list[tuple[str, dict[str, Any]]]:
+    """Select only the native gateway definition for split-runtime deployment."""
+
+    return [
+        definition
+        for definition in definitions
+        if definition[0] == f"{AGENT_PREFIX}.discord"
+    ]
+
+
 def plist_path(label: str, *, launch_agents: Path = LAUNCH_AGENTS) -> Path:
     return launch_agents / f"{label}.plist"
 
@@ -295,7 +307,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install fantasy advisor launchd agents")
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--dry-run", action="store_true", help="print plist definitions without changing the system")
-    choice.add_argument("--install", action="store_true", help="install and load the four launchd agents")
+    choice.add_argument("--install", action="store_true", help="install and load all launchd agents")
+    choice.add_argument(
+        "--install-discord",
+        action="store_true",
+        help="install only the native Discord agent when scheduling runs in Docker",
+    )
     choice.add_argument("--uninstall", action="store_true", help="stop the four agents; leave plist definitions in place")
     parser.add_argument("--python", type=Path, default=PYTHON, help="Python interpreter for the agents")
     args = parser.parse_args(argv)
@@ -310,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("The launchd installer must run on macOS")
     if not args.python.exists():
         raise RuntimeError(f"Python interpreter not found: {args.python}; create .venv first")
-    if args.install:
+    if args.install or args.install_discord:
         from fantasy_advisor.automation import AppConfig
 
         config = AppConfig.from_environment(repo_root=ROOT)
@@ -330,7 +347,10 @@ def main(argv: list[str] | None = None) -> int:
             python_gate=runtime_root / "scripts" / "run_python_after_startup.sh",
             served_sha=runtime_sha(ROOT),
         )
-        pause_disabled_task_agents(tasks, uid=os.getuid())
+        if args.install_discord:
+            definitions = discord_agent_definitions(definitions)
+        else:
+            pause_disabled_task_agents(tasks, uid=os.getuid())
         install(definitions, uid=os.getuid())
         return 0
     definitions = agent_definitions(python=args.python, repo_root=ROOT)
