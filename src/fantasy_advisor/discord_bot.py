@@ -89,6 +89,7 @@ from .intelligence_capabilities import (
 )
 from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
 from .injury_opportunities import injury_timeline_research_context, render_injury_opportunities
+from .health import maintain_ready_heartbeat, write_health_state
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -125,6 +126,7 @@ def build_client(config: AppConfig) -> discord.Client:
     client._fantasy_command_tree = command_tree  # type: ignore[attr-defined]
     run_lock = asyncio.Lock()
     command_sync_complete = False
+    heartbeat_task: asyncio.Task[None] | None = None
 
     async def send_chunks(channel: discord.abc.Messageable, text: str) -> None:
         allowed_mentions = discord.AllowedMentions.none()
@@ -146,6 +148,18 @@ def build_client(config: AppConfig) -> discord.Client:
 
     def schedule_online_presence() -> None:
         asyncio.create_task(set_online_presence())
+
+    def schedule_health_heartbeat() -> None:
+        nonlocal heartbeat_task
+        if heartbeat_task is None or heartbeat_task.done():
+            heartbeat_task = asyncio.create_task(
+                maintain_ready_heartbeat(
+                    config.repo_root,
+                    "discord",
+                    is_ready=client.is_ready,
+                    is_closed=client.is_closed,
+                )
+            )
 
     def compact_interaction_error(prefix: str, exc: Exception) -> str:
         """Keep an interaction error inside Discord's 2,000-character limit."""
@@ -1081,6 +1095,8 @@ def build_client(config: AppConfig) -> discord.Client:
         LOGGER.info("Fantasy Discord bot connected as %s", client.user)
         schedule_online_presence()
         persist_discord_ready_state(config)
+        write_health_state(config.repo_root, "discord")
+        schedule_health_heartbeat()
         if not command_sync_complete:
             try:
                 synced = await command_tree.sync()
@@ -1092,6 +1108,8 @@ def build_client(config: AppConfig) -> discord.Client:
     @client.event
     async def on_resumed() -> None:
         schedule_online_presence()
+        write_health_state(config.repo_root, "discord")
+        schedule_health_heartbeat()
         LOGGER.info("Fantasy Discord gateway session resumed")
 
     @client.event

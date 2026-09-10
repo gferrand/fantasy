@@ -104,6 +104,14 @@ Legitimate non-browser local execution remains available for work that does not
 need browser capability. Stable league context is embedded in task packets so
 the advisor can make bounded, reproducible use of league data.
 
+The deployed runtime is split: launchd owns the single native Discord gateway,
+while the registered scheduler loop runs in its existing private Docker
+container. Each component writes an atomic local heartbeat under
+`data/automation/health/`. The Discord heartbeat advances only while the
+gateway is ready; the scheduler heartbeat records both loop activity and
+retained failing subcomponents. The `fantasy-healthcheck` CLI validates this
+state with no network call, public listener, or dependency side effect.
+
 ## Boundaries
 
 - No Sleeper authentication or write operations.

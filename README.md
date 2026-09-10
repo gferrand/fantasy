@@ -22,6 +22,7 @@ players rather than elite, expensive cornerstones.
 - [`docs/transfer_monitor_task.md`](docs/transfer_monitor_task.md) — the hourly league-wide EPL transfer monitor definition.
 - [`data/README.md`](data/README.md) — cache layout and freshness expectations.
 - [`scripts/build_sleeper_feed.py`](scripts/build_sleeper_feed.py) — deterministic compact feed builder for GitHub Actions.
+- `fantasy-healthcheck` — local heartbeat probe for the native Discord gateway and container scheduler.
 - [`src/fantasy_advisor/`](src/fantasy_advisor/) — future Python fetch and analysis package.
 
 ## Current status
