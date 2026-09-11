@@ -209,11 +209,30 @@ def _prepare_forecasts(
     total_display = f"Projected XI: {total:.1f} Kick & Run pts"
     return {
         "available": True,
-        "projected_xi_player_ids": list(lineup.player_ids),
+        "projected_xi_player_ids": _ordered_forecast_xi_ids(lineup.player_ids, by_id),
         "projected_xi_total": total,
         "total_display": total_display,
         "required_fragments": [total_display, *fragments],
     }
+
+
+def _ordered_forecast_xi_ids(
+    player_ids: tuple[str, ...], players: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    """Render a legal XI in the familiar goalkeeper-to-forwards order.
+
+    Selection is deliberately completed before this display-only ordering, so
+    flex eligibility and the calculated projection total cannot change.
+    """
+    position_order = {"GK": 0, "G": 0, "D": 1, "M": 2, "F": 3}
+
+    def key(player_id: str) -> tuple[int, str, str]:
+        player = players[player_id]
+        positions = [str(position).upper() for position in player.get("positions", ())]
+        rank = min((position_order.get(position, 4) for position in positions), default=4)
+        return rank, str(player.get("name") or "").casefold(), player_id
+
+    return sorted(player_ids, key=key)
 
 
 def load_gameweek_prepare_context(
