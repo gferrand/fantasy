@@ -64,6 +64,7 @@ FANTASY_CODEX_MODEL = "gpt-5.6-luna"
 FANTASY_CODEX_REASONING_EFFORT = "medium"
 FANTASY_WEB_MODEL = "gpt-5.6-luna"
 FANTASY_WEB_REASONING_EFFORT = "medium"
+FANTASY_OPENAI_SERVICE_TIER = "priority"
 BROWSER_PROJECT = "fantasy"
 BROWSER_COMMAND_TIMEOUT_SECONDS = 50
 LOGGER = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ class AppConfig:
     openai_document_model: str = "gpt-4.1-mini"
     openai_web_model: str = FANTASY_WEB_MODEL
     openai_web_reasoning_effort: str = FANTASY_WEB_REASONING_EFFORT
+    openai_service_tier: str = FANTASY_OPENAI_SERVICE_TIER
     lineup_alert_lead_minutes: int = 90
     deadline_guardian_final_lead_minutes: int = 20
 
@@ -180,6 +182,7 @@ class AppConfig:
                 os.environ.get("OPENAI_WEB_REASONING_EFFORT", FANTASY_WEB_REASONING_EFFORT).strip()
                 or FANTASY_WEB_REASONING_EFFORT
             ),
+            openai_service_tier=FANTASY_OPENAI_SERVICE_TIER,
             lineup_alert_lead_minutes=alert_lead,
             deadline_guardian_final_lead_minutes=guardian_lead,
             codex_bin=os.environ.get("CODEX_BIN", "codex").strip() or "codex",
@@ -256,6 +259,7 @@ class CodexRunner:
 
     def command(self, output_file: Path, *, ephemeral: bool | None = None) -> list[str]:
         command = [self.config.codex_bin, "exec"]
+        command.extend(("--config", f'service_tier="{self.config.openai_service_tier}"'))
         if self.config.codex_model:
             command.extend(("--model", self.config.codex_model))
         if self.config.codex_reasoning_effort:
@@ -1139,6 +1143,7 @@ def run_web_briefing(
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=web_briefing_prompt(question, context_packet=context_packet),
             input=question.strip(),
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -1297,6 +1302,7 @@ def run_injury_web_briefing(
                 )
             response = client.responses.create(
                 model=config.openai_web_model,
+                service_tier=config.openai_service_tier,
                 instructions=injury_web_briefing_prompt(live_context=live_context),
                 input=(
                     "Research current return timetables for the selected Fantasy-interesting injuries "
@@ -1408,6 +1414,7 @@ def run_watchlist_web_briefing(
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=watchlist_web_briefing_prompt(
                 question,
                 live_context=live_context,
@@ -1506,6 +1513,7 @@ def run_gameweek_web_briefing(
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=gameweek_web_briefing_prompt(report_kind=report_kind, live_context=live_context),
             input=("Prepare my next gameweek lineup." if report_kind == "prepare" else "Recap my last completed gameweek."),
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -1545,6 +1553,7 @@ def run_gameweek_availability_briefing(config: AppConfig, *, roster: list[dict[s
     try:
         response = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds).responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=instructions,
             input=json.dumps({"roster": compact_roster}, separators=(",", ":")),
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -1599,6 +1608,7 @@ def run_trade_web_briefing(config: AppConfig, *, live_context: str) -> WebResult
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=trade_web_briefing_prompt(live_context=live_context),
             input="Choose the strongest current manual fantasy trade proposal from the supplied packages.",
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -1697,6 +1707,7 @@ def run_rotation_web_briefing(config: AppConfig, *, live_context: str) -> WebRes
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=rotation_web_briefing_prompt(live_context=live_context),
             input="Build the protected-core four-fixture rotation report from the supplied candidates.",
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -1758,6 +1769,7 @@ def run_lineup_alert_web_briefing(config: AppConfig, *, live_context: str) -> We
         client = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds)
         response = client.responses.create(
             model=config.openai_web_model,
+            service_tier=config.openai_service_tier,
             instructions=lineup_alert_web_briefing_prompt(live_context=live_context),
             input="Check the relevant players before this kickoff.",
             tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
@@ -2567,6 +2579,7 @@ def run_scheduled_advisor(
     }
     request: dict[str, Any] = {
         "model": config.openai_web_model,
+        "service_tier": config.openai_service_tier,
         "reasoning": {"effort": config.openai_web_reasoning_effort},
         "instructions": scheduled_report_instructions(task, invocation=invocation, evidence=evidence, previous_state=previous_state),
         "input": f"Generate the {task.id} report now.",

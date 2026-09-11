@@ -41,6 +41,7 @@ class AttachmentIntakeTests(unittest.TestCase):
             result = normalize_attachment(path, filename="report.pdf", content_type="application/pdf", api_key="key", audio_model="gpt-transcribe", document_model="gpt-4.1-mini", client_factory=lambda **_: client)
         self.assertEqual(result.text, "Extracted table")
         self.assertEqual(client.responses.create.call_args.kwargs["model"], "gpt-4.1-mini")
+        self.assertEqual(client.responses.create.call_args.kwargs["service_tier"], "priority")
         client.files.delete.assert_called_once_with("file-123")
 
     def test_audio_uses_transcription_model(self):
@@ -52,6 +53,7 @@ class AttachmentIntakeTests(unittest.TestCase):
             result = normalize_attachment(path, filename="voice.m4a", content_type="audio/mp4", api_key="key", audio_model="gpt-transcribe", document_model="gpt-4.1-mini", client_factory=lambda **_: client)
         self.assertEqual(result.text, "Add Matt O'Riley to my watchlist")
         self.assertEqual(client.audio.transcriptions.create.call_args.kwargs["model"], "gpt-transcribe")
+        self.assertNotIn("service_tier", client.audio.transcriptions.create.call_args.kwargs)
 
     def test_ogg_is_sent_directly_and_oversized_normalized_text_is_rejected(self):
         client = Mock()
@@ -100,6 +102,7 @@ class AsyncIntakeTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(factory.call_args.kwargs["timeout"], 45)
         request = client.responses.create.call_args.kwargs
         self.assertFalse(request["store"])
+        self.assertEqual(request["service_tier"], "priority")
         self.assertTrue(request["input"][0]["content"][1]["file_data"].startswith("data:application/pdf;base64,"))
 
     async def test_text_needs_no_provider_and_expired_budget_fails(self):
