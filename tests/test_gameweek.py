@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fantasy_advisor.gameweek import (
     LEAGUE_ID,
+    _ordered_forecast_xi_ids,
     load_gameweek_prepare_context,
     load_gameweek_recap_context,
 )
@@ -117,6 +118,18 @@ class GameweekContextTests(unittest.TestCase):
         context = load_gameweek_prepare_context(manager_id=self.manager_id, client=_SleeperClient(responses), fixture_schedule={"events": []})
         self.assertFalse(context.payload["forecast"]["available"])
         self.assertIn("scoring or player season data", context.payload["forecast"]["note"])
+
+    def test_forecast_xi_display_order_runs_goalkeeper_to_forwards(self):
+        players = {
+            "forward": {"name": "Forward", "positions": ["F"]},
+            "midfielder": {"name": "Midfielder", "positions": ["M"]},
+            "defender": {"name": "Defender", "positions": ["D"]},
+            "keeper": {"name": "Keeper", "positions": ["GK"]},
+        }
+        self.assertEqual(
+            _ordered_forecast_xi_ids(("forward", "midfielder", "defender", "keeper"), players),
+            ["keeper", "defender", "midfielder", "forward"],
+        )
 
 
 if __name__ == "__main__":
