@@ -780,7 +780,12 @@ def _structured_finalization(
         base["target_verification_error"] = "invalid_decision"
         return "", base
     actionable, summary, targets = decision.get("actionable"), decision.get("summary"), decision.get("targets")
-    if not isinstance(actionable, bool) or not isinstance(summary, str) or not summary.strip() or not isinstance(targets, list):
+    if (
+        not isinstance(actionable, bool)
+        or not isinstance(summary, str)
+        or (render_no_action_decision and not summary.strip())
+        or not isinstance(targets, list)
+    ):
         base["target_verification_error"] = "invalid_decision"
         return "", base
     if not actionable and targets:

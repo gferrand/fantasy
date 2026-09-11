@@ -183,6 +183,33 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.text, report)
         self.assertNotIn("## Recommendation", response.text)
 
+    async def test_informational_report_accepts_an_unused_blank_hold_summary(self):
+        report = "**Readiness**\nReady.\n\n**Ideal XI**\nEleven players."
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response",
+            output=[NS(type="web_search_call")],
+            output_text=self.hold(report, summary=""),
+        ))))
+
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/gameweek prepare", question="Prepare my lineup",
+            evidence=self.packet(), command_instructions="Use structured sections.",
+            mandatory_web=True, partial_text="Structured report unavailable.", client=client,
+            required_analysis_markers=("**Readiness**", "**Ideal XI**"),
+            render_no_action_decision=False,
+        )
+
+        self.assertEqual(response.text, report)
+        self.assertEqual(response.trace["result_status"], "complete")
+
+    def test_rendered_hold_still_requires_a_summary(self):
+        rendered, trace = advisor._structured_finalization(
+            self.hold("Current analysis", summary=""), self.packet(),
+        )
+
+        self.assertEqual(rendered, "")
+        self.assertEqual(trace["target_verification_error"], "invalid_decision")
+
     async def test_required_forecast_fragments_reject_missing_altered_or_duplicate_lines(self):
         report = "**Readiness**\nProjected XI: 10.0 Kick & Run pts\n**Ideal XI**\n**Player One** · est. 4.0 Kick & Run pts"
         client = NS(responses=NS(create=AsyncMock(return_value=NS(
