@@ -20,8 +20,8 @@ from itertools import combinations
 import json
 from typing import Any, Iterable, Mapping
 
-from .gameweek import LEAGUE_ID
-from .lineup_alerts import CLUB_ABBRS
+from .clubs import CLUB_ABBRS
+from .league import LEAGUE_ID
 from .sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 
 
@@ -127,10 +127,21 @@ def _player_from_row(
     scoring_settings: Mapping[str, Any],
 ) -> dict[str, Any]:
     row = row if isinstance(row, Mapping) else {}
-    player = row.get("player")
-    player = player if isinstance(player, Mapping) else {}
-    stats = row.get("stats")
-    stats = stats if isinstance(stats, Mapping) else {}
+    return projection_signal_from_player(
+        str(player_id),
+        row.get("player") if isinstance(row.get("player"), Mapping) else {},
+        row.get("stats") if isinstance(row.get("stats"), Mapping) else {},
+        scoring_settings,
+    )
+
+
+def projection_signal_from_player(
+    player_id: str,
+    player: Mapping[str, Any],
+    stats: Mapping[str, Any],
+    scoring_settings: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the neutral custom-score signal used by every forecast surface."""
     positions = [str(item).upper() for item in (player.get("fantasy_positions") or []) if str(item).strip()]
     position_points = {
         position: value

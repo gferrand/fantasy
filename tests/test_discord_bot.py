@@ -128,11 +128,13 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
                 "followup": type("Followup", (), {"send": AsyncMock()})(),
             },
         )()
-        context = type("Context", (), {"payload": {"gameweek": 4}, "retrieved_at": "now"})()
+        forecast_line = "**Player One** · est. 4.0 Kick & Run pts"
+        context = type("Context", (), {"payload": {"gameweek": 4, "forecast": {"required_fragments": ("Projected XI: 4.0 Kick & Run pts", forecast_line)}}, "retrieved_at": "now"})()
         report = "🗓️ **Gameweek prep · GW4**\n\n**Readiness**\n[Club update](https://example.com/report)"
 
         with (
             patch("fantasy_advisor.discord_bot.get_gameweek_prepare_context", return_value=context),
+            patch("fantasy_advisor.discord_bot.load_persisted_fixture_schedule", return_value={"events": []}),
             patch(
                 "fantasy_advisor.discord_bot.finalize_advisor_from_evidence",
                 new_callable=AsyncMock,
@@ -149,6 +151,7 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
             finalizer.await_args.kwargs["required_analysis_markers"],
             discord_bot.GAMEWEEK_PREPARE_REQUIRED_MARKERS,
         )
+        self.assertEqual(finalizer.await_args.kwargs["required_analysis_fragments"], ("Projected XI: 4.0 Kick & Run pts", forecast_line))
         self.assertFalse(finalizer.await_args.kwargs["render_no_action_decision"])
         delivered = interaction.edit_original_response.await_args.kwargs["content"]
         self.assertIn("[Club update](<https://example.com/report>)", delivered)

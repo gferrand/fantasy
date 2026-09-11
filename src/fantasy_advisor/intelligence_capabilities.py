@@ -43,8 +43,12 @@ def get_rotation_context(*, manager_id: str, fixture_schedule: object, client: S
     return load_rotation_context(manager_id=manager_id, fixture_schedule=fixture_schedule, client=client, now=now)
 
 
-def get_gameweek_prepare_context(*, manager_id: str, client: SleeperClient | None = None) -> GameweekContext:
-    return load_gameweek_prepare_context(manager_id=manager_id, client=client)
+def get_gameweek_prepare_context(
+    *, manager_id: str, fixture_schedule: object | None = None, client: SleeperClient | None = None,
+) -> GameweekContext:
+    return load_gameweek_prepare_context(
+        manager_id=manager_id, fixture_schedule=fixture_schedule, client=client,
+    )
 
 
 def get_gameweek_recap_context(*, manager_id: str, client: SleeperClient | None = None) -> GameweekContext:
