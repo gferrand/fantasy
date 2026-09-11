@@ -747,7 +747,12 @@ def _has_conflicting_ownership_claim(text: str, *, rostered: bool) -> bool:
     return any(term in normalized for term in ("rostered", "owned by", "trade for"))
 
 
-def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _structured_finalization(
+    text: str,
+    evidence: dict[str, Any],
+    *,
+    render_no_action_decision: bool = True,
+) -> tuple[str, dict[str, Any]]:
     """Validate one structured recommendation and render its action section.
 
     The only actionable language added to the final Discord response is
@@ -858,8 +863,10 @@ def _structured_finalization(text: str, evidence: dict[str, Any]) -> tuple[str, 
                 f"   Sources: {_render_target_sources(target['current_public_sources'])}"
             )
         rendered = f"{analysis}\n\n## Recommended manual move(s)\n" + "\n".join(actions)
-    else:
+    elif render_no_action_decision:
         rendered = f"{analysis}\n\n## Recommendation\n**HOLD** — {summary.strip()}"
+    else:
+        rendered = analysis
     return rendered, {
         "recommended_targets": normalized,
         "required_target_research_completed": True,
@@ -882,6 +889,8 @@ async def finalize_advisor_from_evidence(
     deadline: RequestDeadline | None = None,
     client: Any = None,
     request_id: str | None = None,
+    required_analysis_markers: tuple[str, ...] = (),
+    render_no_action_decision: bool = True,
 ) -> WebResult:
     """Synthesize an explicit slash command after its deterministic retrieval.
 
@@ -953,6 +962,8 @@ async def finalize_advisor_from_evidence(
                 partial_text=partial_text, web_enabled=web_enabled, trace_fields=trace_fields,
                 deadline=deadline, client=owned_client,
                 request_id=request_id,
+                required_analysis_markers=required_analysis_markers,
+                render_no_action_decision=render_no_action_decision,
             )
 
     # This call is the terminal model operation for a deterministically routed
@@ -1022,10 +1033,19 @@ async def finalize_advisor_from_evidence(
     text = str(getattr(response, "output_text", "") or "").strip()
     if not text:
         return finish(partial_text, "partial")
-    text, target_trace = _structured_finalization(text, evidence)
+    text, target_trace = _structured_finalization(
+        text,
+        evidence,
+        render_no_action_decision=render_no_action_decision,
+    )
     trace.update(target_trace)
     if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
         return finish(partial_text, "partial")
+    if required_analysis_markers:
+        marker_positions = [text.find(marker) for marker in required_analysis_markers]
+        if any(position < 0 for position in marker_positions) or marker_positions != sorted(marker_positions):
+            trace["analysis_format_error"] = "required_markers_missing_or_out_of_order"
+            return finish(partial_text, "partial")
     return finish(text, "complete", getattr(response, "id", None))
 
 
