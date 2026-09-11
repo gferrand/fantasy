@@ -155,6 +155,96 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("](https://", delivered)
         interaction.followup.send.assert_not_awaited()
 
+    def test_recap_and_watch_outlook_contracts_use_scannable_section_order(self):
+        for contract, sections in (
+            (
+                discord_bot.GAMEWEEK_RECAP_FINALIZATION,
+                (
+                    "📬 **Gameweek recap · GW{gameweek}**",
+                    "**Result**",
+                    "**Your squad**",
+                    "**League standouts**",
+                    "**Takeaways**",
+                    "**Next up**",
+                ),
+            ),
+            (
+                discord_bot.WATCH_OUTLOOK_FINALIZATION,
+                (
+                    "👀 **Watchlist outlook**",
+                    "**At a glance**",
+                    "**Player notes**",
+                    "**What to monitor**",
+                ),
+            ),
+        ):
+            with self.subTest(sections=sections):
+                positions = [contract.index(section) for section in sections]
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn("never return it as one continuous\nparagraph", contract)
+                self.assertIn("Leave one blank line\nbetween every section", contract)
+
+    async def test_recap_uses_its_structured_contract_without_hold_footer(self):
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("gameweek").get_command("recap")  # type: ignore[attr-defined]
+        interaction = type(
+            "Interaction",
+            (),
+            {
+                "user": type("User", (), {"id": 123})(),
+                "response": type("Response", (), {"defer": AsyncMock()})(),
+                "edit_original_response": AsyncMock(),
+                "followup": type("Followup", (), {"send": AsyncMock()})(),
+            },
+        )()
+        context = type("Context", (), {"payload": {"gameweek": 4}, "retrieved_at": "now"})()
+        report = "📬 **Gameweek recap · GW4**\n\n**Result**\nWon."
+
+        with (
+            patch("fantasy_advisor.discord_bot.get_gameweek_recap_context", return_value=context),
+            patch(
+                "fantasy_advisor.discord_bot.finalize_advisor_from_evidence",
+                new_callable=AsyncMock,
+                return_value=type("Result", (), {"text": report})(),
+            ) as finalizer,
+        ):
+            await command.callback(interaction)
+
+        self.assertEqual(finalizer.await_args.kwargs["command_instructions"], discord_bot.GAMEWEEK_RECAP_FINALIZATION)
+        self.assertEqual(finalizer.await_args.kwargs["required_analysis_markers"], discord_bot.GAMEWEEK_RECAP_REQUIRED_MARKERS)
+        self.assertFalse(finalizer.await_args.kwargs["render_no_action_decision"])
+
+    async def test_watch_outlook_uses_its_structured_contract_without_hold_footer(self):
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("watch").get_command("outlook")  # type: ignore[attr-defined]
+        interaction = type(
+            "Interaction",
+            (),
+            {
+                "user": type("User", (), {"id": 123})(),
+                "response": type("Response", (), {"defer": AsyncMock()})(),
+                "edit_original_response": AsyncMock(),
+                "followup": type("Followup", (), {"send": AsyncMock()})(),
+            },
+        )()
+        report = type("Report", (), {"payload": {}, "retrieved_at": "now"})()
+
+        with (
+            patch("fantasy_advisor.discord_bot.list_watchlist", return_value=[object()]),
+            patch("fantasy_advisor.discord_bot.get_watchlist_stats", return_value=report),
+            patch("fantasy_advisor.discord_bot.watchlist_outlook_context", return_value="{}"),
+            patch(
+                "fantasy_advisor.discord_bot.finalize_advisor_from_evidence",
+                new_callable=AsyncMock,
+                return_value=type("Result", (), {"text": "👀 **Watchlist outlook**\n\n**At a glance**\nCurrent."})(),
+            ) as finalizer,
+        ):
+            await command.callback(interaction)
+
+        self.assertEqual(finalizer.await_args.kwargs["command_instructions"], discord_bot.WATCH_OUTLOOK_FINALIZATION)
+        self.assertEqual(finalizer.await_args.kwargs["required_analysis_markers"], discord_bot.WATCH_OUTLOOK_REQUIRED_MARKERS)
+        self.assertFalse(finalizer.await_args.kwargs["render_no_action_decision"])
+
 
 class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_long_injury_report_is_delivered_as_complete_messages(self):
@@ -261,6 +351,17 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("recent context", self.advisor.call_args.kwargs["context_packet"])
         self.assertIsNotNone(self.advisor.call_args.kwargs["deadline"])
         self.context.assert_called_once_with(ANY, include_private_evidence=False)
+
+    async def test_plain_message_suppresses_source_link_previews(self):
+        from types import SimpleNamespace as NS
+
+        self.advisor.return_value = NS(text="[Club update](https://example.com/news)")
+        message = self.message()
+        await self.client.on_message(message)
+
+        delivered = message.channel.send.call_args.args[0]
+        self.assertIn("[Club update](<https://example.com/news>)", delivered)
+        self.assertNotIn("](https://", delivered)
 
     async def test_rendered_slash_command_does_not_enter_the_freeform_advisor(self):
         message = self.message("/injury opportunities")
