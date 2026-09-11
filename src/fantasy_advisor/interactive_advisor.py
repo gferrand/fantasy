@@ -1012,6 +1012,7 @@ async def finalize_advisor_from_evidence(
     )
     request_kwargs: dict[str, Any] = {
         "model": config.openai_web_model,
+        "service_tier": config.openai_service_tier,
         "reasoning": {"effort": config.openai_web_reasoning_effort},
         "instructions": final_advisor_instructions(
             advisor_reasoning(config), capability_contract(config), finalization,
@@ -1189,6 +1190,7 @@ async def run_advisor(
         try:
             result = await asyncio.wait_for(client.responses.create(
                 model=config.openai_web_model, reasoning={"effort": config.openai_web_reasoning_effort},
+                service_tier=config.openai_service_tier,
                 instructions=instructions, input=json.dumps(payload, ensure_ascii=False),
                 store=False, timeout=budget, **kwargs,
             ), timeout=budget)

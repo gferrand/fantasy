@@ -92,6 +92,7 @@ def route_interactive_request(
     api_key: str | None,
     model: str,
     reasoning_effort: str,
+    service_tier: str = "priority",
     context_packet: str | None = None,
     waiver_analysis: bool = False,
     has_attachment: bool = False,
@@ -119,6 +120,7 @@ def route_interactive_request(
     try:
         response = client.responses.create(
             model=model,
+            service_tier=service_tier,
             instructions=ROUTING_CAPABILITIES,
             input=json.dumps(request_context, ensure_ascii=False),
             reasoning={"effort": reasoning_effort},

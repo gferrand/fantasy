@@ -636,6 +636,7 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         first = client.responses.create.call_args_list[0]
         self.assertNotIn("private_data_plan", first.kwargs["instructions"])
         self.assertEqual(first.kwargs["tool_choice"], "required")
+        self.assertEqual(first.kwargs["service_tier"], "priority")
         self.assertNotIn("web_search_preview", [tool["type"] for tool in first.kwargs["tools"]])
         self.assertNotIn("retrieve_missing_private_fact", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
         self.assertIn("get_player_context", [tool.get("name") for tool in first.kwargs["tools"] if tool["type"] == "function"])
