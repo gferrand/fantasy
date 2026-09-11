@@ -547,10 +547,13 @@ class AutomationTests(unittest.TestCase):
 
     def test_nightly_contract_uses_verified_targets_and_precise_scoring_language(self):
         task = TaskSpec("nightly_recap", "Nightly", ROOT / "x", "daily")
+        now = datetime.now(timezone.utc)
+        next_fixture = (now + timedelta(days=4)).isoformat()
+        source_time = (now - timedelta(hours=1)).isoformat()
         evidence = "CURRENT CANONICAL DETERMINISTIC FANTASY EVIDENCE\n" + json.dumps({
             "waiver_context": {"available_candidates": [{
                 "player_id": "candidate", "name": "Verified Candidate",
-                "next_fixture": {"opponent": "Fulham", "venue": "home", "kickoff_utc": "2026-09-12T12:00:00+00:00"},
+                "next_fixture": {"opponent": "Fulham", "venue": "home", "kickoff_utc": next_fixture},
             }], "roster_swap_recommendations": [{
                 "add": {"player_id": "candidate", "name": "Verified Candidate"},
                 "drop": {"player_id": "drop", "name": "Roster Player"},
@@ -558,7 +561,7 @@ class AutomationTests(unittest.TestCase):
             }]},
             "your_roster": [], "next_roster_fixtures": [],
         })
-        source = {"title": "Club", "url": "https://club.example/news", "as_of": "2026-09-08T05:00:00+00:00", "retrieved_at": "2026-09-08T05:01:00+00:00", "as_of_precision": "timestamp", "evidence_type": "club_team_news", "covers_next_fixture": False}
+        source = {"title": "Club", "url": "https://club.example/news", "as_of": source_time, "retrieved_at": source_time, "as_of_precision": "timestamp", "evidence_type": "club_team_news", "covers_next_fixture": False}
         valid = {
             "status": "complete", "material_update": True,
             "report": "🚨 **Action needed**\nExact fixture evidence is current.",
