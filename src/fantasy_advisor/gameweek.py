@@ -7,10 +7,14 @@ from datetime import datetime, timezone
 import json
 from typing import Any, Mapping
 
+from .league import LEAGUE_ID
 from .sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
-
-
-LEAGUE_ID = "1378147559444348928"
+from .trade_proposals import (
+    INACTIVE_INJURY_STATUSES,
+    apply_fixture_adjusted_projections,
+    evaluate_lineup,
+    projection_signal_from_player,
+)
 
 
 @dataclass(frozen=True)
@@ -142,14 +146,94 @@ def _roster_players(
     return result
 
 
+def _prepare_forecasts(
+    players: list[dict[str, Any]],
+    *,
+    scoring_settings: Mapping[str, Any],
+    starting_slots: list[str],
+    fixture_schedule: object | None,
+    now: datetime,
+) -> dict[str, Any]:
+    """Attach one-fixture custom-score forecasts and a legal deterministic XI.
+
+    This deliberately consumes only the supplied Sleeper rows and persisted
+    fixture board.  A missing input is displayed as unavailable instead of
+    being converted into false precision.
+    """
+    signals = [
+        projection_signal_from_player(
+            player["player_id"],
+            {"full_name": player["name"], "team_abbr": player["club"], "fantasy_positions": player["positions"], "injury_status": player["injury_status"]},
+            player["raw_stats"],
+            scoring_settings,
+        )
+        for player in players
+    ]
+    by_id = {signal["player_id"]: signal for signal in signals}
+    scoring_available = bool(scoring_settings) and all(
+        signal["scoring_data_available"] or signal["injury_status"] in INACTIVE_INJURY_STATUSES
+        for signal in signals
+    )
+    if fixture_schedule is not None and scoring_available:
+        apply_fixture_adjusted_projections(signals, schedule=fixture_schedule, now=now, horizon=1)
+    unavailable_reason = (
+        "Forecast unavailable: the persisted fixture calendar is unavailable."
+        if fixture_schedule is None
+        else "Forecast unavailable: Kick & Run scoring or player season data is unavailable."
+    )
+    complete = fixture_schedule is not None and scoring_available
+    fragments: list[str] = []
+    for player in players:
+        signal = by_id[player["player_id"]]
+        status = signal["injury_status"]
+        if status in INACTIVE_INJURY_STATUSES:
+            points: float | None = 0.0
+        elif complete and signal.get("forecast_horizon_fixtures", 0) == 1:
+            points = round(float(signal["projected_horizon_points"]), 1)
+        else:
+            points = None
+        if points is None:
+            display = f"**{player['name']}** · forecast unavailable"
+        else:
+            display = f"**{player['name']}** · est. {points:.1f} Kick & Run pts"
+        player["forecast"] = {"points": points, "display": display, "status": "complete" if points is not None else "unavailable"}
+        fragments.append(display)
+        signal["projected_gameweek_points"] = points if points is not None else 0.0
+    if not complete or any(player["forecast"]["points"] is None for player in players):
+        return {"available": False, "note": unavailable_reason, "required_fragments": [unavailable_reason, *fragments]}
+    lineup = evaluate_lineup(signals, starting_slots, score_field="projected_gameweek_points")
+    if len(lineup.player_ids) != len(starting_slots):
+        note = "Forecast unavailable: a legal starting XI could not be formed from the roster."
+        return {"available": False, "note": note, "required_fragments": [note, *fragments]}
+    total = round(sum(float(by_id[player_id]["projected_gameweek_points"]) for player_id in lineup.player_ids), 1)
+    total_display = f"Projected XI: {total:.1f} Kick & Run pts"
+    return {
+        "available": True,
+        "projected_xi_player_ids": list(lineup.player_ids),
+        "projected_xi_total": total,
+        "total_display": total_display,
+        "required_fragments": [total_display, *fragments],
+    }
+
+
 def load_gameweek_prepare_context(
-    *, manager_id: str, client: SleeperClient | None = None, retrieved_at: str | None = None
+    *, manager_id: str, client: SleeperClient | None = None, retrieved_at: str | None = None,
+    fixture_schedule: object | None = None, now: datetime | None = None,
 ) -> GameweekContext:
     """Load the current roster and current-season signals for the next GW."""
 
     sleeper = client or SleeperClient()
     season, next_week, league, rosters, users, season_rows = _load_common(manager_id=manager_id, client=sleeper)
     roster = next(item for item in rosters if str(item.get("owner_id")) == str(manager_id))
+    players = _roster_players(roster, season_rows, include_week=False)
+    by_id = {str(row.get("player_id") or ""): row for row in season_rows}
+    for player in players:
+        row = by_id.get(player["player_id"], {})
+        player["raw_stats"] = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
+    starting_slots = [str(value) for value in (league.get("roster_positions") or []) if str(value).upper() not in {"BN", "BENCH", "IR", "TAXI"}]
+    forecast = _prepare_forecasts(players, scoring_settings=league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {}, starting_slots=starting_slots, fixture_schedule=fixture_schedule, now=now or datetime.now(timezone.utc))
+    for player in players:
+        player.pop("raw_stats", None)
     payload = {
         "source": "live Sleeper EPL",
         "report": "next gameweek preparation",
@@ -158,17 +242,18 @@ def load_gameweek_prepare_context(
         "your_team": {
             "name": _team_name(users, roster.get("owner_id")) or "Your team",
             "roster_id": roster.get("roster_id"),
-            "players": _roster_players(roster, season_rows, include_week=False),
+            "players": players,
             "current_starters": [str(value) for value in (roster.get("starters") or []) if str(value) != "0"],
             "reserve": [str(value) for value in (roster.get("reserve") or [])],
             "formation": (roster.get("metadata") or {}).get("formation") if isinstance(roster.get("metadata"), Mapping) else None,
         },
-        "starting_slots": [str(value) for value in (league.get("roster_positions") or []) if str(value).upper() not in {"BN", "BENCH", "IR", "TAXI"}],
+        "starting_slots": starting_slots,
         "scoring_settings": league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {},
         "h2h_opponent": {
             "available": False,
             "reason": "Sleeper's EPL public API does not expose a league matchup endpoint for this gameweek.",
         },
+        "forecast": forecast,
     }
     return GameweekContext("prepare", season, next_week, retrieved_at or datetime.now(timezone.utc).isoformat(timespec="seconds"), payload)
 

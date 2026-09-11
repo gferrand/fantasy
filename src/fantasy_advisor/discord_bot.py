@@ -116,9 +116,14 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
 1. Start with `🗓️ **Gameweek prep · GW{gameweek}**`, substituting the current
    gameweek from the supplied evidence.
 2. `**Readiness**` — a compact roster-health and deadline snapshot.
+   When forecast evidence is available, copy its exact `Projected XI: N.N Kick & Run pts`
+   line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
 3. `**Ideal XI**` — every legal Sleeper starting slot supplied in the evidence,
-   one player per line. Mark material OUT/GTD concerns inline.
+   one player per line. Use the supplied deterministic forecast XI exactly, and copy each
+   player's exact forecast display string on that player's line. Mark material OUT/GTD concerns inline.
 4. `**Bench / reserves**` — list every remaining roster player separately.
+   Copy each remaining player's exact forecast display string. Bench estimates are individual
+   match estimates and are excluded from the Projected XI total.
 5. `**Key calls**` — short bullets for the most important start/sit decisions,
    grounded in current fixture, role, availability, and minutes evidence.
 6. `**Opposing fantasy team**` — use only the supplied H2H evidence. When it is
@@ -1096,11 +1101,25 @@ def build_client(config: AppConfig) -> discord.Client:
         deadline = RequestDeadline.start()
         try:
             async with run_lock:
+                try:
+                    fixture_schedule = await bounded_context_load(
+                        deadline, load_persisted_fixture_schedule, config,
+                    )
+                except AutomationError:
+                    # Forecasts degrade in the report; roster preparation itself
+                    # remains useful when the local fixture cache is unavailable.
+                    fixture_schedule = None
                 context = await bounded_context_load(
-                    deadline,
-                    get_gameweek_prepare_context,
-                    manager_id=EXPECTED_MANAGER_ID,
+                    deadline, get_gameweek_prepare_context,
+                    manager_id=EXPECTED_MANAGER_ID, fixture_schedule=fixture_schedule,
                 )
+                forecast = context.payload.get("forecast", {})
+                players = context.payload.get("your_team", {}).get("players", [])
+                by_id = {str(player.get("player_id")): player for player in players if isinstance(player, dict)}
+                xi_ids = tuple(str(player_id) for player_id in forecast.get("projected_xi_player_ids", ()))
+                xi_lines = tuple(str(by_id[player_id].get("forecast", {}).get("display")) for player_id in xi_ids if player_id in by_id)
+                bench_lines = tuple(str(player.get("forecast", {}).get("display")) for player in players if isinstance(player, dict) and str(player.get("player_id")) not in xi_ids)
+                readiness_lines = (str(forecast.get("total_display")),) if forecast.get("available") else (str(forecast.get("note")),)
                 result = await finalize_advisor_from_evidence(
                     config,
                     command="/gameweek prepare",
@@ -1111,6 +1130,12 @@ def build_client(config: AppConfig) -> discord.Client:
                     mandatory_web=True,
                     deadline=deadline,
                     required_analysis_markers=GAMEWEEK_PREPARE_REQUIRED_MARKERS,
+                    required_analysis_fragments=tuple(forecast.get("required_fragments", ())),
+                    required_analysis_section_fragments={
+                        "**Readiness**": readiness_lines,
+                        "**Ideal XI**": xi_lines,
+                        "**Bench / reserves**": bench_lines,
+                    },
                     render_no_action_decision=False,
                     partial_text=(
                         "🗓️ **Gameweek preparation · current Fantasy evidence retrieved**\n"

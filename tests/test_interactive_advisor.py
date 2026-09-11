@@ -183,6 +183,32 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.text, report)
         self.assertNotIn("## Recommendation", response.text)
 
+    async def test_required_forecast_fragments_reject_missing_altered_or_duplicate_lines(self):
+        report = "**Readiness**\nProjected XI: 10.0 Kick & Run pts\n**Ideal XI**\n**Player One** · est. 4.0 Kick & Run pts"
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=[NS(type="web_search_call")], output_text=self.hold(report),
+        ))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/gameweek prepare", question="Prepare my lineup", evidence=self.packet(),
+            command_instructions="Use structured sections.", mandatory_web=True,
+            partial_text="Structured report unavailable.", client=client,
+            required_analysis_fragments=("Projected XI: 10.0 Kick & Run pts", "**Player Two** · est. 6.0 Kick & Run pts"),
+            render_no_action_decision=False,
+        )
+        self.assertEqual(response.text, "Structured report unavailable.")
+        self.assertEqual(response.trace["analysis_format_error"], "required_fragments_missing_altered_or_duplicated")
+
+        duplicated = report + "\n**Player Two** · est. 6.0 Kick & Run pts\n**Player Two** · est. 6.0 Kick & Run pts"
+        client.responses.create.return_value.output_text = self.hold(duplicated)
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/gameweek prepare", question="Prepare my lineup", evidence=self.packet(),
+            command_instructions="Use structured sections.", mandatory_web=True,
+            partial_text="Structured report unavailable.", client=client,
+            required_analysis_fragments=("**Player Two** · est. 6.0 Kick & Run pts",),
+            render_no_action_decision=False,
+        )
+        self.assertEqual(response.text, "Structured report unavailable.")
+
     async def test_pre_researched_evidence_skips_duplicate_finalizer_web_search(self):
         output = [NS(type="message", content=[])]
         create = AsyncMock(return_value=NS(id="slash-response", output=output, output_text=self.hold("Timeline-backed assessment")))

@@ -890,6 +890,8 @@ async def finalize_advisor_from_evidence(
     client: Any = None,
     request_id: str | None = None,
     required_analysis_markers: tuple[str, ...] = (),
+    required_analysis_fragments: tuple[str, ...] = (),
+    required_analysis_section_fragments: dict[str, tuple[str, ...]] | None = None,
     render_no_action_decision: bool = True,
 ) -> WebResult:
     """Synthesize an explicit slash command after its deterministic retrieval.
@@ -963,6 +965,8 @@ async def finalize_advisor_from_evidence(
                 deadline=deadline, client=owned_client,
                 request_id=request_id,
                 required_analysis_markers=required_analysis_markers,
+                required_analysis_fragments=required_analysis_fragments,
+                required_analysis_section_fragments=required_analysis_section_fragments,
                 render_no_action_decision=render_no_action_decision,
             )
 
@@ -1046,6 +1050,18 @@ async def finalize_advisor_from_evidence(
         if any(position < 0 for position in marker_positions) or marker_positions != sorted(marker_positions):
             trace["analysis_format_error"] = "required_markers_missing_or_out_of_order"
             return finish(partial_text, "partial")
+    if required_analysis_fragments and any(text.count(fragment) != 1 for fragment in required_analysis_fragments):
+        trace["analysis_format_error"] = "required_fragments_missing_altered_or_duplicated"
+        return finish(partial_text, "partial")
+    if required_analysis_section_fragments:
+        headings = list(required_analysis_section_fragments)
+        for index, heading in enumerate(headings):
+            start = text.find(heading)
+            end = text.find(headings[index + 1], start + len(heading)) if index + 1 < len(headings) else len(text)
+            section = text[start:end] if start >= 0 else ""
+            if any(section.count(fragment) != 1 for fragment in required_analysis_section_fragments[heading]):
+                trace["analysis_format_error"] = "required_forecast_lines_in_wrong_section"
+                return finish(partial_text, "partial")
     return finish(text, "complete", getattr(response, "id", None))
 
 
