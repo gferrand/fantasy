@@ -33,6 +33,7 @@ from .automation import (
     run_watchlist_web_briefing,
     run_scheduled_task,
     split_discord_message,
+    suppress_discord_link_embeds,
     update_player_catalog,
     watchlist_file,
 )
@@ -101,6 +102,47 @@ LOGGER = logging.getLogger(__name__)
 WAIVER_ANALYSIS_REQUEST = (
     "Provide the complete on-demand waiver analysis for Los Blancos using the "
     "supplied live shortlist and roster-aware swap signals."
+)
+
+GAMEWEEK_PREPARE_FINALIZATION = """
+Use only current Los Blancos roster players in start/bench guidance. Research
+material injury, availability, role, and team-news facts before presenting
+them as current.
+
+The analysis field is the complete user-facing Gameweek report. It must be
+phone-first, concise, and visibly structured; never return it as one continuous
+paragraph. Do not use a Markdown table or code block. Use this exact order:
+
+1. Start with `🗓️ **Gameweek prep · GW{gameweek}**`, substituting the current
+   gameweek from the supplied evidence.
+2. `**Readiness**` — a compact roster-health and deadline snapshot.
+3. `**Ideal XI**` — every legal Sleeper starting slot supplied in the evidence,
+   one player per line. Mark material OUT/GTD concerns inline.
+4. `**Bench / reserves**` — list every remaining roster player separately.
+5. `**Key calls**` — short bullets for the most important start/sit decisions,
+   grounded in current fixture, role, availability, and minutes evidence.
+6. `**Opposing fantasy team**` — use only the supplied H2H evidence. When it is
+   unavailable, say Sleeper EPL does not expose this gameweek's H2H matchup and
+   do not guess.
+7. `**Opponent threats**` — the real clubs and players most relevant to this XI.
+8. `**Manual checklist**` — no more than three brief actions for the Owner to
+   verify manually before lineup lock.
+
+Use short lines and bullets under the section labels. Keep source links inline
+with the claim they support, and do not repeat the full lineup in prose. This
+is a lineup report rather than an acquisition recommendation, so return
+actionable=false with no incoming targets.
+""".strip()
+
+GAMEWEEK_PREPARE_REQUIRED_MARKERS = (
+    "🗓️ **Gameweek prep · GW",
+    "**Readiness**",
+    "**Ideal XI**",
+    "**Bench / reserves**",
+    "**Key calls**",
+    "**Opposing fantasy team**",
+    "**Opponent threats**",
+    "**Manual checklist**",
 )
 
 
@@ -172,6 +214,7 @@ def build_client(config: AppConfig) -> discord.Client:
     async def edit_interaction_with_chunks(interaction: discord.Interaction, text: str) -> None:
         """Complete an interaction without silently truncating a long watchlist report."""
 
+        text = suppress_discord_link_embeds(text)
         chunks = split_discord_message(text, limit=1900)
         if len(chunks) > 5:
             chunks = chunks[:4] + [response_limit_notice()]
@@ -185,6 +228,7 @@ def build_client(config: AppConfig) -> discord.Client:
     async def edit_injury_interaction(interaction: discord.Interaction, text: str) -> None:
         """Deliver the complete injury report as DM messages without attachments."""
 
+        text = suppress_discord_link_embeds(text)
         chunks = split_discord_message(text, limit=1900)
         await interaction.edit_original_response(
             content=chunks[0],
@@ -1000,14 +1044,13 @@ def build_client(config: AppConfig) -> discord.Client:
                     ),
                     mandatory_web=True,
                     deadline=deadline,
+                    required_analysis_markers=GAMEWEEK_PREPARE_REQUIRED_MARKERS,
+                    render_no_action_decision=False,
                     partial_text=(
                         "🗓️ **Gameweek preparation · current Fantasy evidence retrieved**\n"
                         "Current roster and fixture facts are available, but public team news could not be verified. Treat lineup advice as provisional; do not rely on unverified injury or role assumptions."
                     ),
-                    command_instructions=(
-                        "Use only current Los Blancos roster players in start/bench guidance. "
-                        "Research material injury, availability, role, and team-news facts before presenting them as current."
-                    ),
+                    command_instructions=GAMEWEEK_PREPARE_FINALIZATION,
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:

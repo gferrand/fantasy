@@ -96,6 +96,66 @@ class DiscordBotTests(unittest.TestCase):
         self.assert_private_group("guardian", ["done", "status"])
 
 
+class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
+    def test_prepare_contract_restores_the_complete_section_order(self):
+        contract = discord_bot.GAMEWEEK_PREPARE_FINALIZATION
+        sections = (
+            "🗓️ **Gameweek prep · GW{gameweek}**",
+            "**Readiness**",
+            "**Ideal XI**",
+            "**Bench / reserves**",
+            "**Key calls**",
+            "**Opposing fantasy team**",
+            "**Opponent threats**",
+            "**Manual checklist**",
+        )
+
+        positions = [contract.index(section) for section in sections]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn("never return it as one continuous\nparagraph", contract)
+        self.assertIn("do not repeat the full lineup in prose", contract)
+
+    async def test_prepare_uses_the_contract_and_suppresses_link_previews(self):
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("gameweek").get_command("prepare")  # type: ignore[attr-defined]
+        interaction = type(
+            "Interaction",
+            (),
+            {
+                "user": type("User", (), {"id": 123})(),
+                "response": type("Response", (), {"defer": AsyncMock()})(),
+                "edit_original_response": AsyncMock(),
+                "followup": type("Followup", (), {"send": AsyncMock()})(),
+            },
+        )()
+        context = type("Context", (), {"payload": {"gameweek": 4}, "retrieved_at": "now"})()
+        report = "🗓️ **Gameweek prep · GW4**\n\n**Readiness**\n[Club update](https://example.com/report)"
+
+        with (
+            patch("fantasy_advisor.discord_bot.get_gameweek_prepare_context", return_value=context),
+            patch(
+                "fantasy_advisor.discord_bot.finalize_advisor_from_evidence",
+                new_callable=AsyncMock,
+                return_value=type("Result", (), {"text": report})(),
+            ) as finalizer,
+        ):
+            await command.callback(interaction)
+
+        self.assertEqual(
+            finalizer.await_args.kwargs["command_instructions"],
+            discord_bot.GAMEWEEK_PREPARE_FINALIZATION,
+        )
+        self.assertEqual(
+            finalizer.await_args.kwargs["required_analysis_markers"],
+            discord_bot.GAMEWEEK_PREPARE_REQUIRED_MARKERS,
+        )
+        self.assertFalse(finalizer.await_args.kwargs["render_no_action_decision"])
+        delivered = interaction.edit_original_response.await_args.kwargs["content"]
+        self.assertIn("[Club update](<https://example.com/report>)", delivered)
+        self.assertNotIn("](https://", delivered)
+        interaction.followup.send.assert_not_awaited()
+
+
 class DiscordInjuryDeliveryTests(unittest.IsolatedAsyncioTestCase):
     async def test_long_injury_report_is_delivered_as_complete_messages(self):
         client = build_client(_test_config())
