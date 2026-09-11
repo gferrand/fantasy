@@ -37,6 +37,7 @@ class AdvisorRouterTests(unittest.TestCase):
         self.assertEqual(decision.route, AdvisorRoute.CODEX)
         self.assertEqual(decision.league_data_scope, LeagueDataScope.LEAGUE_ROSTERS)
         self.assertIn("other managers' rosters", call["instructions"])
+        self.assertEqual(call["service_tier"], "priority")
         self.assertNotIn("trade(?:", call["instructions"])
         self.assertEqual(json.loads(call["input"])["user_request"], "Could I turn Ajayi into a slightly better midfielder?")
 

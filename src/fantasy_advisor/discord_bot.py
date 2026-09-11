@@ -477,6 +477,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 api_key=config.openai_api_key or "",
                 audio_model=config.openai_audio_transcription_model,
                 document_model=config.openai_document_model, deadline=deadline,
+                service_tier=config.openai_service_tier,
             )
         metadata = {"attachment": {"filename": normalized.filename, "kind": normalized.kind, "content_type": normalized.content_type}}
         return normalized.kind, metadata, normalized.text
