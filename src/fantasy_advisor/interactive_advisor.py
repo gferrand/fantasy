@@ -7,6 +7,7 @@ from dataclasses import asdict
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import json
+import re
 import logging
 import os
 import re
@@ -892,6 +893,8 @@ async def finalize_advisor_from_evidence(
     required_analysis_markers: tuple[str, ...] = (),
     required_analysis_fragments: tuple[str, ...] = (),
     required_analysis_section_fragments: dict[str, tuple[str, ...]] | None = None,
+    required_ordered_section_fragments: dict[str, tuple[str, ...]] | None = None,
+    required_exact_line_fragments: tuple[str, ...] = (),
     render_no_action_decision: bool = True,
 ) -> WebResult:
     """Synthesize an explicit slash command after its deterministic retrieval.
@@ -967,6 +970,8 @@ async def finalize_advisor_from_evidence(
                 required_analysis_markers=required_analysis_markers,
                 required_analysis_fragments=required_analysis_fragments,
                 required_analysis_section_fragments=required_analysis_section_fragments,
+                required_ordered_section_fragments=required_ordered_section_fragments,
+                required_exact_line_fragments=required_exact_line_fragments,
                 render_no_action_decision=render_no_action_decision,
             )
 
@@ -1062,6 +1067,21 @@ async def finalize_advisor_from_evidence(
             if any(section.count(fragment) != 1 for fragment in required_analysis_section_fragments[heading]):
                 trace["analysis_format_error"] = "required_forecast_lines_in_wrong_section"
                 return finish(partial_text, "partial")
+    if required_ordered_section_fragments:
+        for heading, fragments in required_ordered_section_fragments.items():
+            start = text.find(heading)
+            if start < 0:
+                trace["analysis_format_error"] = "required_forecast_section_missing"
+                return finish(partial_text, "partial")
+            positions = [text.find(fragment, start) for fragment in fragments]
+            if any(position < 0 for position in positions) or positions != sorted(positions):
+                trace["analysis_format_error"] = "required_forecast_lines_out_of_order"
+                return finish(partial_text, "partial")
+    for fragment in required_exact_line_fragments:
+        match = re.search(rf"(?m)^.*{re.escape(fragment)}(?P<tail>[^\n]*)$", text)
+        if match is None or match.group("tail").strip():
+            trace["analysis_format_error"] = "required_forecast_line_altered"
+            return finish(partial_text, "partial")
     return finish(text, "complete", getattr(response, "id", None))
 
 
