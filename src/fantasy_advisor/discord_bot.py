@@ -145,6 +145,71 @@ GAMEWEEK_PREPARE_REQUIRED_MARKERS = (
     "**Manual checklist**",
 )
 
+GAMEWEEK_RECAP_FINALIZATION = """
+Summarize only the supplied verified completed-gameweek data. Public research is
+optional and only needed for a material football explanation. Do not load
+prepare context or invent a current H2H matchup.
+
+The analysis field is the complete user-facing Gameweek recap. It must be
+phone-first, concise, and visibly structured; never return it as one continuous
+paragraph. Do not use a Markdown table or code block. Leave one blank line
+between every section. Use this exact order:
+
+1. Start with `📬 **Gameweek recap · GW{gameweek}**`, substituting the completed
+   gameweek from the supplied evidence.
+2. `**Result**` — the concise team and matchup outcome available in the evidence.
+3. `**Your squad**` — the most useful player-level takeaways, one short bullet
+   per line.
+4. `**League standouts**` — only the supplied league leaders or notable results.
+5. `**Takeaways**` — up to three brief lessons grounded in the completed week.
+6. `**Next up**` — only a concise, non-actionable note about the next fixture or
+   what remains unknown.
+
+Use short lines and bullets. Keep source links inline with the claim they
+support. This is a recap rather than an acquisition recommendation, so return
+actionable=false with no incoming targets.
+""".strip()
+
+GAMEWEEK_RECAP_REQUIRED_MARKERS = (
+    "📬 **Gameweek recap · GW",
+    "**Result**",
+    "**Your squad**",
+    "**League standouts**",
+    "**Takeaways**",
+    "**Next up**",
+)
+
+WATCH_OUTLOOK_FINALIZATION = """
+Discuss only the canonical watched players in the supplied evidence. Research
+current role, availability, injury, and minutes outlook. If
+watchlist_omitted_count is positive, explicitly disclose it. Do not recommend a
+player who is not currently watched.
+
+The analysis field is the complete user-facing Watchlist outlook. It must be
+phone-first, concise, and visibly structured; never return it as one continuous
+paragraph. Do not use a Markdown table or code block. Leave one blank line
+between every section. Use this exact order:
+
+1. Start with `👀 **Watchlist outlook**`.
+2. `**At a glance**` — a compact current-status summary, including any omitted
+   player count.
+3. `**Player notes**` — one short bullet per covered watched player, with a
+   current role, availability, or minutes update when verified.
+4. `**What to monitor**` — concise uncertainty, fixture, or team-news checks;
+   do not make a transaction recommendation.
+
+Use short lines and bullets. Keep source links inline with the claim they
+support. This is an observation report rather than an acquisition
+recommendation, so return actionable=false with no incoming targets.
+""".strip()
+
+WATCH_OUTLOOK_REQUIRED_MARKERS = (
+    "👀 **Watchlist outlook**",
+    "**At a glance**",
+    "**Player notes**",
+    "**What to monitor**",
+)
+
 
 def build_client(config: AppConfig) -> discord.Client:
     """Build a private-DM client plus user-install slash commands.
@@ -172,7 +237,7 @@ def build_client(config: AppConfig) -> discord.Client:
 
     async def send_chunks(channel: discord.abc.Messageable, text: str) -> None:
         allowed_mentions = discord.AllowedMentions.none()
-        for chunk in split_discord_message(text):
+        for chunk in split_discord_message(suppress_discord_link_embeds(text)):
             await channel.send(chunk, allowed_mentions=allowed_mentions)
 
     async def set_online_presence() -> None:
@@ -740,9 +805,10 @@ def build_client(config: AppConfig) -> discord.Client:
                         + (f"\n\n*{omitted} watchlist player(s) were not covered because this command is limited to 12 per run.*" if omitted else "")
                     ),
                     command_instructions=(
-                        "Discuss only the canonical watched players in the supplied evidence. Research current role, availability, injury, and minutes outlook. "
-                        "If watchlist_omitted_count is positive, explicitly disclose it. Do not recommend a player who is not currently watched."
+                        WATCH_OUTLOOK_FINALIZATION
                     ),
+                    required_analysis_markers=WATCH_OUTLOOK_REQUIRED_MARKERS,
+                    render_no_action_decision=False,
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError, WatchlistError) as exc:
@@ -1091,9 +1157,10 @@ def build_client(config: AppConfig) -> discord.Client:
                         "I couldn’t complete the recap synthesis right now. Please try again."
                     ),
                     command_instructions=(
-                        "Summarize only the supplied verified completed-gameweek data. Public research is optional and only needed for a material football explanation. "
-                        "Do not load prepare context or invent a current H2H matchup."
+                        GAMEWEEK_RECAP_FINALIZATION
                     ),
+                    required_analysis_markers=GAMEWEEK_RECAP_REQUIRED_MARKERS,
+                    render_no_action_decision=False,
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:
