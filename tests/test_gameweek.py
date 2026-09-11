@@ -99,13 +99,17 @@ class GameweekContextTests(unittest.TestCase):
         self.assertTrue(forecast["available"])
         self.assertGreater(by_name["Defender"]["forecast"]["points"], 0)
         self.assertGreater(by_name["Forward"]["forecast"]["points"], 0)
-        self.assertEqual(by_name["Out Player"]["forecast"]["points"], 0.0)
+        self.assertGreater(by_name["Out Player"]["forecast"]["points"], 0)
+        self.assertTrue(by_name["Out Player"]["forecast"]["display"].endswith("OUT"))
         self.assertIn("Projected XI:", forecast["total_display"])
         self.assertEqual(len(forecast["projected_xi_player_ids"]), 2)
         by_id = {player["player_id"]: player for player in context.payload["your_team"]["players"]}
         self.assertEqual(forecast["projected_xi_total"], round(sum(
             by_id[player_id]["forecast"]["points"] for player_id in forecast["projected_xi_player_ids"]
         ), 1))
+        self.assertEqual(forecast["projected_xi_lines"][0].split(" — ", 1)[0], "**D")
+        self.assertEqual(forecast["projected_xi_lines"][1].split(" — ", 1)[0], "**F")
+        self.assertNotIn("3", forecast["projected_xi_player_ids"])
 
     def test_prepare_degrades_when_fixture_calendar_is_missing(self):
         context = load_gameweek_prepare_context(manager_id=self.manager_id, client=_SleeperClient(self._responses()))

@@ -123,7 +123,7 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
    line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
 3. `**Ideal XI**` — every legal Sleeper starting slot supplied in the evidence,
    one player per line. Use the supplied deterministic forecast XI exactly, and copy each
-   player's exact forecast display string on that player's line. Preserve the supplied GK-to-forward
+   player's exact supplied locked forecast line on that player's line. Preserve the supplied GK-to-forward
    order. A forecast display is a locked complete line: do not append a source, role note, status,
    punctuation, or any other text to it. Put sourced availability caveats only in the later key-calls section.
 4. `**Bench / reserves**` — list every remaining roster player separately.
@@ -1148,7 +1148,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 players = context.payload.get("your_team", {}).get("players", [])
                 by_id = {str(player.get("player_id")): player for player in players if isinstance(player, dict)}
                 xi_ids = tuple(str(player_id) for player_id in forecast.get("projected_xi_player_ids", ()))
-                xi_lines = tuple(str(by_id[player_id].get("forecast", {}).get("display")) for player_id in xi_ids if player_id in by_id)
+                xi_lines = tuple(str(line) for line in forecast.get("projected_xi_lines", ()) if isinstance(line, str))
                 bench_lines = tuple(str(player.get("forecast", {}).get("display")) for player in players if isinstance(player, dict) and str(player.get("player_id")) not in xi_ids)
                 readiness_lines = (str(forecast.get("total_display")),) if forecast.get("available") else (str(forecast.get("note")),)
                 result = await finalize_advisor_from_evidence(

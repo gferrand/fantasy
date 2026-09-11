@@ -317,6 +317,7 @@ class TradeProposalTests(unittest.TestCase):
         )
         self.assertEqual(lineup.score, 70.0)
         self.assertCountEqual(lineup.player_ids, ["f", "m"])
+        self.assertEqual(dict(lineup.slot_assignments), {"f": "F", "m": "M"})
 
     def test_trade_web_prompt_and_runner_only_receive_candidate_context(self):
         context, _client = self._context()

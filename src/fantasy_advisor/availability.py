@@ -38,7 +38,13 @@ def validated_availability_packet(packet: object) -> dict[str, dict[str, Any]]:
 
 
 def apply_availability_adjustments(signals: list[dict[str, Any]], packet: object) -> dict[str, dict[str, Any]]:
-    """Apply verified status to minutes only; production rate is untouched."""
+    """Attach verified availability without changing an if-active forecast.
+
+    The Gameweek number answers the useful counterfactual, "what could this
+    player score if he plays?" Availability controls the legal XI and the
+    visible status marker instead.  This keeps an OUT player from silently
+    looking like a zero-point player while still keeping him out of the total.
+    """
     findings = validated_availability_packet(packet)
     for signal in signals:
         finding = findings.get(str(signal.get("player_id")))
@@ -46,13 +52,11 @@ def apply_availability_adjustments(signals: list[dict[str, Any]], packet: object
             continue
         status = finding["status"]
         signal["availability_research"] = finding
-        if status in INACTIVE:
-            signal["injury_status"] = "SUSP" if status == "SUSPENDED" else "OUT"
-            signal["forecast_expected_minutes_input"] = 0.0
-        else:
-            signal["forecast_expected_minutes_input"] = round(
-                float(signal.get("forecast_expected_minutes_input") or 0.0) * finding["playing_probability"], 1
-            )
-            if status == "GTD":
-                signal["injury_status"] = "GTD"
+        # A roster-level OUT/IR/suspension flag is a stronger reason not to
+        # start a player than a conflicting generic web availability result.
+        # Keep the visible status truthful until the roster feed changes.
+        if str(signal.get("injury_status") or "").upper() in INACTIVE and status not in INACTIVE:
+            signal["availability_conflict"] = True
+            continue
+        signal["injury_status"] = "SUSP" if status == "SUSPENDED" else status
     return findings

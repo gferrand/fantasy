@@ -48,6 +48,10 @@ class LineupEvaluation:
 
     score: float
     player_ids: tuple[str, ...]
+    # The player IDs above preserve the historical caller contract.  Slot
+    # assignments additionally let presentation surfaces state the actual
+    # Sleeper position each selected player is filling.
+    slot_assignments: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -489,7 +493,7 @@ def evaluate_lineup(
     slot_list = tuple(str(slot).upper() for slot in slots)
     if len(slot_list) > 20:  # Defensive bound: the state space is 2**slots.
         raise SleeperDataError("Sleeper league has too many starting slots to evaluate safely")
-    states: dict[int, tuple[float, tuple[str, ...]]] = {0: (0.0, ())}
+    states: dict[int, tuple[float, tuple[tuple[str, int], ...]]] = {0: (0.0, ())}
     for raw_player in players:
         player_id = str(raw_player.get("player_id") or "").strip()
         if not player_id:
@@ -502,7 +506,7 @@ def evaluate_lineup(
         if not eligible_slots:
             continue
         updated = dict(states)
-        for mask, (score, assigned_ids) in states.items():
+        for mask, (score, assigned) in states.items():
             for slot_index in eligible_slots:
                 bit = 1 << slot_index
                 if mask & bit:
@@ -514,7 +518,7 @@ def evaluate_lineup(
                         points = float(raw_player.get(score_field) or 0.0)
                     except (TypeError, ValueError):
                         points = 0.0
-                candidate = (round(score + points, 2), assigned_ids + (player_id,))
+                candidate = (round(score + points, 2), assigned + ((player_id, slot_index),))
                 previous = updated.get(mask | bit)
                 if previous is None or candidate[0] > previous[0]:
                     updated[mask | bit] = candidate
@@ -522,7 +526,12 @@ def evaluate_lineup(
     complete = states.get((1 << len(slot_list)) - 1)
     if complete is None:
         raise SleeperDataError("A legal current lineup could not be formed from a Sleeper roster")
-    return LineupEvaluation(score=round(complete[0], 2), player_ids=complete[1])
+    assignments = tuple((player_id, slot_list[slot_index]) for player_id, slot_index in complete[1])
+    return LineupEvaluation(
+        score=round(complete[0], 2),
+        player_ids=tuple(player_id for player_id, _slot_index in complete[1]),
+        slot_assignments=assignments,
+    )
 
 
 def _remaining_faab(roster: Mapping[str, Any], league: Mapping[str, Any]) -> int | None:
