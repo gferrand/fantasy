@@ -26,6 +26,7 @@ from .automation import (
     persist_discord_ready_state,
     persist_advisor_context_event,
     load_registry,
+    run_gameweek_availability_briefing,
     run_gameweek_web_briefing,
     run_injury_web_briefing,
     run_rotation_web_briefing,
@@ -91,6 +92,8 @@ from .intelligence_capabilities import (
 from .lineup_alerts import load_fixture_schedule, load_persisted_fixture_schedule
 from .injury_opportunities import injury_timeline_research_context, render_injury_opportunities
 from .health import maintain_ready_heartbeat, write_health_state
+from .forecast_history import record_forecast
+from .gameweek import sync_completed_forecast_actuals
 from .watchlist_recommendations import (
     load_current_watchlist_recommendation_context,
     watchlist_outlook_context,
@@ -1113,6 +1116,32 @@ def build_client(config: AppConfig) -> discord.Client:
                     deadline, get_gameweek_prepare_context,
                     manager_id=EXPECTED_MANAGER_ID, fixture_schedule=fixture_schedule,
                 )
+                # A separate, source-required research pass can adjust minutes
+                # only.  The forecast remains Sleeper-only if it is unavailable.
+                try:
+                    packet = await bounded_context_load(
+                        deadline, run_gameweek_availability_briefing, config,
+                        roster=context.payload.get("your_team", {}).get("players", []),
+                    )
+                    context = await bounded_context_load(
+                        deadline, get_gameweek_prepare_context,
+                        manager_id=EXPECTED_MANAGER_ID,
+                        fixture_schedule=fixture_schedule,
+                        availability_packet=packet,
+                    )
+                except AutomationError:
+                    LOGGER.warning("Availability research unavailable; using Sleeper-only forecast", exc_info=True)
+                # This is private runtime state, not prompt history: it makes
+                # every shown pre-lock estimate auditable for later backtests.
+                await asyncio.to_thread(
+                    record_forecast, config.repo_root, context.payload, retrieved_at=context.retrieved_at,
+                )
+                # Best effort only: the current forecast must still be useful
+                # if an older archived Sleeper week is temporarily unavailable.
+                try:
+                    await asyncio.to_thread(sync_completed_forecast_actuals, config.repo_root)
+                except SleeperDataError:
+                    LOGGER.warning("Could not attach completed forecast actuals", exc_info=True)
                 forecast = context.payload.get("forecast", {})
                 players = context.payload.get("your_team", {}).get("players", [])
                 by_id = {str(player.get("player_id")): player for player in players if isinstance(player, dict)}

@@ -1524,6 +1524,39 @@ def run_gameweek_web_briefing(
     )
 
 
+def run_gameweek_availability_briefing(config: AppConfig, *, roster: list[dict[str, object]]) -> dict[str, object]:
+    """Research a small, source-required availability packet for a forecast.
+
+    This is deliberately separate from Gameweek prose: the only permitted
+    numerical output is playing probability, which the deterministic model
+    applies to expected minutes.  A malformed result is treated as no data.
+    """
+    if not config.openai_api_key:
+        raise AutomationError("OPENAI_API_KEY is required for availability research")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover
+        raise AutomationError("The OpenAI Python SDK is not installed") from exc
+    compact_roster = [
+        {key: player.get(key) for key in ("player_id", "name", "club", "positions", "injury_status")}
+        for player in roster if isinstance(player, dict)
+    ]
+    instructions = """Research only current Premier League player availability from official club, league, or manager sources; reputable current reporting is a fallback. Return strict JSON only, with exactly {\"players\":[...]}. Each entry must contain player_id, status (AVAILABLE, GTD, DOUBTFUL, OUT, SUSPENDED, or ROLE_UNCERTAIN), playing_probability from 0 to 1, and sources (one to three direct https URLs). Do not estimate fantasy points, xG, xA, performance, or opponent strength. Omit a player when there is no current, source-backed availability finding. Do not use stale sources."""
+    try:
+        response = OpenAI(api_key=config.openai_api_key, timeout=config.codex_interactive_timeout_seconds).responses.create(
+            model=config.openai_web_model,
+            instructions=instructions,
+            input=json.dumps({"roster": compact_roster}, separators=(",", ":")),
+            tools=[{"type": "web_search_preview", "search_context_size": "medium"}],
+            reasoning={"effort": config.openai_web_reasoning_effort},
+            store=False,
+        )
+        parsed = json.loads(str(getattr(response, "output_text", "") or ""))
+    except Exception as exc:
+        raise AutomationError("Current availability research could not complete") from exc
+    return parsed if isinstance(parsed, dict) else {"players": []}
+
+
 def trade_web_briefing_prompt(*, live_context: str) -> str:
     """Build the expert-research prompt for fairness-checked trade packages."""
 

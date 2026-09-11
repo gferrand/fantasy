@@ -8,6 +8,9 @@ import json
 from typing import Any, Mapping
 
 from .league import LEAGUE_ID
+from .forecast_model import MODEL_VERSION, historical_inputs
+from .forecast_history import pending_actual_weeks, record_actuals
+from .availability import apply_availability_adjustments
 from .sleeper import API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 from .trade_proposals import (
     INACTIVE_INJURY_STATUSES,
@@ -153,6 +156,10 @@ def _prepare_forecasts(
     starting_slots: list[str],
     fixture_schedule: object | None,
     now: datetime,
+    current_rows: list[Mapping[str, Any]],
+    prior_rows: list[Mapping[str, Any]],
+    recent_weekly_rows: list[list[Mapping[str, Any]]],
+    availability_packet: object | None = None,
 ) -> dict[str, Any]:
     """Attach one-fixture custom-score forecasts and a legal deterministic XI.
 
@@ -170,6 +177,14 @@ def _prepare_forecasts(
         for player in players
     ]
     by_id = {signal["player_id"]: signal for signal in signals}
+    historical_inputs(
+        signals,
+        current_rows=current_rows,
+        prior_rows=prior_rows,
+        recent_weekly_rows=recent_weekly_rows,
+        scoring_settings=scoring_settings,
+    )
+    verified_availability = apply_availability_adjustments(signals, availability_packet)
     scoring_available = bool(scoring_settings) and all(
         signal["scoring_data_available"] or signal["injury_status"] in INACTIVE_INJURY_STATUSES
         for signal in signals
@@ -196,6 +211,8 @@ def _prepare_forecasts(
             display = f"**{player['name']}** · forecast unavailable"
         else:
             display = f"**{player['name']}** · est. {points:.1f} Kick & Run pts"
+            if status == "GTD":
+                display += " · GTD"
         player["forecast"] = {"points": points, "display": display, "status": "complete" if points is not None else "unavailable"}
         fragments.append(display)
         signal["projected_gameweek_points"] = points if points is not None else 0.0
@@ -209,6 +226,8 @@ def _prepare_forecasts(
     total_display = f"Projected XI: {total:.1f} Kick & Run pts"
     return {
         "available": True,
+        "model_version": MODEL_VERSION,
+        "availability_packet": verified_availability,
         "projected_xi_player_ids": _ordered_forecast_xi_ids(lineup.player_ids, by_id),
         "projected_xi_total": total,
         "total_display": total_display,
@@ -238,6 +257,7 @@ def _ordered_forecast_xi_ids(
 def load_gameweek_prepare_context(
     *, manager_id: str, client: SleeperClient | None = None, retrieved_at: str | None = None,
     fixture_schedule: object | None = None, now: datetime | None = None,
+    availability_packet: object | None = None,
 ) -> GameweekContext:
     """Load the current roster and current-season signals for the next GW."""
 
@@ -245,12 +265,43 @@ def load_gameweek_prepare_context(
     season, next_week, league, rosters, users, season_rows = _load_common(manager_id=manager_id, client=sleeper)
     roster = next(item for item in rosters if str(item.get("owner_id")) == str(manager_id))
     players = _roster_players(roster, season_rows, include_week=False)
+    # The previous regular season is optional: a promoted player or a temporary
+    # Sleeper archive outage still has a useful current-season/peer forecast.
+    prior_rows: list[Mapping[str, Any]] = []
+    try:
+        prior_rows = _validate_array(
+            sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{int(season) - 1}?season_type=regular"),
+            "previous season stats",
+        )
+    except (SleeperDataError, KeyError):
+        prior_rows = []
+    # Recent completed weeks tune expected minutes only.  This bounded window
+    # avoids turning a prepare request into a whole-season API crawl.
+    recent_weekly_rows: list[list[Mapping[str, Any]]] = []
+    for week in range(max(1, next_week - 3), next_week):
+        try:
+            recent_weekly_rows.append(_validate_array(
+                sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{season}/{week}?season_type=regular"),
+                "recent gameweek stats",
+            ))
+        except (SleeperDataError, KeyError):
+            continue
     by_id = {str(row.get("player_id") or ""): row for row in season_rows}
     for player in players:
         row = by_id.get(player["player_id"], {})
         player["raw_stats"] = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
     starting_slots = [str(value) for value in (league.get("roster_positions") or []) if str(value).upper() not in {"BN", "BENCH", "IR", "TAXI"}]
-    forecast = _prepare_forecasts(players, scoring_settings=league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {}, starting_slots=starting_slots, fixture_schedule=fixture_schedule, now=now or datetime.now(timezone.utc))
+    forecast = _prepare_forecasts(
+        players,
+        scoring_settings=league.get("scoring_settings") if isinstance(league.get("scoring_settings"), Mapping) else {},
+        starting_slots=starting_slots,
+        fixture_schedule=fixture_schedule,
+        now=now or datetime.now(timezone.utc),
+        current_rows=season_rows,
+        prior_rows=prior_rows,
+        recent_weekly_rows=recent_weekly_rows,
+        availability_packet=availability_packet,
+    )
     for player in players:
         player.pop("raw_stats", None)
     payload = {
@@ -273,8 +324,55 @@ def load_gameweek_prepare_context(
             "reason": "Sleeper's EPL public API does not expose a league matchup endpoint for this gameweek.",
         },
         "forecast": forecast,
+        "forecast_data": {
+            "model_version": MODEL_VERSION,
+            "prior_season": str(int(season) - 1),
+            "prior_season_available": bool(prior_rows),
+            "recent_completed_gameweeks": len(recent_weekly_rows),
+            "availability_research": (
+                forecast.get("availability_packet")
+                or "No verified availability packet was supplied; Sleeper injury statuses only."
+            ),
+        },
     }
     return GameweekContext("prepare", season, next_week, retrieved_at or datetime.now(timezone.utc).isoformat(timespec="seconds"), payload)
+
+
+def sync_completed_forecast_actuals(repo_root: object, *, client: SleeperClient | None = None) -> int:
+    """Join completed Sleeper weeks to prior forecast records.
+
+    Only the current league scoring settings are used to translate raw rows,
+    matching the same explicitly versioned scoring basis used at prediction
+    time.  This runs after a prepare request and is bounded by the history
+    store's small pending-week limit.
+    """
+    from pathlib import Path
+
+    sleeper = client or SleeperClient()
+    state = sleeper.get_json(f"{API_BASE}/state/clubsoccer:epl")
+    season, display_week = _season_and_week(state)
+    league = sleeper.get_json(f"{API_BASE}/league/{LEAGUE_ID}")
+    scoring = league.get("scoring_settings") if isinstance(league, Mapping) and isinstance(league.get("scoring_settings"), Mapping) else {}
+    completed = 0
+    for historical_season, week in pending_actual_weeks(Path(repo_root), before_season=season, before_gameweek=display_week):
+        try:
+            rows = _validate_array(
+                sleeper.get_json(f"{STATS_BASE}/clubsoccer:epl/{historical_season}/{week}?season_type=regular"),
+                "completed forecast gameweek stats",
+            )
+        except SleeperDataError:
+            continue
+        actuals: dict[str, float] = {}
+        for row in rows:
+            player = row.get("player") if isinstance(row.get("player"), Mapping) else {}
+            stats = row.get("stats") if isinstance(row.get("stats"), Mapping) else {}
+            signal = projection_signal_from_player(str(row.get("player_id") or ""), player, stats, scoring)
+            actuals[str(signal["player_id"])] = float(signal["current_custom_points"])
+        record_actuals(Path(repo_root), season=historical_season, gameweek=week, actuals={
+            "scoring_basis": "current Kick & Run settings", "player_points": actuals,
+        })
+        completed += 1
+    return completed
 
 
 def load_gameweek_recap_context(
