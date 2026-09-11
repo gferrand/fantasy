@@ -177,6 +177,7 @@ def _prepare_forecasts(
         for player in players
     ]
     by_id = {signal["player_id"]: signal for signal in signals}
+    player_by_id = {player["player_id"]: player for player in players}
     historical_inputs(
         signals,
         current_rows=current_rows,
@@ -185,10 +186,7 @@ def _prepare_forecasts(
         scoring_settings=scoring_settings,
     )
     verified_availability = apply_availability_adjustments(signals, availability_packet)
-    scoring_available = bool(scoring_settings) and all(
-        signal["scoring_data_available"] or signal["injury_status"] in INACTIVE_INJURY_STATUSES
-        for signal in signals
-    )
+    scoring_available = bool(scoring_settings) and all(signal["scoring_data_available"] for signal in signals)
     if fixture_schedule is not None and scoring_available:
         apply_fixture_adjusted_projections(signals, schedule=fixture_schedule, now=now, horizon=1)
     unavailable_reason = (
@@ -201,9 +199,7 @@ def _prepare_forecasts(
     for player in players:
         signal = by_id[player["player_id"]]
         status = signal["injury_status"]
-        if status in INACTIVE_INJURY_STATUSES:
-            points: float | None = 0.0
-        elif complete and signal.get("forecast_horizon_fixtures", 0) == 1:
+        if complete and signal.get("forecast_horizon_fixtures", 0) == 1:
             points = round(float(signal["projected_horizon_points"]), 1)
         else:
             points = None
@@ -211,24 +207,37 @@ def _prepare_forecasts(
             display = f"**{player['name']}** · forecast unavailable"
         else:
             display = f"**{player['name']}** · est. {points:.1f} Kick & Run pts"
-            if status == "GTD":
-                display += " · GTD"
+        marker = _availability_marker(status)
+        if marker:
+            display += f" · {marker}"
         player["forecast"] = {"points": points, "display": display, "status": "complete" if points is not None else "unavailable"}
         fragments.append(display)
         signal["projected_gameweek_points"] = points if points is not None else 0.0
+        # Availability must not change the counterfactual estimate, but an
+        # unavailable player cannot be selected into a legal projected XI.
+        signal["projected_lineup_selection_points"] = (
+            0.0 if status in INACTIVE_INJURY_STATUSES else signal["projected_gameweek_points"]
+        )
     if not complete or any(player["forecast"]["points"] is None for player in players):
         return {"available": False, "note": unavailable_reason, "required_fragments": [unavailable_reason, *fragments]}
-    lineup = evaluate_lineup(signals, starting_slots, score_field="projected_gameweek_points")
+    lineup = evaluate_lineup(signals, starting_slots, score_field="projected_lineup_selection_points")
     if len(lineup.player_ids) != len(starting_slots):
         note = "Forecast unavailable: a legal starting XI could not be formed from the roster."
         return {"available": False, "note": note, "required_fragments": [note, *fragments]}
     total = round(sum(float(by_id[player_id]["projected_gameweek_points"]) for player_id in lineup.player_ids), 1)
     total_display = f"Projected XI: {total:.1f} Kick & Run pts"
+    ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, by_id)
+    xi_lines = [
+        _forecast_xi_display(slot, by_id[player_id]["name"], player_by_id[player_id]["forecast"]["display"])
+        for player_id, slot in ordered_assignments
+    ]
     return {
         "available": True,
         "model_version": MODEL_VERSION,
         "availability_packet": verified_availability,
-        "projected_xi_player_ids": _ordered_forecast_xi_ids(lineup.player_ids, by_id),
+        "projected_xi_player_ids": [player_id for player_id, _slot in ordered_assignments],
+        "projected_xi_slots": {player_id: slot for player_id, slot in ordered_assignments},
+        "projected_xi_lines": xi_lines,
         "projected_xi_total": total,
         "total_display": total_display,
         "required_fragments": [total_display, *fragments],
@@ -252,6 +261,46 @@ def _ordered_forecast_xi_ids(
         return rank, str(player.get("name") or "").casefold(), player_id
 
     return sorted(player_ids, key=key)
+
+
+def _availability_marker(status: object) -> str | None:
+    normalized = str(status or "").upper()
+    return {
+        "GTD": "GTD",
+        "DOUBTFUL": "DOUBTFUL",
+        "OUT": "OUT",
+        "O": "OUT",
+        "IR": "OUT",
+        "IR+": "OUT",
+        "SUSP": "SUSPENDED",
+        "SUSPENDED": "SUSPENDED",
+        "ROLE_UNCERTAIN": "ROLE UNCERTAIN",
+    }.get(normalized)
+
+
+def _ordered_forecast_xi_assignments(
+    assignments: tuple[tuple[str, str], ...], players: Mapping[str, Mapping[str, Any]],
+) -> list[tuple[str, str]]:
+    """Order selected actual Sleeper slots GK-to-forward for display."""
+    position_order = {"GK": 0, "G": 0, "D": 1, "M": 2, "F": 3}
+
+    def key(item: tuple[str, str]) -> tuple[int, str, str]:
+        player_id, slot = item
+        normalized = slot.upper()
+        base = normalized.removesuffix("_FLEX")
+        rank = min((position_order.get(position, 4) for position in base), default=4)
+        return rank, normalized, str(players[player_id].get("name") or "").casefold()
+
+    return sorted(assignments, key=key)
+
+
+def _forecast_xi_display(slot: str, name: str, forecast_display: str) -> str:
+    """Prefix the locked player forecast with the actual selected slot."""
+    player_prefix = f"**{name}**"
+    if not forecast_display.startswith(player_prefix):
+        return forecast_display
+    label = str(slot).upper().replace("_", " ")
+    return f"**{label} — {name}**{forecast_display[len(player_prefix):]}"
 
 
 def load_gameweek_prepare_context(

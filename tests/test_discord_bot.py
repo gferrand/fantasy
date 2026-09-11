@@ -129,7 +129,7 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
             },
         )()
         forecast_line = "**Player One** · est. 4.0 Kick & Run pts"
-        context = type("Context", (), {"payload": {"gameweek": 4, "forecast": {"required_fragments": ("Projected XI: 4.0 Kick & Run pts", forecast_line)}}, "retrieved_at": "now"})()
+        context = type("Context", (), {"payload": {"gameweek": 4, "forecast": {"required_fragments": ("Projected XI: 4.0 Kick & Run pts", forecast_line), "projected_xi_lines": ("**F — Player One** · est. 4.0 Kick & Run pts",)}, "your_team": {"players": [{"player_id": "p1", "forecast": {"display": forecast_line}}]}}, "retrieved_at": "now"})()
         report = "🗓️ **Gameweek prep · GW4**\n\n**Readiness**\n[Club update](https://example.com/report)"
 
         with (
@@ -152,6 +152,7 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
             discord_bot.GAMEWEEK_PREPARE_REQUIRED_MARKERS,
         )
         self.assertEqual(finalizer.await_args.kwargs["required_analysis_fragments"], ("Projected XI: 4.0 Kick & Run pts", forecast_line))
+        self.assertEqual(finalizer.await_args.kwargs["required_ordered_section_fragments"], {"**Ideal XI**": ("**F — Player One** · est. 4.0 Kick & Run pts",)})
         self.assertFalse(finalizer.await_args.kwargs["render_no_action_decision"])
         delivered = interaction.edit_original_response.await_args.kwargs["content"]
         self.assertIn("[Club update](<https://example.com/report>)", delivered)
