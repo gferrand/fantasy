@@ -123,7 +123,9 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
    line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
 3. `**Ideal XI**` — every legal Sleeper starting slot supplied in the evidence,
    one player per line. Use the supplied deterministic forecast XI exactly, and copy each
-   player's exact forecast display string on that player's line. Mark material OUT/GTD concerns inline.
+   player's exact forecast display string on that player's line. Preserve the supplied GK-to-forward
+   order. A forecast display is a locked complete line: do not append a source, role note, status,
+   punctuation, or any other text to it. Put sourced availability caveats only in the later key-calls section.
 4. `**Bench / reserves**` — list every remaining roster player separately.
    Copy each remaining player's exact forecast display string. Bench estimates are individual
    match estimates and are excluded from the Projected XI total.
@@ -1165,6 +1167,8 @@ def build_client(config: AppConfig) -> discord.Client:
                         "**Ideal XI**": xi_lines,
                         "**Bench / reserves**": bench_lines,
                     },
+                    required_ordered_section_fragments={"**Ideal XI**": xi_lines},
+                    required_exact_line_fragments=(*xi_lines, *bench_lines),
                     render_no_action_decision=False,
                     partial_text=(
                         "🗓️ **Gameweek preparation · current Fantasy evidence retrieved**\n"
