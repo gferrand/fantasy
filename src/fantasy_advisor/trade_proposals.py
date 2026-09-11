@@ -336,15 +336,24 @@ def apply_fixture_adjusted_projections(
         peer_rate = _median(
             (position_medians.get(position, 0.0) for position in positions), fallback=0.0
         )
-        raw_rate = player.get("custom_points_per_90")
+        # Gameweek can provide an already empirical-Bayes-shrunk historical
+        # rate.  Trade forecasts continue to use the original neutral signal.
+        supplied_rate = player.get("forecast_rate_per_90_input")
+        raw_rate = supplied_rate if isinstance(supplied_rate, (int, float)) else player.get("custom_points_per_90")
         raw_rate = float(raw_rate) if isinstance(raw_rate, (int, float)) else peer_rate
         minutes = player.get("minutes")
         minutes = float(minutes) if isinstance(minutes, (int, float)) else 0.0
-        reliability = min(1.0, minutes / FORECAST_SHRINKAGE_MINUTES)
+        # Do not shrink a rate that historical_inputs already shrank to a
+        # global position peer baseline.
+        reliability = 1.0 if isinstance(supplied_rate, (int, float)) else min(1.0, minutes / FORECAST_SHRINKAGE_MINUTES)
         blended_rate = round(raw_rate * reliability + peer_rate * (1.0 - reliability), 3)
         games = player.get("games")
         games = float(games) if isinstance(games, (int, float)) else 0.0
-        expected_minutes = min(90.0, max(20.0, minutes / games if games > 0 else 60.0))
+        supplied_minutes = player.get("forecast_expected_minutes_input")
+        if isinstance(supplied_minutes, (int, float)):
+            expected_minutes = min(90.0, max(0.0, float(supplied_minutes)))
+        else:
+            expected_minutes = min(90.0, max(20.0, minutes / games if games > 0 else 60.0))
 
         def difficulty(fixture: tuple[datetime, str, bool]) -> float:
             _kickoff, opponent, is_home = fixture
