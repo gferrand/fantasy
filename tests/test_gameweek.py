@@ -10,7 +10,10 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fantasy_advisor.gameweek import (
     LEAGUE_ID,
+    _assigned_lineup_position,
     _forecast_xi_display,
+    _formation_display,
+    _ordered_forecast_xi_assignments,
     _ordered_forecast_xi_ids,
     load_gameweek_prepare_context,
     load_gameweek_recap_context,
@@ -137,14 +140,40 @@ class GameweekContextTests(unittest.TestCase):
             ["keeper", "defender", "midfielder", "forward"],
         )
 
-    def test_forecast_xi_display_uses_players_scoring_position_not_flex_slot(self):
+    def test_forecast_xi_display_uses_assigned_lineup_position(self):
         self.assertEqual(
             _forecast_xi_display(
-                "Granit Xhaka", "M", ["M"],
+                "FMD_FLEX", "Granit Xhaka", "M", ["M"],
                 "**Granit Xhaka** · est. 7.9 Kick & Run pts",
             ),
             "**M — Granit Xhaka** · est. 7.9 Kick & Run pts",
         )
+
+    def test_forecast_formation_uses_assigned_slots_not_primary_scoring_tags(self):
+        players = {
+            "khusanov": {"name": "Khusanov", "position": "D", "positions": ["D"]},
+            "van_de_ven": {"name": "van de Ven", "position": "D", "positions": ["D"]},
+            "calafiori": {"name": "Calafiori", "position": "D", "positions": ["D"]},
+            "ajayi": {"name": "Ajayi", "position": "D", "positions": ["D"]},
+            "xhaka": {"name": "Xhaka", "position": "M", "positions": ["M"]},
+            "gakpo": {"name": "Gakpo", "position": "F", "positions": ["F", "M"]},
+            "barnes": {"name": "Barnes", "position": "M", "positions": ["M"]},
+            "schade": {"name": "Schade", "position": "M", "positions": ["F", "M"]},
+            "wissa": {"name": "Wissa", "position": "F", "positions": ["F"]},
+            "semenyo": {"name": "Semenyo", "position": "F", "positions": ["F"]},
+        }
+        assignments = (
+            ("khusanov", "MD_FLEX"), ("van_de_ven", "D"), ("calafiori", "D"), ("ajayi", "D"),
+            ("xhaka", "FMD_FLEX"), ("gakpo", "M"), ("barnes", "M"), ("schade", "M"),
+            ("wissa", "FM_FLEX"), ("semenyo", "F"),
+        )
+        ordered = _ordered_forecast_xi_assignments(assignments, players)
+        assigned_positions = [
+            _assigned_lineup_position(slot, players[player_id]["position"], players[player_id]["positions"])
+            for player_id, slot in ordered
+        ]
+        self.assertEqual(_formation_display(assigned_positions), "**Formation: 4D / 4M / 2F**")
+        self.assertEqual(assigned_positions, ["D", "D", "D", "D", "M", "M", "M", "M", "F", "F"])
 
 
 if __name__ == "__main__":

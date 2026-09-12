@@ -122,7 +122,8 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
    When forecast evidence is available, copy its exact `Projected XI: N.N Kick & Run pts`
    line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
 3. `**Ideal XI**` — the legal Sleeper XI supplied in the evidence, expressed as
-   a familiar formation and player positions rather than internal flex-slot IDs,
+   the legal assigned formation and lineup positions rather than internal flex-slot IDs
+   or a player's primary scoring tag,
    beginning with the supplied formation line and then one player per line. Use the supplied deterministic forecast XI exactly, and copy each
    player's exact supplied locked forecast line on that player's line. Preserve the supplied GK-to-forward
    order. A forecast display is a locked complete line: do not append a source, role note, status,

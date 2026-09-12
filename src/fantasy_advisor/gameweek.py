@@ -230,6 +230,7 @@ def _prepare_forecasts(
     ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, player_by_id)
     xi_lines = [
         _forecast_xi_display(
+            slot,
             by_id[player_id]["name"],
             player_by_id[player_id].get("position"),
             by_id[player_id].get("positions") or [],
@@ -238,10 +239,11 @@ def _prepare_forecasts(
         for player_id, slot in ordered_assignments
     ]
     formation_display = _formation_display(
-        _display_position(
+        _assigned_lineup_position(
+            slot,
             player_by_id[player_id].get("position"), player_by_id[player_id].get("positions") or (),
         )
-        for player_id, _slot in ordered_assignments
+        for player_id, slot in ordered_assignments
     )
     return {
         "available": True,
@@ -290,13 +292,26 @@ def _availability_marker(status: object) -> str | None:
     }.get(normalized)
 
 
-def _display_position(primary_position: object, positions: Iterable[str]) -> str:
-    """Return the player's current Sleeper scoring position for presentation."""
+def _assigned_lineup_position(slot: object, primary_position: object, positions: Iterable[str]) -> str:
+    """Return the legal formation position represented by a selected slot.
+
+    Fixed Sleeper slots determine the displayed position. A flex slot needs a
+    tie-break only when a player is eligible for more than one of its positions;
+    then their Sleeper primary position gives the display a stable choice.
+    This is presentation-only and never changes scoring.
+    """
     normalized_positions = [str(position).upper() for position in positions]
     primary = str(primary_position or "").upper()
-    if primary in {"GK", "D", "M", "F"} and primary in normalized_positions:
+    normalized_slot = str(slot or "").upper()
+    if normalized_slot in {"GK", "D", "M", "F"}:
+        return normalized_slot
+    if not normalized_slot.endswith("_FLEX"):
+        return "?"
+    allowed_positions = tuple(normalized_slot.removesuffix("_FLEX"))
+    eligible_positions = tuple(position for position in allowed_positions if position in normalized_positions)
+    if primary in eligible_positions:
         return primary
-    return next((position for position in ("GK", "D", "M", "F") if position in normalized_positions), "?")
+    return eligible_positions[0] if eligible_positions else "?"
 
 
 def _formation_display(positions: Iterable[object]) -> str:
@@ -312,26 +327,26 @@ def _formation_display(positions: Iterable[object]) -> str:
 def _ordered_forecast_xi_assignments(
     assignments: tuple[tuple[str, str], ...], players: Mapping[str, Mapping[str, Any]],
 ) -> list[tuple[str, str]]:
-    """Order the selected XI by each player's displayed Sleeper position."""
+    """Order the selected XI by its assigned legal formation positions."""
     position_order = {"GK": 0, "G": 0, "D": 1, "M": 2, "F": 3}
 
     def key(item: tuple[str, str]) -> tuple[int, str, str]:
-        player_id, _slot = item
+        player_id, slot = item
         player = players[player_id]
-        position = _display_position(player.get("position"), player.get("positions") or ())
+        position = _assigned_lineup_position(slot, player.get("position"), player.get("positions") or ())
         return position_order.get(position, 4), position, str(player.get("name") or "").casefold()
 
     return sorted(assignments, key=key)
 
 
 def _forecast_xi_display(
-    name: str, primary_position: object, positions: Iterable[str], forecast_display: str,
+    slot: object, name: str, primary_position: object, positions: Iterable[str], forecast_display: str,
 ) -> str:
-    """Prefix the locked player forecast with the player's scoring position."""
+    """Prefix the locked player forecast with their assigned lineup position."""
     player_prefix = f"**{name}**"
     if not forecast_display.startswith(player_prefix):
         return forecast_display
-    label = _display_position(primary_position, positions)
+    label = _assigned_lineup_position(slot, primary_position, positions)
     return f"**{label} — {name}**{forecast_display[len(player_prefix):]}"
 
 
