@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fantasy_advisor.availability import apply_availability_adjustments
 from fantasy_advisor.forecast_model import MODEL_VERSION, historical_inputs
-from fantasy_advisor.gameweek import _prepare_forecasts, _selection_probability
+from fantasy_advisor.gameweek import _expected_minutes_share, _prepare_forecasts, _selection_probability
 
 
 SCORING = {"pos_f_g": 4, "pos_d_g": 8}
@@ -66,6 +66,12 @@ def test_selection_probability_prefers_sourced_availability_then_injury_then_sle
     assert _selection_probability({"injury_status": "OUT", "sleeper_lineup_state": "starter"}) == (0.0, "unavailable")
 
 
+def test_injury_related_nonstarter_has_reduced_expected_minutes_but_a_normal_reserve_does_not():
+    assert _expected_minutes_share({"injury_status": "GTD", "sleeper_lineup_state": "bench"}) == (0.60, "injury-related Sleeper bench implies reduced minutes")
+    assert _expected_minutes_share({"injury_status": "DOUBTFUL", "sleeper_lineup_state": "reserve"}) == (0.40, "injury-related Sleeper reserve implies reduced minutes")
+    assert _expected_minutes_share({"injury_status": None, "sleeper_lineup_state": "reserve"}) == (1.0, None)
+
+
 def test_selection_xi_can_start_a_healthy_bench_player_or_keep_high_upside_reserve():
     players = [
         {"player_id": "starter", "name": "Starter", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "starter", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 1}},
@@ -91,3 +97,17 @@ def test_injury_related_reserve_loses_to_a_healthier_option_but_keeps_if_active_
     assert forecast["projected_xi_player_ids"] == ["healthy"]
     assert players[1]["forecast"]["points"] > players[1]["forecast"]["selection_points"]
     assert "if active" in players[1]["forecast"]["display"]
+
+
+def test_injury_related_bench_loses_to_a_healthy_full_match_option_despite_higher_if_active_upside():
+    players = [
+        {"player_id": "healthy", "name": "Healthy", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "starter", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 6}},
+        {"player_id": "gtd_bench", "name": "GTD Bench", "club": "ARS", "positions": ["F"], "injury_status": "GTD", "sleeper_lineup_state": "bench", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 8}},
+    ]
+    rows = [_row("healthy", "F", minutes=900, games=10, goals=6), _row("gtd_bench", "F", minutes=900, games=10, goals=8)]
+    schedule = {"events": [{"date": "2026-09-20T15:00:00Z", "competitions": [{"competitors": [{"homeAway": "home", "team": {"displayName": "Arsenal"}}, {"homeAway": "away", "team": {"displayName": "Chelsea"}}]}]}]}
+    forecast = _prepare_forecasts(players, scoring_settings=SCORING, starting_slots=["F"], fixture_schedule=schedule, now=datetime(2026, 9, 11, tzinfo=timezone.utc), current_rows=rows, prior_rows=[], recent_weekly_rows=[])
+    assert forecast["projected_xi_player_ids"] == ["healthy"]
+    assert players[1]["forecast"]["points"] > players[0]["forecast"]["points"]
+    assert players[1]["forecast"]["selection_points"] < players[0]["forecast"]["selection_points"]
+    assert players[1]["forecast"]["expected_minutes_share"] == 0.60
