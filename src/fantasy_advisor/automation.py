@@ -1483,7 +1483,8 @@ Write phone-first with no Markdown table or code block. Keep the live Sleeper
 numbers exact. For material judgments include a short `Fantasy analyst view:`
 line and an optional `Club/news check:` line with direct links. Be explicit
 about uncertainty and do not invent a real-world fixture or a fantasy H2H
-opponent that is absent from the context.
+opponent that is absent from the context. For a Gameweek preparation report,
+omit unavailable H2H data entirely rather than stating that it is unavailable.
 {outcome.format(gameweek=json.loads(live_context).get("gameweek", "?"))}
 
 LIVE SLEEPER CONTEXT:

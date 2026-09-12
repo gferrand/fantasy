@@ -194,6 +194,7 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("Fantasy analyst view:", prompt)
         self.assertNotIn("Opposing fantasy team", prompt)
         self.assertNotIn("Opponent threats", prompt)
+        self.assertIn("omit unavailable H2H data entirely", prompt)
 
     def test_lineup_alert_prompt_requires_manual_time_sensitive_guidance(self):
         prompt = lineup_alert_web_briefing_prompt(live_context='{"fixture":{"home":"Hull City"}}')
