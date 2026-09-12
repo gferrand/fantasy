@@ -1162,7 +1162,12 @@ def build_client(config: AppConfig) -> discord.Client:
                     mandatory_web=True,
                     deadline=deadline,
                     required_analysis_markers=GAMEWEEK_PREPARE_REQUIRED_MARKERS,
-                    required_analysis_fragments=tuple(forecast.get("required_fragments", ())),
+                    # Player forecasts use bare names on the bench and
+                    # slot-formatted names in the XI.  The section and exact
+                    # line checks below validate those renderings; requiring
+                    # the bare fragments globally rejects an otherwise valid
+                    # slot-formatted XI before those checks can run.
+                    required_analysis_fragments=readiness_lines,
                     required_analysis_section_fragments={
                         "**Readiness**": readiness_lines,
                         "**Ideal XI**": xi_lines,
