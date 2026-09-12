@@ -96,6 +96,7 @@ def _stat_player(row: Mapping[str, Any], *, include_week: bool) -> dict[str, Any
         "name": _name(player_id, player),
         "club": str(player.get("team_abbr") or "").upper() or None,
         "positions": [str(value).upper() for value in (player.get("fantasy_positions") or [])],
+        "position": str(player.get("position") or "").upper() or None,
         "injury_status": str(player.get("injury_status") or "").upper() or None,
         "stats": values,
     }
@@ -226,23 +227,29 @@ def _prepare_forecasts(
         return {"available": False, "note": note, "required_fragments": [note, *fragments]}
     total = round(sum(float(by_id[player_id]["projected_gameweek_points"]) for player_id in lineup.player_ids), 1)
     total_display = f"Projected XI: {total:.1f} Kick & Run pts"
-    ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, by_id)
+    ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, player_by_id)
     xi_lines = [
         _forecast_xi_display(
-            slot,
             by_id[player_id]["name"],
+            player_by_id[player_id].get("position"),
             by_id[player_id].get("positions") or [],
             player_by_id[player_id]["forecast"]["display"],
         )
         for player_id, slot in ordered_assignments
     ]
+    formation_display = _formation_display(
+        _display_position(
+            player_by_id[player_id].get("position"), player_by_id[player_id].get("positions") or (),
+        )
+        for player_id, _slot in ordered_assignments
+    )
     return {
         "available": True,
         "model_version": MODEL_VERSION,
         "availability_packet": verified_availability,
         "projected_xi_player_ids": [player_id for player_id, _slot in ordered_assignments],
         "projected_xi_slots": {player_id: slot for player_id, slot in ordered_assignments},
-        "projected_xi_lines": xi_lines,
+        "projected_xi_lines": [formation_display, *xi_lines],
         "projected_xi_total": total,
         "total_display": total_display,
         "required_fragments": [total_display, *fragments],
@@ -283,35 +290,48 @@ def _availability_marker(status: object) -> str | None:
     }.get(normalized)
 
 
+def _display_position(primary_position: object, positions: Iterable[str]) -> str:
+    """Return the player's current Sleeper scoring position for presentation."""
+    normalized_positions = [str(position).upper() for position in positions]
+    primary = str(primary_position or "").upper()
+    if primary in {"GK", "D", "M", "F"} and primary in normalized_positions:
+        return primary
+    return next((position for position in ("GK", "D", "M", "F") if position in normalized_positions), "?")
+
+
+def _formation_display(positions: Iterable[object]) -> str:
+    """Summarize the chosen legal XI without exposing Sleeper's flex slot IDs."""
+    counts = {position: 0 for position in ("D", "M", "F")}
+    for position in positions:
+        normalized = str(position or "").upper()
+        if normalized in counts:
+            counts[normalized] += 1
+    return f"**Formation: {counts['D']}D / {counts['M']}M / {counts['F']}F**"
+
+
 def _ordered_forecast_xi_assignments(
     assignments: tuple[tuple[str, str], ...], players: Mapping[str, Mapping[str, Any]],
 ) -> list[tuple[str, str]]:
-    """Order selected actual Sleeper slots GK-to-forward for display."""
+    """Order the selected XI by each player's displayed Sleeper position."""
     position_order = {"GK": 0, "G": 0, "D": 1, "M": 2, "F": 3}
 
     def key(item: tuple[str, str]) -> tuple[int, str, str]:
-        player_id, slot = item
-        normalized = slot.upper()
-        base = normalized.removesuffix("_FLEX")
-        rank = min((position_order.get(position, 4) for position in base), default=4)
-        return rank, normalized, str(players[player_id].get("name") or "").casefold()
+        player_id, _slot = item
+        player = players[player_id]
+        position = _display_position(player.get("position"), player.get("positions") or ())
+        return position_order.get(position, 4), position, str(player.get("name") or "").casefold()
 
     return sorted(assignments, key=key)
 
 
-def _forecast_xi_display(slot: str, name: str, positions: Iterable[str], forecast_display: str) -> str:
-    """Prefix the locked player forecast with the actual selected slot."""
+def _forecast_xi_display(
+    name: str, primary_position: object, positions: Iterable[str], forecast_display: str,
+) -> str:
+    """Prefix the locked player forecast with the player's scoring position."""
     player_prefix = f"**{name}**"
     if not forecast_display.startswith(player_prefix):
         return forecast_display
-    normalized_slot = str(slot).upper()
-    if normalized_slot.endswith("_FLEX"):
-        allowed = tuple(normalized_slot.removesuffix("_FLEX"))
-        player_positions = {str(item).upper() for item in positions}
-        eligible = [position for position in allowed if position in player_positions]
-        label = f"{'/'.join(allowed)} flex ({'/'.join(eligible)} eligible)"
-    else:
-        label = normalized_slot.replace("_", " ")
+    label = _display_position(primary_position, positions)
     return f"**{label} — {name}**{forecast_display[len(player_prefix):]}"
 
 
