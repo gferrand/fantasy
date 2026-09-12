@@ -66,6 +66,7 @@ class GameweekContextTests(unittest.TestCase):
         payload = json.loads(context.as_json())
         self.assertEqual((context.report_kind, context.season, context.gameweek), ("prepare", "2026", 3))
         self.assertEqual(payload["your_team"]["players"][0]["name"], "Ryan Giles")
+        self.assertEqual(payload["your_team"]["players"][0]["sleeper_lineup_state"], "starter")
         self.assertEqual(payload["starting_slots"], ["F", "D"])
         self.assertFalse(payload["h2h_opponent"]["available"])
         self.assertFalse(any("players/clubsoccer" in url for url in client.urls))
@@ -109,8 +110,9 @@ class GameweekContextTests(unittest.TestCase):
         self.assertEqual(len(forecast["projected_xi_player_ids"]), 2)
         by_id = {player["player_id"]: player for player in context.payload["your_team"]["players"]}
         self.assertEqual(forecast["projected_xi_total"], round(sum(
-            by_id[player_id]["forecast"]["points"] for player_id in forecast["projected_xi_player_ids"]
+            by_id[player_id]["forecast"]["selection_points"] for player_id in forecast["projected_xi_player_ids"]
         ), 1))
+        self.assertGreaterEqual(forecast["projected_xi_if_active_total"], forecast["projected_xi_total"])
         self.assertEqual(forecast["projected_xi_lines"][0], "**Formation: 1D / 0M / 1F**")
         self.assertEqual(forecast["projected_xi_lines"][1].split(" — ", 1)[0], "**D")
         self.assertEqual(forecast["projected_xi_lines"][2].split(" — ", 1)[0], "**F")

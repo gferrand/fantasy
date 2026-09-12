@@ -19,6 +19,14 @@ from .trade_proposals import (
     projection_signal_from_player,
 )
 
+INACTIVE_SELECTION_STATUSES = INACTIVE_INJURY_STATUSES | {"O", "IR", "IR+", "SUSPENDED"}
+DEFAULT_PLAYING_PROBABILITY = {
+    "GTD": 0.50,
+    "DOUBTFUL": 0.30,
+    "ROLE_UNCERTAIN": 0.65,
+}
+LINEUP_STATE_PROBABILITY = {"starter": 1.0, "bench": 0.90, "reserve": 0.75}
+
 
 @dataclass(frozen=True)
 class GameweekContext:
@@ -137,17 +145,52 @@ def _team_name(users: list[Mapping[str, Any]], owner_id: object) -> str | None:
 
 
 def _roster_players(
-    roster: Mapping[str, Any], rows: list[Mapping[str, Any]], *, include_week: bool
+    roster: Mapping[str, Any], rows: list[Mapping[str, Any]], *, include_week: bool,
+    lineup_states: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     by_id = {str(row.get("player_id") or ""): row for row in rows}
     result = []
     for player_id in (roster.get("players") or []):
         row = by_id.get(str(player_id))
         if row is not None:
-            result.append(_stat_player(row, include_week=include_week))
+            player = _stat_player(row, include_week=include_week)
         else:
-            result.append({"player_id": str(player_id), "name": f"Unknown player {player_id}", "club": None, "positions": [], "injury_status": None, "stats": {}})
+            player = {"player_id": str(player_id), "name": f"Unknown player {player_id}", "club": None, "positions": [], "injury_status": None, "stats": {}}
+        player["sleeper_lineup_state"] = (lineup_states or {}).get(str(player_id), "bench")
+        result.append(player)
     return result
+
+
+def _sleeper_lineup_states(roster: Mapping[str, Any]) -> dict[str, str]:
+    """Classify every rostered player by Sleeper's current fantasy lineup."""
+    starters = {str(value) for value in (roster.get("starters") or []) if str(value) != "0"}
+    reserve = {str(value) for value in (roster.get("reserve") or []) if str(value) != "0"}
+    return {
+        str(player_id): "starter" if str(player_id) in starters else "reserve" if str(player_id) in reserve else "bench"
+        for player_id in (roster.get("players") or [])
+    }
+
+
+def _selection_probability(signal: Mapping[str, Any]) -> tuple[float, str]:
+    """Return the chance used to turn an if-active forecast into expected points.
+
+    Sourced availability is strongest; absent that, explicit Sleeper injuries
+    outrank the manager's current fantasy lineup placement.  The latter remains
+    deliberately soft evidence so a high-upside bench/reserve player can win a
+    legal starting spot.
+    """
+    status = str(signal.get("injury_status") or "").upper()
+    if status in INACTIVE_SELECTION_STATUSES:
+        return 0.0, "unavailable"
+    research = signal.get("availability_research")
+    if isinstance(research, Mapping):
+        probability = research.get("playing_probability")
+        if isinstance(probability, (int, float)):
+            return max(0.0, min(1.0, float(probability))), "sourced availability"
+    if status in DEFAULT_PLAYING_PROBABILITY:
+        return DEFAULT_PLAYING_PROBABILITY[status], f"Sleeper {status} status"
+    lineup_state = str(signal.get("sleeper_lineup_state") or "bench").lower()
+    return LINEUP_STATE_PROBABILITY.get(lineup_state, LINEUP_STATE_PROBABILITY["bench"]), f"Sleeper {lineup_state} state"
 
 
 def _prepare_forecasts(
@@ -177,6 +220,8 @@ def _prepare_forecasts(
         )
         for player in players
     ]
+    for signal, player in zip(signals, players, strict=True):
+        signal["sleeper_lineup_state"] = str(player.get("sleeper_lineup_state") or "bench")
     by_id = {signal["player_id"]: signal for signal in signals}
     player_by_id = {player["player_id"]: player for player in players}
     historical_inputs(
@@ -204,29 +249,40 @@ def _prepare_forecasts(
             points = round(float(signal["projected_horizon_points"]), 1)
         else:
             points = None
+        probability, selection_reason = _selection_probability(signal)
+        selection_points = round(points * probability, 1) if points is not None else None
         if points is None:
             display = f"**{player['name']}** · forecast unavailable"
         else:
-            display = f"**{player['name']}** · est. {points:.1f} Kick & Run pts"
+            display = (
+                f"**{player['name']}** · est. {selection_points:.1f} expected Kick & Run pts "
+                f"({points:.1f} if active) · Sleeper {signal['sleeper_lineup_state']}"
+            )
         marker = _availability_marker(status)
         if marker:
             display += f" · {marker}"
-        player["forecast"] = {"points": points, "display": display, "status": "complete" if points is not None else "unavailable"}
+        player["forecast"] = {
+            "points": points,
+            "selection_points": selection_points,
+            "playing_probability": probability,
+            "selection_reason": selection_reason,
+            "display": display,
+            "status": "complete" if points is not None else "unavailable",
+        }
         fragments.append(display)
         signal["projected_gameweek_points"] = points if points is not None else 0.0
-        # Availability must not change the counterfactual estimate, but an
-        # unavailable player cannot be selected into a legal projected XI.
-        signal["projected_lineup_selection_points"] = (
-            0.0 if status in INACTIVE_INJURY_STATUSES else signal["projected_gameweek_points"]
-        )
+        # Preserve counterfactual if-active upside, but select the legal XI on
+        # expected points after current availability and lineup evidence.
+        signal["projected_lineup_selection_points"] = selection_points if selection_points is not None else 0.0
     if not complete or any(player["forecast"]["points"] is None for player in players):
         return {"available": False, "note": unavailable_reason, "required_fragments": [unavailable_reason, *fragments]}
     lineup = evaluate_lineup(signals, starting_slots, score_field="projected_lineup_selection_points")
     if len(lineup.player_ids) != len(starting_slots):
         note = "Forecast unavailable: a legal starting XI could not be formed from the roster."
         return {"available": False, "note": note, "required_fragments": [note, *fragments]}
-    total = round(sum(float(by_id[player_id]["projected_gameweek_points"]) for player_id in lineup.player_ids), 1)
-    total_display = f"Projected XI: {total:.1f} Kick & Run pts"
+    total = round(sum(float(by_id[player_id]["projected_lineup_selection_points"]) for player_id in lineup.player_ids), 1)
+    if_active_total = round(sum(float(by_id[player_id]["projected_gameweek_points"]) for player_id in lineup.player_ids), 1)
+    total_display = f"Projected XI: {total:.1f} expected Kick & Run pts · {if_active_total:.1f} if active"
     ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, player_by_id)
     xi_lines = [
         _forecast_xi_display(
@@ -253,6 +309,7 @@ def _prepare_forecasts(
         "projected_xi_slots": {player_id: slot for player_id, slot in ordered_assignments},
         "projected_xi_lines": [formation_display, *xi_lines],
         "projected_xi_total": total,
+        "projected_xi_if_active_total": if_active_total,
         "total_display": total_display,
         "required_fragments": [total_display, *fragments],
     }
@@ -360,7 +417,9 @@ def load_gameweek_prepare_context(
     sleeper = client or SleeperClient()
     season, next_week, league, rosters, users, season_rows = _load_common(manager_id=manager_id, client=sleeper)
     roster = next(item for item in rosters if str(item.get("owner_id")) == str(manager_id))
-    players = _roster_players(roster, season_rows, include_week=False)
+    players = _roster_players(
+        roster, season_rows, include_week=False, lineup_states=_sleeper_lineup_states(roster),
+    )
     # The previous regular season is optional: a promoted player or a temporary
     # Sleeper archive outage still has a useful current-season/peer forecast.
     prior_rows: list[Mapping[str, Any]] = []

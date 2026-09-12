@@ -118,8 +118,10 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
 
 1. Start with `🗓️ **Gameweek prep · GW{gameweek}**`, substituting the current
    gameweek from the supplied evidence.
-2. `**Readiness**` — a compact roster-health and deadline snapshot.
-   When forecast evidence is available, copy its exact `Projected XI: N.N Kick & Run pts`
+2. `**Readiness**` — a compact roster-health and deadline snapshot. The
+   supplied Projected XI line contains both availability-adjusted expected
+   points and the selected XI's if-active upside; preserve both values exactly.
+   When forecast evidence is available, copy its exact `Projected XI: … expected Kick & Run pts · … if active`
    line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
 3. `**Ideal XI**` — the legal Sleeper XI supplied in the evidence, expressed as
    the legal assigned formation and lineup positions rather than internal flex-slot IDs
@@ -129,10 +131,14 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
    order. A forecast display is a locked complete line: do not append a source, role note, status,
    punctuation, or any other text to it. Put sourced availability caveats only in the later key-calls section.
 4. `**Bench / reserves**` — list every remaining roster player separately.
-   Copy each remaining player's exact forecast display string. Bench estimates are individual
+   Copy each remaining player's exact forecast display string, including its
+   Sleeper starter, bench, or reserve state. Bench estimates are individual
    match estimates and are excluded from the Projected XI total.
 5. `**Key calls**` — short bullets for the most important start/sit decisions,
-   grounded in current fixture, role, availability, and minutes evidence.
+   grounded in current fixture, role, availability, and minutes evidence. When
+   the recommended XI differs from Sleeper's current starters, explain the
+   relevant availability or expected-minutes reason and name the preferable
+   alternative when the evidence identifies one.
 6. `**Manual checklist**` — no more than three brief actions for the Owner to
    verify manually before lineup lock.
 
