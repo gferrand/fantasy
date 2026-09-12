@@ -140,6 +140,10 @@ Use short lines and bullets under the section labels. Keep source links inline
 with the claim they support, and do not repeat the full lineup in prose. This
 is a lineup report rather than an acquisition recommendation, so return
 actionable=false with no incoming targets.
+
+Do not add an H2H, opposing-fantasy-team, or opponent-threats section. The
+unavailable Sleeper matchup is not actionable: omit it entirely rather than
+mentioning its absence in Readiness, Key calls, or the Manual checklist.
 """.strip()
 
 GAMEWEEK_PREPARE_REQUIRED_MARKERS = (
@@ -1095,7 +1099,7 @@ def build_client(config: AppConfig) -> discord.Client:
         allowed_contexts=app_commands.AppCommandContext(guild=False, dm_channel=True, private_channel=False),
     )
 
-    @gameweek_group.command(name="prepare", description="Analyze your next gameweek lineup and key opponents")
+    @gameweek_group.command(name="prepare", description="Analyze your next gameweek lineup")
     async def gameweek_prepare_command(interaction: discord.Interaction) -> None:
         if not await ensure_private_user(interaction):
             return
@@ -1151,7 +1155,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 result = await finalize_advisor_from_evidence(
                     config,
                     command="/gameweek prepare",
-                    question="Prepare my next gameweek lineup and key opponents.",
+                    question="Prepare my next gameweek lineup.",
                     evidence=slash_evidence(
                         context, capability="get_gameweek_context", arguments={"mode": "prepare"}, source="Fantasy gameweek prepare context",
                     ),

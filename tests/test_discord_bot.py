@@ -114,6 +114,7 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("do not repeat the full lineup in prose", contract)
         self.assertNotIn("**Opposing fantasy team**", contract)
         self.assertNotIn("**Opponent threats**", contract)
+        self.assertIn("omit it entirely", contract)
 
     async def test_prepare_uses_the_contract_and_suppresses_link_previews(self):
         client = build_client(_test_config())
