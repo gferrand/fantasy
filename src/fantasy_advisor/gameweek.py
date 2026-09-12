@@ -26,6 +26,11 @@ DEFAULT_PLAYING_PROBABILITY = {
     "ROLE_UNCERTAIN": 0.65,
 }
 LINEUP_STATE_PROBABILITY = {"starter": 1.0, "bench": 0.90, "reserve": 0.75}
+# A player who is both injury-flagged and not in the saved fantasy XI is not
+# just less likely to be active: when active, he is materially more likely to
+# be limited to substitute minutes.  These are deliberately soft multipliers;
+# club confirmation can still make a high-upside player the best selection.
+INJURY_NONSTARTER_MINUTES_SHARE = {"bench": 0.60, "reserve": 0.40}
 
 
 @dataclass(frozen=True)
@@ -193,6 +198,22 @@ def _selection_probability(signal: Mapping[str, Any]) -> tuple[float, str]:
     return LINEUP_STATE_PROBABILITY.get(lineup_state, LINEUP_STATE_PROBABILITY["bench"]), f"Sleeper {lineup_state} state"
 
 
+def _expected_minutes_share(signal: Mapping[str, Any]) -> tuple[float, str | None]:
+    """Return the playing-time share after availability, without hiding upside.
+
+    Research and Sleeper's injury flag establish the availability chance.  If
+    that concern is corroborated by a current fantasy bench/reserve placement,
+    model the remaining scenario as reduced minutes instead of a full match.
+    A normal bench/reserve placement remains only the softer availability
+    signal handled by :func:`_selection_probability`.
+    """
+    status = str(signal.get("injury_status") or "").upper()
+    lineup_state = str(signal.get("sleeper_lineup_state") or "bench").lower()
+    if status in {"GTD", "DOUBTFUL"} and lineup_state in INJURY_NONSTARTER_MINUTES_SHARE:
+        return INJURY_NONSTARTER_MINUTES_SHARE[lineup_state], f"injury-related Sleeper {lineup_state} implies reduced minutes"
+    return 1.0, None
+
+
 def _prepare_forecasts(
     players: list[dict[str, Any]],
     *,
@@ -250,7 +271,8 @@ def _prepare_forecasts(
         else:
             points = None
         probability, selection_reason = _selection_probability(signal)
-        selection_points = round(points * probability, 1) if points is not None else None
+        minutes_share, minutes_reason = _expected_minutes_share(signal)
+        selection_points = round(points * probability * minutes_share, 1) if points is not None else None
         if points is None:
             display = f"**{player['name']}** · forecast unavailable"
         else:
@@ -265,7 +287,9 @@ def _prepare_forecasts(
             "points": points,
             "selection_points": selection_points,
             "playing_probability": probability,
+            "expected_minutes_share": minutes_share,
             "selection_reason": selection_reason,
+            "minutes_reason": minutes_reason,
             "display": display,
             "status": "complete" if points is not None else "unavailable",
         }
