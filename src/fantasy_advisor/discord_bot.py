@@ -133,11 +133,7 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
    match estimates and are excluded from the Projected XI total.
 5. `**Key calls**` — short bullets for the most important start/sit decisions,
    grounded in current fixture, role, availability, and minutes evidence.
-6. `**Opposing fantasy team**` — use only the supplied H2H evidence. When it is
-   unavailable, say Sleeper EPL does not expose this gameweek's H2H matchup and
-   do not guess.
-7. `**Opponent threats**` — the real clubs and players most relevant to this XI.
-8. `**Manual checklist**` — no more than three brief actions for the Owner to
+6. `**Manual checklist**` — no more than three brief actions for the Owner to
    verify manually before lineup lock.
 
 Use short lines and bullets under the section labels. Keep source links inline
@@ -152,8 +148,6 @@ GAMEWEEK_PREPARE_REQUIRED_MARKERS = (
     "**Ideal XI**",
     "**Bench / reserves**",
     "**Key calls**",
-    "**Opposing fantasy team**",
-    "**Opponent threats**",
     "**Manual checklist**",
 )
 

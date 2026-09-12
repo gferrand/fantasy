@@ -1451,10 +1451,7 @@ Start with `🗓️ **Gameweek prep · GW{gameweek}**`. First give a compact tea
 readiness snapshot. Then provide `Ideal XI` using the legal Sleeper formation
 and assigned lineup positions supplied in the context, and list bench/reserve players
 separately. Explain the most important start/sit calls using current fixture,
-role, injury, and minutes evidence. Include `Opposing fantasy team` exactly as
-the supplied context permits; when it says unavailable, state that Sleeper EPL
-does not expose the H2H matchup and do not guess. Finish with the opponent real
-clubs and players that matter most to the lineup, then a short manual checklist.
+role, injury, and minutes evidence. Finish with a short manual checklist.
 """ if report_kind == "prepare" else """
 Start with `📬 **Gameweek recap · GW{gameweek}**`. Summarize the owner's players
 from the supplied completed-GW data: best performers, goals, assists, points,
