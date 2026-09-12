@@ -97,7 +97,7 @@ class DiscordBotTests(unittest.TestCase):
 
 
 class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
-    def test_prepare_contract_restores_the_complete_section_order(self):
+    def test_prepare_contract_omits_unavailable_h2h_sections(self):
         contract = discord_bot.GAMEWEEK_PREPARE_FINALIZATION
         sections = (
             "🗓️ **Gameweek prep · GW{gameweek}**",
@@ -105,8 +105,6 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
             "**Ideal XI**",
             "**Bench / reserves**",
             "**Key calls**",
-            "**Opposing fantasy team**",
-            "**Opponent threats**",
             "**Manual checklist**",
         )
 
@@ -114,6 +112,8 @@ class DiscordGameweekPresentationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(positions, sorted(positions))
         self.assertIn("never return it as one continuous\nparagraph", contract)
         self.assertIn("do not repeat the full lineup in prose", contract)
+        self.assertNotIn("**Opposing fantasy team**", contract)
+        self.assertNotIn("**Opponent threats**", contract)
 
     async def test_prepare_uses_the_contract_and_suppresses_link_previews(self):
         client = build_client(_test_config())

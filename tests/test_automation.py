@@ -183,16 +183,17 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("No current fantasy analyst view found", prompt)
         self.assertIn("generic stats\nsite as an expert opinion", prompt)
 
-    def test_gameweek_prompt_requires_expert_sources_and_h2h_limit(self):
+    def test_gameweek_prompt_requires_expert_sources_without_h2h_sections(self):
         prompt = gameweek_web_briefing_prompt(
             report_kind="prepare",
             live_context='{"gameweek":3,"h2h_opponent":{"available":false}}',
         )
         self.assertIn("Sleeper-specific", prompt)
         self.assertIn("Fantasy Premier League analysts", prompt)
-        self.assertIn("does not expose the H2H matchup", prompt)
         self.assertIn("Ideal XI", prompt)
         self.assertIn("Fantasy analyst view:", prompt)
+        self.assertNotIn("Opposing fantasy team", prompt)
+        self.assertNotIn("Opponent threats", prompt)
 
     def test_lineup_alert_prompt_requires_manual_time_sensitive_guidance(self):
         prompt = lineup_alert_web_briefing_prompt(live_context='{"fixture":{"home":"Hull City"}}')
