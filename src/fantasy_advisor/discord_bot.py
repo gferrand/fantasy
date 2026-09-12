@@ -121,8 +121,9 @@ paragraph. Do not use a Markdown table or code block. Use this exact order:
 2. `**Readiness**` — a compact roster-health and deadline snapshot.
    When forecast evidence is available, copy its exact `Projected XI: N.N Kick & Run pts`
    line here. When it is unavailable, copy the supplied forecast-unavailable note instead.
-3. `**Ideal XI**` — every legal Sleeper starting slot supplied in the evidence,
-   one player per line. Use the supplied deterministic forecast XI exactly, and copy each
+3. `**Ideal XI**` — the legal Sleeper XI supplied in the evidence, expressed as
+   a familiar formation and player positions rather than internal flex-slot IDs,
+   beginning with the supplied formation line and then one player per line. Use the supplied deterministic forecast XI exactly, and copy each
    player's exact supplied locked forecast line on that player's line. Preserve the supplied GK-to-forward
    order. A forecast display is a locked complete line: do not append a source, role note, status,
    punctuation, or any other text to it. Put sourced availability caveats only in the later key-calls section.

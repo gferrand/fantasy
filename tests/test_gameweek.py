@@ -108,8 +108,9 @@ class GameweekContextTests(unittest.TestCase):
         self.assertEqual(forecast["projected_xi_total"], round(sum(
             by_id[player_id]["forecast"]["points"] for player_id in forecast["projected_xi_player_ids"]
         ), 1))
-        self.assertEqual(forecast["projected_xi_lines"][0].split(" — ", 1)[0], "**D")
-        self.assertEqual(forecast["projected_xi_lines"][1].split(" — ", 1)[0], "**F")
+        self.assertEqual(forecast["projected_xi_lines"][0], "**Formation: 1D / 0M / 1F**")
+        self.assertEqual(forecast["projected_xi_lines"][1].split(" — ", 1)[0], "**D")
+        self.assertEqual(forecast["projected_xi_lines"][2].split(" — ", 1)[0], "**F")
         self.assertNotIn("3", forecast["projected_xi_player_ids"])
 
     def test_prepare_degrades_when_fixture_calendar_is_missing(self):
@@ -136,13 +137,13 @@ class GameweekContextTests(unittest.TestCase):
             ["keeper", "defender", "midfielder", "forward"],
         )
 
-    def test_forecast_xi_flex_label_includes_actual_qualifying_position(self):
+    def test_forecast_xi_display_uses_players_scoring_position_not_flex_slot(self):
         self.assertEqual(
             _forecast_xi_display(
-                "FMD_FLEX", "Granit Xhaka", ["M"],
+                "Granit Xhaka", "M", ["M"],
                 "**Granit Xhaka** · est. 7.9 Kick & Run pts",
             ),
-            "**F/M/D flex (M eligible) — Granit Xhaka** · est. 7.9 Kick & Run pts",
+            "**M — Granit Xhaka** · est. 7.9 Kick & Run pts",
         )
 
 
