@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from fantasy_advisor.availability import apply_availability_adjustments
 from fantasy_advisor.forecast_model import MODEL_VERSION, historical_inputs
-from fantasy_advisor.gameweek import _prepare_forecasts
+from fantasy_advisor.gameweek import _prepare_forecasts, _selection_probability
 
 
 SCORING = {"pos_f_g": 4, "pos_d_g": 8}
@@ -52,5 +52,42 @@ def test_out_and_gtd_keep_if_active_estimates_with_visible_labels():
     assert players[0]["forecast"]["display"].endswith("OUT")
     assert players[1]["forecast"]["points"] is not None
     assert players[1]["forecast"]["display"].endswith("GTD")
-    assert forecast["projected_xi_total"] == players[1]["forecast"]["points"]
+    assert forecast["projected_xi_total"] == players[1]["forecast"]["selection_points"]
     assert forecast["projected_xi_player_ids"] == ["gtd"]
+
+
+def test_selection_probability_prefers_sourced_availability_then_injury_then_sleeper_state():
+    assert _selection_probability({"injury_status": "GTD", "sleeper_lineup_state": "reserve"}) == (0.5, "Sleeper GTD status")
+    assert _selection_probability({"injury_status": None, "sleeper_lineup_state": "reserve"}) == (0.75, "Sleeper reserve state")
+    assert _selection_probability({
+        "injury_status": "GTD", "sleeper_lineup_state": "reserve",
+        "availability_research": {"playing_probability": 0.2},
+    }) == (0.2, "sourced availability")
+    assert _selection_probability({"injury_status": "OUT", "sleeper_lineup_state": "starter"}) == (0.0, "unavailable")
+
+
+def test_selection_xi_can_start_a_healthy_bench_player_or_keep_high_upside_reserve():
+    players = [
+        {"player_id": "starter", "name": "Starter", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "starter", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 1}},
+        {"player_id": "bench", "name": "Bench", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "bench", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 8}},
+        {"player_id": "reserve", "name": "Reserve", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "reserve", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 12}},
+    ]
+    rows = [_row("starter", "F", minutes=900, games=10, goals=1), _row("bench", "F", minutes=900, games=10, goals=8), _row("reserve", "F", minutes=900, games=10, goals=12)]
+    schedule = {"events": [{"date": "2026-09-20T15:00:00Z", "competitions": [{"competitors": [{"homeAway": "home", "team": {"displayName": "Arsenal"}}, {"homeAway": "away", "team": {"displayName": "Chelsea"}}]}]}]}
+    forecast = _prepare_forecasts(players, scoring_settings=SCORING, starting_slots=["F"], fixture_schedule=schedule, now=datetime(2026, 9, 11, tzinfo=timezone.utc), current_rows=rows, prior_rows=[], recent_weekly_rows=[])
+    assert forecast["projected_xi_player_ids"] == ["reserve"]
+    assert players[2]["forecast"]["selection_points"] < players[2]["forecast"]["points"]
+    assert "Sleeper reserve" in players[2]["forecast"]["display"]
+
+
+def test_injury_related_reserve_loses_to_a_healthier_option_but_keeps_if_active_upside():
+    players = [
+        {"player_id": "healthy", "name": "Healthy", "club": "ARS", "positions": ["F"], "injury_status": None, "sleeper_lineup_state": "starter", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 6}},
+        {"player_id": "gtd", "name": "GTD", "club": "ARS", "positions": ["F"], "injury_status": "GTD", "sleeper_lineup_state": "reserve", "raw_stats": {"min": 900, "gp": 10, "pos_f_g": 8}},
+    ]
+    rows = [_row("healthy", "F", minutes=900, games=10, goals=6), _row("gtd", "F", minutes=900, games=10, goals=8)]
+    schedule = {"events": [{"date": "2026-09-20T15:00:00Z", "competitions": [{"competitors": [{"homeAway": "home", "team": {"displayName": "Arsenal"}}, {"homeAway": "away", "team": {"displayName": "Chelsea"}}]}]}]}
+    forecast = _prepare_forecasts(players, scoring_settings=SCORING, starting_slots=["F"], fixture_schedule=schedule, now=datetime(2026, 9, 11, tzinfo=timezone.utc), current_rows=rows, prior_rows=[], recent_weekly_rows=[])
+    assert forecast["projected_xi_player_ids"] == ["healthy"]
+    assert players[1]["forecast"]["points"] > players[1]["forecast"]["selection_points"]
+    assert "if active" in players[1]["forecast"]["display"]
