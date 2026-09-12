@@ -1449,7 +1449,7 @@ def gameweek_web_briefing_prompt(
     outcome = """
 Start with `🗓️ **Gameweek prep · GW{gameweek}**`. First give a compact team
 readiness snapshot. Then provide `Ideal XI` using the legal Sleeper formation
-and player positions supplied in the context, and list bench/reserve players
+and assigned lineup positions supplied in the context, and list bench/reserve players
 separately. Explain the most important start/sit calls using current fixture,
 role, injury, and minutes evidence. Include `Opposing fantasy team` exactly as
 the supplied context permits; when it says unavailable, state that Sleeper EPL
