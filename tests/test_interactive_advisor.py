@@ -236,6 +236,36 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.text, "Structured report unavailable.")
 
+    async def test_slot_formatted_xi_passes_when_locked_section_lines_are_exact(self):
+        xi_line = "**F — Player One** · est. 4.0 Kick & Run pts"
+        bench_line = "**Player Two** · est. 6.0 Kick & Run pts"
+        report = (
+            "**Readiness**\nProjected XI: 10.0 Kick & Run pts\n\n"
+            f"**Ideal XI**\n- {xi_line}\n\n"
+            f"**Bench / reserves**\n- {bench_line}"
+        )
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=[NS(type="web_search_call")], output_text=self.hold(report),
+        ))))
+
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/gameweek prepare", question="Prepare my lineup", evidence=self.packet(),
+            command_instructions="Use structured sections.", mandatory_web=True,
+            partial_text="Structured report unavailable.", client=client,
+            required_analysis_fragments=("Projected XI: 10.0 Kick & Run pts",),
+            required_analysis_section_fragments={
+                "**Readiness**": ("Projected XI: 10.0 Kick & Run pts",),
+                "**Ideal XI**": (xi_line,),
+                "**Bench / reserves**": (bench_line,),
+            },
+            required_ordered_section_fragments={"**Ideal XI**": (xi_line,)},
+            required_exact_line_fragments=(xi_line, bench_line),
+            render_no_action_decision=False,
+        )
+
+        self.assertEqual(response.text, report)
+        self.assertEqual(response.trace["result_status"], "complete")
+
     async def test_pre_researched_evidence_skips_duplicate_finalizer_web_search(self):
         output = [NS(type="message", content=[])]
         create = AsyncMock(return_value=NS(id="slash-response", output=output, output_text=self.hold("Timeline-backed assessment")))
