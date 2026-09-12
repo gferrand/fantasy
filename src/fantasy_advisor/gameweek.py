@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from .league import LEAGUE_ID
 from .forecast_model import MODEL_VERSION, historical_inputs
@@ -228,7 +228,12 @@ def _prepare_forecasts(
     total_display = f"Projected XI: {total:.1f} Kick & Run pts"
     ordered_assignments = _ordered_forecast_xi_assignments(lineup.slot_assignments, by_id)
     xi_lines = [
-        _forecast_xi_display(slot, by_id[player_id]["name"], player_by_id[player_id]["forecast"]["display"])
+        _forecast_xi_display(
+            slot,
+            by_id[player_id]["name"],
+            by_id[player_id].get("positions") or [],
+            player_by_id[player_id]["forecast"]["display"],
+        )
         for player_id, slot in ordered_assignments
     ]
     return {
@@ -294,12 +299,19 @@ def _ordered_forecast_xi_assignments(
     return sorted(assignments, key=key)
 
 
-def _forecast_xi_display(slot: str, name: str, forecast_display: str) -> str:
+def _forecast_xi_display(slot: str, name: str, positions: Iterable[str], forecast_display: str) -> str:
     """Prefix the locked player forecast with the actual selected slot."""
     player_prefix = f"**{name}**"
     if not forecast_display.startswith(player_prefix):
         return forecast_display
-    label = str(slot).upper().replace("_", " ")
+    normalized_slot = str(slot).upper()
+    if normalized_slot.endswith("_FLEX"):
+        allowed = tuple(normalized_slot.removesuffix("_FLEX"))
+        player_positions = {str(item).upper() for item in positions}
+        eligible = [position for position in allowed if position in player_positions]
+        label = f"{'/'.join(allowed)} flex ({'/'.join(eligible)} eligible)"
+    else:
+        label = normalized_slot.replace("_", " ")
     return f"**{label} — {name}**{forecast_display[len(player_prefix):]}"
 
 

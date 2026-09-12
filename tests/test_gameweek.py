@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from fantasy_advisor.gameweek import (
     LEAGUE_ID,
+    _forecast_xi_display,
     _ordered_forecast_xi_ids,
     load_gameweek_prepare_context,
     load_gameweek_recap_context,
@@ -133,6 +134,15 @@ class GameweekContextTests(unittest.TestCase):
         self.assertEqual(
             _ordered_forecast_xi_ids(("forward", "midfielder", "defender", "keeper"), players),
             ["keeper", "defender", "midfielder", "forward"],
+        )
+
+    def test_forecast_xi_flex_label_includes_actual_qualifying_position(self):
+        self.assertEqual(
+            _forecast_xi_display(
+                "FMD_FLEX", "Granit Xhaka", ["M"],
+                "**Granit Xhaka** · est. 7.9 Kick & Run pts",
+            ),
+            "**F/M/D flex (M eligible) — Granit Xhaka** · est. 7.9 Kick & Run pts",
         )
 
 
