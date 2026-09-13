@@ -30,7 +30,10 @@ adds role and availability assessments with verification flags and sources,
 an outlook, watch signal, and optional priority reason. Unknown assessments
 must explain the specific missing fact. Generic “no update” text does not meet
 the quality contract. Missing or stale evidence makes the report explicitly
-partial; it never erases a watched player. A malformed or incomplete result
+partial; it never erases a watched player. Stale verified claims are removed,
+and any outlook or priority that could depend on them is replaced with a safe
+interpretation of current Sleeper workload and a concrete selection check.
+Other players retain their valid research. A malformed or incomplete result
 gets one corrective retry explaining the actual failure, then fails visibly.
 
 Verified role evidence must concern the active Premier League season and be no

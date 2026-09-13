@@ -2465,6 +2465,7 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
         name = str(player.get("canonical_name") or "Player")
         identity = player.get("current_identity") or {}
         fixture = player.get("next_fixture") if identity.get("resolved") else None
+        stale_fields: list[str] = []
         summaries: list[str] = []
         sources: list[dict[str, Any]] = []
         for field, age in (("role", 21), ("availability", 7)):
@@ -2477,7 +2478,15 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
             if assessment["verified"]:
                 if not _fresh_sources(assessment["sources"], now=now, max_age=timedelta(days=age),
                                       match_window=field == "availability" and _fixture_within_72_hours(fixture, now=now)):
-                    raise AutomationError(f"Watchlist {item['player_id']} has stale or missing {field} sources")
+                    stale_fields.append(field)
+                    assessment["verified"] = False
+                    assessment["sources"] = []
+                    assessment["summary"] = (
+                        "Recent public role evidence is unavailable; current Sleeper workload is shown below."
+                        if field == "role" else
+                        "Current fitness or eligibility could not be established from sufficiently recent public evidence."
+                    )
+                    summary = assessment["summary"]
             else:
                 partial = True
             label = "Role" if field == "role" else "Availability"
@@ -2487,6 +2496,24 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
             for source in assessment["sources"]:
                 if source not in sources:
                     sources.append(source)
+        if item["outcome"] == "verified_update" and not _fresh_sources(
+            item["sources"], now=now, max_age=timedelta(days=7),
+        ):
+            stale_fields.append("news")
+            item["summary"] = "A current material development could not be established from dated public evidence."
+            item["sources"] = []
+            item["outcome"] = "insufficient_current_evidence"
+        if stale_fields:
+            partial = True
+            item["outlook"] = _watchlist_workload_outlook(player.get("current_sleeper_stats") or {})
+            item["watch_signal"] = (
+                "Official eligibility confirmation and the next squad list will clarify whether the flagged player can participate."
+                if (player.get("current_sleeper_stats") or {}).get("injury_status") else
+                "The next confirmed XI and minutes will show whether the recorded workload continues; current fitness remains a separate check."
+            )
+            item["priority_reason"] = ""
+            if item["outcome"] == "no_current_public_update_found":
+                item["outcome"] = "insufficient_current_evidence"
         for field in ("outlook", "watch_signal"):
             if not _useful_watchlist_text(item.get(field)):
                 raise AutomationError(f"Watchlist {item['player_id']} needs a concrete {field}")
@@ -2508,8 +2535,6 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
             heading += " · Current club/positions/fixture unavailable"
         rows = [heading]
         if item["outcome"] == "verified_update":
-            if not _fresh_sources(item["sources"], now=now, max_age=timedelta(days=7)):
-                raise AutomationError("Watchlist material update needs current dated sources")
             rows.append(f"**Update:** {item['summary']}")
             for source in item["sources"]:
                 if source not in sources:
@@ -2561,6 +2586,19 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
     if partial:
         intro += "⚠️ Some current evidence is incomplete; specific gaps are marked below.\n\n"
     return intro + "\n\n".join(cards)
+
+
+def _watchlist_workload_outlook(stats: dict[str, Any]) -> str:
+    """Interpret only authoritative workload when public claims cannot be retained."""
+
+    games, starts, minutes = (stats.get(key) for key in ("games", "starts", "minutes"))
+    if isinstance(games, (int, float)) and games > 0:
+        if isinstance(minutes, (int, float)) and minutes / games < 30:
+            return "Short appearances limit opportunity. A larger league workload is needed before inferring a stronger role."
+        if isinstance(starts, (int, float)) and starts >= 2 and starts / games >= 0.75:
+            return "Repeated season starts support regular involvement, but they do not establish the latest tactical role or current fitness."
+        return "The season record shows involvement but does not establish a regular starting role; selection and minutes remain the key uncertainty."
+    return "Current workload is unavailable, so role and production upside remain unassessed pending reliable selection evidence."
 
 
 def _useful_watchlist_text(value: object) -> bool:
