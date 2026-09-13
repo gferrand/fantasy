@@ -306,8 +306,8 @@ def build_client(config: AppConfig) -> discord.Client:
         for chunk in chunks[1:]:
             await interaction.followup.send(chunk, allowed_mentions=discord.AllowedMentions.none())
 
-    async def edit_injury_interaction(interaction: discord.Interaction, text: str) -> None:
-        """Deliver the complete injury report as DM messages without attachments."""
+    async def edit_complete_dm_interaction(interaction: discord.Interaction, text: str) -> None:
+        """Deliver a complete private report as DM messages without attachments."""
 
         text = suppress_discord_link_embeds(text)
         chunks = split_discord_message(text, limit=1900)
@@ -555,6 +555,9 @@ def build_client(config: AppConfig) -> discord.Client:
                     )
                     if is_interactive:
                         await asyncio.to_thread(remember_advisor_response, report, thread_id, route=route)
+                if content.strip() == "!task watchlist_report":
+                    await edit_complete_dm_interaction(interaction, report)
+                    return
                 chunks = split_discord_message(report, limit=1900)
                 # User-installed interactions have a bounded follow-up budget.
                 # Keep the response complete for normal reports and make an
@@ -992,7 +995,7 @@ def build_client(config: AppConfig) -> discord.Client:
                 final_text = report if result.trace["result_status"] != "complete" else (
                     report + "\n\n🧭 **Advisor assessment**\n" + result.text
                 )
-            await edit_injury_interaction(interaction, final_text)
+            await edit_complete_dm_interaction(interaction, final_text)
         except SleeperDataError as exc:
             LOGGER.exception("Could not load the current Sleeper injury board")
             await interaction.edit_original_response(

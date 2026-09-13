@@ -453,3 +453,39 @@ class UnifiedAdvisorDiscordTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(discord_bot.RequestDeadline, "start", return_value=RequestDeadline(time.monotonic() + .02)):
             await self.client.on_message(message)
         self.assertIn("time limit", message.channel.send.call_args.args[0])
+
+
+class WatchlistTaskDeliveryTests(unittest.IsolatedAsyncioTestCase):
+    async def test_watchlist_task_delivers_every_player_beyond_webhook_budget(self):
+        from types import SimpleNamespace as NS
+        from fantasy_advisor.automation import split_discord_message
+
+        client = build_client(_test_config())
+        command = client._fantasy_command_tree.get_command("task")
+        interaction = NS(
+            user=NS(id=123), channel=NS(id=1234, send=AsyncMock()),
+            response=NS(defer=AsyncMock()), edit_original_response=AsyncMock(),
+            followup=NS(send=AsyncMock()),
+        )
+        report = "👀 **Watchlist Update**\n\n" + "\n\n".join(
+            f"**Player {number}**\n" + ("Source-backed role, production, availability and concrete watch signal. " * 24)
+            for number in range(9)
+        )
+        with (
+            patch("fantasy_advisor.discord_bot.run_scheduled_task", return_value=NS(text=report, thread_id=None)) as runner,
+            patch("fantasy_advisor.discord_bot.persist_discord_channel_id"),
+            patch("fantasy_advisor.discord_bot.persist_advisor_context_event"),
+        ):
+            await command.callback(interaction, "watchlist_report")
+
+        expected = split_discord_message(report, limit=1900)
+        self.assertGreater(len(expected), 5)
+        delivered = [interaction.edit_original_response.await_args.kwargs["content"]]
+        delivered.extend(call.args[0] for call in interaction.channel.send.await_args_list)
+        self.assertEqual(delivered, expected)
+        self.assertIn("**Player 8**", "\n".join(delivered))
+        self.assertNotIn("too long", "\n".join(delivered))
+        interaction.followup.send.assert_not_awaited()
+        runner.assert_called_once()
+        for call in interaction.channel.send.await_args_list:
+            self.assertFalse(call.kwargs["allowed_mentions"].everyone)

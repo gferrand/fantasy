@@ -660,8 +660,8 @@ class AutomationTests(unittest.TestCase):
         report, material, status, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
         self.assertTrue(material)
         self.assertEqual(status, "complete")
-        self.assertEqual(report.count("**Outlook:**"), 2)
-        self.assertIn("[Club report](<https://club.example/report>)", report)
+        self.assertEqual(report.count("• **Player**"), 2)
+        self.assertIn("https://club.example/report", report)
         self.assertNotIn("Both players were checked", report)
 
     def test_watchlist_normalizer_owns_week_and_sleeper_standard_labels(self):
