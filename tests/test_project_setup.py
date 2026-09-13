@@ -173,10 +173,10 @@ class ProjectSetupTests(unittest.TestCase):
         task = (ROOT / "docs" / "watchlist_report_task.md").read_text()
         self.assertIn("8:00 AM", task)
         self.assertIn("2026/27 Premier League", task)
-        self.assertIn("No material update", task)
+        self.assertIn("Generic “no update” text does not meet", task)
         self.assertIn("previous-season, preseason, cup", task)
-        self.assertIn("do not recommend, simulate, or imply", task)
-        self.assertIn("no Discord conversation context", task)
+        self.assertIn("no pickup, waiver, trade, or lineup", task)
+        self.assertIn("without conversation history", task)
 
 
 if __name__ == "__main__":

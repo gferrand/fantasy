@@ -1,65 +1,61 @@
 # Daily Premier League watchlist report
 
-This local task runs at 8:00 AM America/New_York for one private Discord user.
-It receives `CURRENT CANONICAL WATCHLIST EVIDENCE` assembled before execution.
-The local scheduler finalizes it directly through the OpenAI Advisor in the
-Owner bot DM, without conversation history or interactive grounding. An empty
-watchlist produces a concise confirmation card rather than a silent run.
+The existing task runs at 8:00 AM America/New_York and delivers to the Owner bot
+DM. It uses canonical watchlist evidence without conversation history or
+interactive grounding. Every saved player receives a compact current outlook,
+including on quiet days; an empty watchlist receives a short confirmation.
 
-The first 12 canonical watched players are checked in one bounded current-public
-research pass. Each receives exactly one structured outcome: verified update,
-no current public update found, insufficient current evidence, or research
-failed. A missing player gets one corrective retry; a second incomplete result
-is an honest partial report. Current Sleeper stats and the maintained fixture
-schedule are deterministic authority. Each saved player is resolved by ID
-against the current Sleeper EPL catalog before display: the saved club and
-position are historical audit fields, never current identity. If that identity
-is unresolved, current club, position, and fixture guidance are withheld.
-Scores are always labeled `Sleeper standard: N pts`; the card separates current
-GW from `stats through` the last completed GW and uses America/New_York for
-human times. Source links include their fact date and suppress previews.
+## Report contract
 
-```text
-Produce a compact daily status report for the personal Premier League watchlist.
-This is observation only: do not recommend, simulate, or imply any Sleeper roster
-transaction, pickup, waiver, trade, or lineup action.
+The mobile heading is `👀 WATCHLIST UPDATE` (bold in Discord). Use the active
+2026/27 Premier League season; exclude previous-season, preseason, cup and
+international performances from league-role and form claims.
 
-The supplied CURRENT CANONICAL WATCHLIST EVIDENCE is authoritative for which
-players are watched, current Sleeper stats, and deterministic fixtures. It
-contains no Discord conversation context; do not request or rely on such context.
+The scheduler renders cards from structured, validated research rather than the
+model's free-form report. Each card includes current identity, role/minutes,
+availability, season production, fantasy outlook, a concrete next signal to
+watch, and the next fixture. Up to three evidence-backed attention priorities
+lead the report. This is observation-only: no pickup, waiver, trade, or lineup
+instructions. Target 60–90 narrative words per player, fewer with limited evidence.
 
-For every watched player, give:
-- verified 2026/27 Premier League appearances, minutes, and current status only
-  when directly supported by the snapshot or a source that clearly identifies the
-  active Premier League season and competition;
-- any material role, injury, transfer, suspension, or selection news, with a
-  direct source link;
-- a relevant next-fixture or availability note when it can be verified for the
-  active Premier League season; otherwise say so plainly;
-- `No material update` when there is no verified change today.
+Research current-season role and availability even without breaking news. Use
+dated lineups, match reports, club/manager updates and reputable reporting.
+Established context gets visible dated source links, just like new developments.
+Never present old stories as new, infer fitness from silence, or infer recent
+trends from season totals. Interpretation must follow the available evidence.
 
-If current Sleeper stats are unavailable, keep the player in the report and
-state that the current deterministic stats row was unavailable. Do not silently
-delete them and do not guess a destination or availability.
+Each research record retains its news outcome (verified update, no current
+public update found, insufficient current evidence, or research failed), and
+adds role and availability assessments with verification flags and sources,
+an outlook, watch signal, and optional priority reason. Unknown assessments
+must explain the specific missing fact. Generic “no update” text does not meet
+the quality contract. Missing or stale evidence makes the report explicitly
+partial; it never erases a watched player. A malformed or incomplete result
+gets one corrective retry explaining the actual failure, then fails visibly.
 
-The ACTIVE EVIDENCE WINDOW is binding. Exclude previous-season, preseason, cup,
-European, youth, and career statistics or articles by default. A recent article
-about 2025/26 is still invalid evidence for 2026/27. If current Premier League
-evidence is unavailable or ambiguous, say `Not verified for the active Premier
-League season`; never project current minutes, appearances, form, role, or
-selection from older material.
+Verified role evidence must concern the active Premier League season and be no
+older than 21 days; prefer the last three matches. Verified availability must
+be no older than seven days. Within 72 hours of kickoff, require timestamped
+availability evidence within 72 hours or a dated ongoing timetable covering
+that fixture. Unknown dates cannot establish current status. Source retrieval
+times remain separate from fact dates.
 
-Always deliver a concise status even on quiet days. Begin with the active evidence
-window and source timestamp, then use one short bullet per watched player. Keep
-facts separate from any clearly labeled inference.
+## Deterministic facts and delivery
 
-DISCORD MOBILE PRESENTATION (binding)
-- Begin `👀 WATCHLIST UPDATE`, followed by one compact evidence-window line.
-- Use one easy-to-scan card per watched player: `**Player** · club · position`,
-  then a single status/fact line, then a source or next-fixture note only when
-  it changes the decision. Leave a blank line between players.
-- Use `✅ NO MATERIAL UPDATE` on quiet entries. Do not add empty categories,
-  tables, code blocks, raw snapshot JSON, task identifiers, or process notes.
-- End with `🔎 RECHECK` only if something should be verified before a relevant
-  match; otherwise omit it. Return only the report.
-```
+Current Sleeper identity, stats and maintained fixtures supply the displayed
+facts. Saved club/position are historical audit fields; unresolved identity
+withholds current club, position and fixture guidance. Missing stats remain
+explicitly unavailable. Available season totals, starts, minutes and rates are
+shown with `Sleeper standard: N pts` labels, never as Kick & Run scoring or
+future projections. Live season aggregates can already contain matches from the unfinished current
+GW, so label them as season stats as retrieved, not stats through the last
+completed GW. The header separates current GW from completed GW and
+human times use America/New_York.
+
+The existing Discord delivery, message splitting, schedule and persistence
+remain in place. Source previews are suppressed. The existing model uses at least high reasoning for multi-player source
+reconciliation; an already higher configured effort is preserved.
+Unused six-week trend and previous-season lookups are disabled for this report.
+Model/public-search call counts and elapsed
+time are included in the existing scheduled trace; no new persistence or
+service is introduced.
