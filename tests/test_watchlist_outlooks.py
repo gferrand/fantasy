@@ -69,8 +69,11 @@ def test_stale_or_undated_evidence_cannot_establish_current_status(field):
     for precision, stamp in [("date", "2025-01-01"), ("unknown", "")]:
         row = watch_record("one")
         row[field]["sources"][0].update(as_of=stamp, as_of_precision=precision)
-        with pytest.raises(AutomationError, match="stale or missing"):
-            render(row)
+        report, _, status, _ = render(row)
+        assert status == "partial"
+        assert "Club report" not in report
+        assert row["outlook"] not in report
+        assert "unverified" in report
 
 
 def test_near_fixture_needs_precise_availability_or_covering_timetable():
@@ -79,8 +82,7 @@ def test_near_fixture_needs_precise_availability_or_covering_timetable():
     row = copy.deepcopy(watch_record("one"))
     source = row["availability"]["sources"][0]
     source.update(as_of=datetime.now(timezone.utc).date().isoformat(), as_of_precision="date")
-    with pytest.raises(AutomationError, match="availability sources"):
-        render(row, data)
+    assert render(row, data)[2] == "partial"
     source.update(evidence_type="ongoing_timetable", covers_next_fixture=True)
     assert render(row, data)[2] == "no_change"
 
@@ -214,3 +216,28 @@ def test_second_quality_failure_stops_after_one_retry():
                               invocation="manual", evidence="EVIDENCE\n"+json.dumps(packet()),
                               previous_state="none", client=client)
     assert client.responses.create.call_count == 2
+
+
+def test_stale_public_role_keeps_workload_but_removes_unsupported_outlook():
+    row = copy.deepcopy(watch_record("one"))
+    row["role"]["sources"][0]["as_of"] = "2025-01-01T00:00:00+00:00"
+    row["outlook"] = "He is the new penalty taker and now has a guaranteed starting role."
+    row["priority_reason"] = "New penalty duties improve his upside."
+    data = packet()
+    data["players"][0]["current_sleeper_stats"].update(games=4, starts=4, minutes=360)
+    report, _, status, _ = render(row, data)
+    assert status == "partial"
+    assert "penalty" not in report
+    assert "guaranteed" not in report
+    assert "Repeated season starts support regular involvement" in report
+    assert "360.0 minutes" in report
+    assert "Attention priorities" not in report
+
+
+def test_stale_news_is_not_a_material_change():
+    row = copy.deepcopy(watch_record("one", outcome="verified_update"))
+    row["sources"] = [{**row["sources"][0], "as_of": "2025-01-01T00:00:00+00:00"}]
+    report, material, status, _ = render(row)
+    assert not material and status == "partial"
+    assert "**Update:**" not in report
+    assert "2025-01-01" not in report
