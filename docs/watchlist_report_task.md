@@ -39,6 +39,7 @@ and any outlook or priority that could depend on them is replaced with a safe
 interpretation of current Sleeper workload and a concrete selection check.
 Other players retain their valid research. A malformed or incomplete result
 gets one corrective retry explaining the actual failure, then fails visibly.
+Hidden SDK transport retries are disabled for this report; provider timeouts fail visibly.
 
 Verified role evidence must concern the active Premier League season and be no
 older than 21 days; prefer the last three matches. Verified availability must
@@ -70,6 +71,8 @@ reconciliation; an already higher configured effort is preserved. Watchlist rese
 and interactive watchlist questions use the current `web_search` tool with high
 search context to inspect match-page details. Other report tools are unchanged.
 See the [OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
+One shared current-gameweek stats request supplies minutes and disciplinary
+events for cross-checking recent appearances; absent fields stay unknown.
 Unused six-week trend and previous-season lookups are disabled for this report.
 Model/public-search call counts and elapsed
 time are included in the existing scheduled trace; no new persistence or

@@ -46,7 +46,7 @@ from .player_catalog import (
     load_player_catalog,
     refresh_player_catalog,
 )
-from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, SleeperClient, SleeperDataError
+from .sleeper import ACTIVE_EPL_CLUBS, API_BASE, STATS_BASE, SleeperClient, SleeperDataError
 from .watchlist import WatchlistPlayer, list_watchlist
 from .gameweek import latest_completed_gameweek
 
@@ -2108,7 +2108,7 @@ Put every start, bench, hold, or monitor decision exclusively in `lineup_actions
         return shared + """
 Create a concise `👀 **Watchlist Update**` with current public research and exactly one structured research record per canonical player ID. This is observation-only. Use supplied Sleeper facts and fixtures exactly; Sleeper standard scoring is not Kick & Run scoring. `verified_update` means a sourced material development in availability, role, selection or club, never a statistical refresh alone. Compare prior state when available; do not repeat an unchanged story as new. On a first run, treat existing findings as current context unless they establish a current material development essential to selection. Separate news outcome from outlook: no_current_public_update_found is a researched quiet result, insufficient_current_evidence means an evidence gap, and research_failed means research did not complete.
 Source `as_of` is the football fact date/time, never retrieval time. Keep retrieved_at separate. Use timestamp precision when available, otherwise YYYY-MM-DD with date precision; unknown dates cannot verify current status. Research must concern the supplied active Premier League season; exclude previous-season, preseason, cup and international performances from league-role or form claims. Never infer the date of a fact from the page crawl/update date.
-The purpose is a useful current outlook for EVERY player, including quiet days, not a news-only digest. Perform focused searches for each named player and current club covering recent league lineups/match reports and injury/suspension news. A general league injuries or squad-list search alone is not adequate player research. Open the exact cited source and verify that it names this player, club and match; never reuse a match URL for a different fixture or invent a source title. In lineups distinguish the starting XI from substitutes and substitution times. When a suspension flag exists, inspect the latest match report for red cards as well as the lineup: a player can start and then be dismissed, so a prior start never contradicts a current suspension. Do not assert a ban length without dated confirmation. Prioritize the latest played league match: an older cup omission or preseason role must not outweigh later league participation. A normal appearance without a changed role is current context, not verified_update. Research each player's current-season role/minutes and availability using dated match reports, lineups, club/manager updates and reliable reporting. Never treat absence of news as evidence of fitness. Return `role` and `availability` assessments with summary, verified and sources. Verified role needs evidence from the current PL season within 21 days (prefer the last three matches). Verified availability needs evidence within seven days; within 72 hours of kickoff require timestamped evidence within 72 hours or a dated ongoing timetable explicitly covering the fixture. A recent appearance alone does not establish current fitness. If evidence is insufficient, set verified=false and explain the SPECIFIC missing fact in summary; do not fill it with "no update", "checked", or similar boilerplate. Unverified summaries must describe a specific gap in one short sentence (about 10–15 words), never make an unsupported factual claim. Do not attach generic, preseason, unrelated or undated landing-page links as evidence for an unknown assessment; use an empty sources list when no relevant evidence was found.
+The purpose is a useful current outlook for EVERY player, including quiet days, not a news-only digest. Perform focused searches for each named player and current club covering recent league lineups/match reports and injury/suspension news. A general league injuries or squad-list search alone is not adequate player research. Use open_page on the exact cited source, not only search snippets, and verify that it names this player, club and match; never reuse a match URL for a different fixture or invent a source title. In lineups distinguish the starting XI from substitutes and substitution times. Cross-check the supplied current_gameweek_stats: a one-appearance week gives that match’s minutes, not season totals. A 27-minute appearance cannot be described as a 63-minute withdrawal. Missing fields remain unknown, not zero. Dismissal counts establish recorded card events, not a ban length. Do not infer a trend or individual-match minutes from a week containing multiple appearances. When a suspension flag exists, inspect the latest match report for red cards as well as the lineup: a player can start and then be dismissed, so a prior start never contradicts a current suspension. Do not assert a ban length without dated confirmation. Prioritize the latest played league match: an older cup omission or preseason role must not outweigh later league participation. A normal appearance without a changed role is current context, not verified_update. Research each player's current-season role/minutes and availability using dated match reports, lineups, club/manager updates and reliable reporting. Never treat absence of news as evidence of fitness. Return `role` and `availability` assessments with summary, verified and sources. Verified role needs evidence from the current PL season within 21 days (prefer the last three matches). Verified availability needs evidence within seven days; within 72 hours of kickoff require timestamped evidence within 72 hours or a dated ongoing timetable explicitly covering the fixture. A recent appearance alone does not establish current fitness. If evidence is insufficient, set verified=false and explain the SPECIFIC missing fact in summary; do not fill it with "no update", "checked", or similar boilerplate. Unverified summaries must describe a specific gap in one short sentence (about 10–15 words), never make an unsupported factual claim. Do not attach generic, preseason, unrelated or undated landing-page links as evidence for an unknown assessment; use an empty sources list when no relevant evidence was found.
 For each player return `outlook` as ONE plain-language takeaway, ideally 15–25 words and at most 30 words, without inline citations or formatting. It is the ONLY narrative displayed in the daily list. Include the most important verified development, role change or availability issue and why it matters; on quiet days explain current value. Do not duplicate the summary or hide material news in other fields. If the latest match changed a starter into a substitute, say so in the takeaway rather than averaging that change away in season totals. Do not describe minutes as dependable or a role as secure solely from season starts. Return `outlook` explaining the fantasy upside/risk using those assessments and supplied stats, and `watch_signal` naming a concrete observable next event (starting XI, minutes, position, set-piece assignment, suspension clearance or manager fitness update) and why it matters. Distinguish interpretations from verified facts. Do not infer recent trends from season totals, invent projections, or give add/drop, trade or lineup instructions. Use `priority_reason` for up to three players deserving closer attention, with a short reason grounded in verified role/availability; otherwise use an empty string. Array order sets priority order; put material developments first. Budget roughly 15 words each for role and availability, 25 for outlook, and 20 for watch_signal. The supporting record may contain 60–90 words per player across role, availability, outlook and watch_signal; the combined hard limit is 110 words. When supplied stats establish repeated starts or near-full-match minutes, explain that workload rather than claiming nothing is known about the role. Absence of a routine fitness statement alone is not evidence of an injury and must not become the main fantasy risk for every healthy-looking player. Outlooks should interpret actual workload, production and role evidence, not merely restate the availability gap. Matchup-strength, team-form and role-security claims require supporting evidence too; do not infer a favorable matchup merely from home venue or call a role secure after one start. Use fewer when evidence is limited. Do not repeat the same caveat across fields. Do not repeat points totals in narrative fields. The generic catalog status A means active, not medically available; current_sleeper_stats.injury_status is the separate availability flag and must inform the outlook when present. The daily list displays only identity, outlook, a concise evidence-gap flag and one dated source. Keep detailed stats, fixtures, role and availability reasoning in the supporting record; users request details through /ask. The `report` field is ignored in favor of a validated concise list; return a short label there. `summary` describes only the news finding; unchanged news is not the whole outlook. Sources for established context are just as important as new developments. Use insufficient_current_evidence when either assessment cannot be verified, unless research itself failed; use verified_update only for sourced, current material news. Never disguise partial research as a complete no-change result.
 `club_when_added` and `positions_when_added` are historical audit fields only: never render them as a player's current identity. If `current_identity.resolved` is false, say current club/positions/fixture are unavailable and do not give fixture guidance.
 """
@@ -2524,8 +2524,7 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
             heading += f" ({identity['current_club']})"
         else:
             heading += " (identity unverified)"
-        if item["outcome"] == "verified_update":
-            sources = item["sources"] + sources
+        sources = item["sources"] + sources
         partial = partial or item["outcome"] in {"insufficient_current_evidence", "research_failed"}
         flags = []
         stats = player.get("current_sleeper_stats") or {}
@@ -2540,7 +2539,7 @@ def _render_watchlist_outlooks(payload: dict[str, Any], evidence: str) -> str:
         if flags:
             row += " (" + "; ".join(flags) + ")"
         if sources:
-            source = sources[0]
+            source = max(sources, key=lambda entry: str(entry.get("as_of") or ""))
             # One dated evidence link keeps the list scannable; full evidence remains in the record.
             date = str(source.get("as_of") or "")[:10]
             row += f" [Source {date}](<{str(source['url']).strip()}>)"
@@ -2697,7 +2696,8 @@ def run_scheduled_advisor(
             from openai import OpenAI
         except ImportError as exc:  # pragma: no cover - declared dependency
             raise AutomationError("The OpenAI Python SDK is not installed") from exc
-        client = OpenAI(api_key=config.openai_api_key, timeout=min(config.codex_timeout_seconds, 180))
+        client = OpenAI(api_key=config.openai_api_key, timeout=min(config.codex_timeout_seconds, 180),
+                        max_retries=0 if task.id == "watchlist_report" else 2)
     started = time.monotonic()
     trace: dict[str, Any] = {
         "request_id": os.urandom(12).hex(),
@@ -2876,6 +2876,29 @@ def build_watchlist_live_packet(config: AppConfig) -> str | None:
         live_catalog = live_catalog if isinstance(live_catalog, dict) else {}
     except (SleeperDataError, OSError, ValueError):
         live_catalog = {}
+    # One shared week snapshot cross-checks recent participation without six-week trends.
+    week_by_player: dict[str, dict[str, Any]] = {}
+    if stats_report.week:
+        try:
+            week_rows = SleeperClient().get_json(
+                f"{STATS_BASE}/clubsoccer:epl/{stats_report.season}/{stats_report.week}?season_type=regular"
+            )
+            wanted = {player.player_id for player in watched}
+            for row in week_rows if isinstance(week_rows, list) else []:
+                if not isinstance(row, dict) or str(row.get("player_id")) not in wanted:
+                    continue
+                values = row.get("stats")
+                if not isinstance(values, dict):
+                    continue
+                week_by_player[str(row["player_id"])] = {
+                    "found": True, "gameweek": stats_report.week,
+                    **{label: values.get(key) for key, label in (
+                        ("gp", "games"), ("gs", "starts"), ("min", "minutes"),
+                        ("yc2", "second_yellow_dismissals"), ("rc", "red_cards"),
+                    )},
+                }
+        except (SleeperDataError, OSError, ValueError):
+            pass  # Season evidence remains usable; the week gap is explicit below.
     stats_by_player = {entry.player.player_id: entry for entry in stats_report.entries}
     players: list[dict[str, Any]] = []
     for watched_player in watched:
@@ -2915,6 +2938,7 @@ def build_watchlist_live_packet(config: AppConfig) -> str | None:
                     "goals": current.goals, "assists": current.assists,
                     "injury_status": current.injury_status, "updated_at": current.updated_at,
                 } if current is not None else {"found": False},
+                "current_gameweek_stats": week_by_player.get(watched_player.player_id, {"found": False}),
                 "next_fixture": fixtures.get(club) if resolved else None,
             }
         )

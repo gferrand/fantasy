@@ -263,3 +263,30 @@ def test_daily_takeaway_length_is_bounded():
     row["outlook"] = "Regular minutes would improve the opportunity. " * 6
     with pytest.raises(AutomationError, match="outlook exceeds 30"):
         render(row)
+
+
+def test_compact_entry_links_to_recent_evidence_instead_of_older_context():
+    row = copy.deepcopy(watch_record("one"))
+    row["role"] = copy.deepcopy(row["role"])
+    row["role"]["sources"][0].update(as_of="2025-01-01", as_of_precision="date", url="https://club.example/old")
+    row["role"]["sources"].append({**row["availability"]["sources"][0], "url": "https://club.example/latest"})
+    report, _, _, _ = render(row)
+    assert "https://club.example/old" not in report
+    assert "https://club.example/latest" in report
+
+
+def test_watchlist_disables_hidden_provider_transport_retries():
+    from unittest.mock import patch
+    config = make_config()
+    config = config.__class__(**{**config.__dict__, "openai_api_key": "test"})
+    client = MagicMock()
+    client.responses.create.return_value = MagicMock(
+        output=[MagicMock(type="web_search_call")], id="test",
+        output_text=json.dumps({"status": "no_change", "material_update": False,
+                                "report": "Label", "research": [watch_record("one")]}),
+    )
+    with patch("openai.OpenAI", return_value=client) as constructor:
+        run_scheduled_advisor(config, TaskSpec("watchlist_report", "Watchlist", Path("x"), "daily"),
+                              invocation="manual", evidence="EVIDENCE\n"+json.dumps(packet()), previous_state="none")
+    assert constructor.call_args.kwargs["max_retries"] == 0
+    assert client.responses.create.call_count == 1

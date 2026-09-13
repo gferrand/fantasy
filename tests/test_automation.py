@@ -254,7 +254,11 @@ class AutomationTests(unittest.TestCase):
             with (
                 patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
                 patch("fantasy_advisor.lineup_alerts.load_fixture_schedule", return_value={"events": []}),
-                patch("fantasy_advisor.automation.SleeperClient.get_json", return_value=catalog),
+                patch("fantasy_advisor.automation.SleeperClient.get_json", side_effect=lambda url: (
+                    [{"player_id": "10", "stats": {"gp": 1, "min": 27, "yc2": 1}},
+                     {"player_id": "unwatched", "stats": {"gp": 1, "min": 90}}]
+                    if "/2026/3?" in url else catalog
+                )) as fetch,
             ):
                 packet = build_watchlist_live_packet(config)
             self.assertIn("CURRENT CANONICAL WATCHLIST EVIDENCE", packet)
@@ -263,6 +267,12 @@ class AutomationTests(unittest.TestCase):
             self.assertIn('"points_per_game":6.0', packet)
             self.assertIn('"minutes_per_game":90.0', packet)
             self.assertNotIn("DISCORD_CONTEXT_MARKER", packet)
+            week = json.loads(packet.split("JSON:\n", 1)[1])["players"][0]["current_gameweek_stats"]
+            self.assertEqual(week["minutes"], 27)
+            self.assertEqual(week["second_yellow_dismissals"], 1)
+            self.assertIsNone(week["starts"])
+            self.assertNotIn("unwatched", packet)
+            self.assertEqual(fetch.call_count, 2)  # catalog plus one shared week request
 
     def test_watchlist_uses_current_sleeper_identity_and_eastern_report_time(self):
         with tempfile.TemporaryDirectory() as temporary:

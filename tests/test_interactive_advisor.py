@@ -884,14 +884,18 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([tool["type"] for tool in second_tools], ["web_search_preview"])
         self.assertEqual(client.responses.create.call_args_list[1].kwargs["tool_choice"], "required")
 
-    async def test_watchlist_drilldown_uses_current_search_with_match_page_context(self):
-        no_op = NS(type="function_call", name="no_private_fantasy_data_needed", arguments='{"reason":"Public match role only"}')
+    async def test_watchlist_drilldown_uses_current_player_and_match_page_context(self):
+        player = NS(type="function_call", name="get_player_context", arguments='{"player_name":"Mathys Tel"}')
         client = NS(responses=NS(create=AsyncMock(side_effect=[
-            result("", [no_op]), result("Latest match: substitute; role is unsettled.", [NS(type="web_search_call")]),
+            result("", [player]), result("Latest match: substitute; role is unsettled.", [NS(type="web_search_call")]),
         ])))
-        answer = await advisor.run_advisor(config(), "Detailed watchlist outlook for Mathys Tel: latest PL match and role. Observation only.", client=client)
+        with (patch.object(advisor, "execute_fantasy_tool", return_value=facts()) as execute,
+              patch.object(advisor, "persist_advisor_context_event")):
+            answer = await advisor.run_advisor(config(), "Detailed watchlist outlook for Mathys Tel: latest PL match and role. Observation only.", client=client)
         tools = client.responses.create.call_args_list[1].kwargs["tools"]
-        self.assertEqual(tools, [{"type": "web_search", "search_context_size": "high"}])
+        self.assertIn({"type": "web_search", "search_context_size": "high"}, tools)
+        execute.assert_called_once()
+        self.assertEqual(execute.call_args.args[1], "get_player_context")
         self.assertTrue(answer.trace["web_search_used"])
         self.assertIn("substitute", answer.text)
 
