@@ -80,6 +80,23 @@ def test_config() -> AppConfig:
     )
 
 
+def watch_record(player_id, *, outcome="no_current_public_update_found"):
+    now = datetime.now(timezone.utc).isoformat()
+    source = {"title": "Club report", "url": "https://club.example/report", "as_of": now,
+              "retrieved_at": now, "as_of_precision": "timestamp",
+              "evidence_type": "manager_update", "covers_next_fixture": False}
+    return {
+        "player_id": player_id, "outcome": outcome,
+        "summary": "The manager confirmed a return to full training." if outcome == "verified_update" else "No new development found.",
+        "sources": [source] if outcome == "verified_update" else [],
+        "role": {"summary": "Started the last league match in a wide role.", "verified": True, "sources": [source]},
+        "availability": {"summary": "The manager confirmed full training participation.", "verified": True, "sources": [source]},
+        "outlook": "Regular minutes would make his current production more repeatable; selection remains the key risk.",
+        "watch_signal": "Watch the next starting XI for another wide-role start to confirm continuity.",
+        "priority_reason": "",
+    }
+
+
 class AutomationTests(unittest.TestCase):
     def test_environment_cannot_override_fantasy_luna_medium_profile(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -232,7 +249,7 @@ class AutomationTests(unittest.TestCase):
             watched, _ = add_watchlist_player(watchlist_file(config), {"player_id": "10", "name": "Watched Player", "club": "ARS", "positions": ["M"]})
             stats = WatchlistStatsReport(
                 season="2026", week=3, retrieved_at="now",
-                entries=(WatchlistStat(watched, 12.0, 2.0, 2.0, 180.0, None, None, None, None, None, None, True),),
+                entries=(WatchlistStat(watched, 12.0, 2.0, 2.0, 180.0, None, None, None, None, None, None, True, points_per_game=6.0, minutes_per_game=90.0),),
             )
             with (
                 patch("fantasy_advisor.intelligence_capabilities.get_watchlist_stats", return_value=stats),
@@ -243,6 +260,8 @@ class AutomationTests(unittest.TestCase):
             self.assertIn("CURRENT CANONICAL WATCHLIST EVIDENCE", packet)
             self.assertIn("Watched Player", packet)
             self.assertIn('"games":2.0', packet)
+            self.assertIn('"points_per_game":6.0', packet)
+            self.assertIn('"minutes_per_game":90.0', packet)
             self.assertNotIn("DISCORD_CONTEXT_MARKER", packet)
 
     def test_watchlist_uses_current_sleeper_identity_and_eastern_report_time(self):
@@ -637,14 +656,13 @@ class AutomationTests(unittest.TestCase):
         }]}
         with self.assertRaisesRegex(AutomationError, "every selected player"):
             _scheduled_response_payload(task, json.dumps(incomplete), evidence=evidence)
-        source = {"title": "BBC", "url": "https://bbc.example/story", "as_of": "2026-09-08", "retrieved_at": "2026-09-08T12:00:00+00:00", "as_of_precision": "date", "evidence_type": "reputable_reporting", "covers_next_fixture": False}
-        complete = {**base, "research": [
-            {"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
-            {"player_id": "two", "outcome": "verified_update", "summary": "Role improved.", "sources": [source]},
-        ]}
-        report, _, _, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
-        self.assertIn("No material changes", report)
-        self.assertIn("**Player** — [BBC](<https://bbc.example/story>)", report)
+        complete = {**base, "research": [watch_record("one"), watch_record("two", outcome="verified_update")]}
+        report, material, status, _ = _scheduled_response_payload(task, json.dumps(complete), evidence=evidence)
+        self.assertTrue(material)
+        self.assertEqual(status, "complete")
+        self.assertEqual(report.count("**Outlook:**"), 2)
+        self.assertIn("[Club report](<https://club.example/report>)", report)
+        self.assertNotIn("Both players were checked", report)
 
     def test_watchlist_normalizer_owns_week_and_sleeper_standard_labels(self):
         evidence = "CURRENT CANONICAL WATCHLIST EVIDENCE\nJSON:\n" + json.dumps({
@@ -654,7 +672,7 @@ class AutomationTests(unittest.TestCase):
         report = _normalize_watchlist_presentation(
             "👀 **Watchlist Update**\n2026/27 Premier League · through GW4\nPlayer — 31.0 points\nOther: Sleeper: 4.5 points", evidence,
         )
-        self.assertIn("2026/27 Premier League · GW4 · stats through GW3 · Sep 7", report)
+        self.assertIn("2026/27 Premier League · GW4 · last completed GW3 · season stats as retrieved · Sep 7", report)
         self.assertIn("Sleeper standard: 31.0 pts", report)
         self.assertIn("Sleeper standard: 4.5 pts", report)
         self.assertNotIn("Watchlist Update", report)
@@ -699,8 +717,7 @@ class AutomationTests(unittest.TestCase):
             output_text=json.dumps({
                 "status": "no_change", "material_update": False, "report": "✅ **No material changes**",
                 "research": [
-                    {"player_id": "one", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
-                    {"player_id": "two", "outcome": "no_current_public_update_found", "summary": "Checked.", "sources": []},
+                    watch_record("one"), watch_record("two"),
                 ],
             }), id="watch-2",
         )
