@@ -2726,7 +2726,8 @@ def run_scheduled_advisor(
         "store": False,
         "timeout": min(config.codex_timeout_seconds, 180),
         "text": {"format": {"type": "json_schema", "name": "scheduled_fantasy_report", "strict": True, "schema": schema}},
-        "tools": [{"type": "web_search_preview", "search_context_size": "medium"}],
+        "tools": [{"type": "web_search" if task.id == "watchlist_report" else "web_search_preview",
+                   "search_context_size": "high" if task.id == "watchlist_report" else "medium"}],
         "tool_choice": "required" if task.id in {"nightly_recap", "watchlist_report", "transfer_monitor"} else "auto",
     }
     # Multi-player source reconciliation needs more reasoning than a short news digest.

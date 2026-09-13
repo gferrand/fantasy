@@ -148,6 +148,7 @@ def test_quality_retry_reports_actual_failure_then_renders_repaired_outlook():
     assert client.responses.create.call_args.kwargs["reasoning"] == {"effort": "high"}
     assert schema["minItems"] == schema["maxItems"] == 1
     assert schema["items"]["properties"]["player_id"]["enum"] == ["one"]
+    assert client.responses.create.call_args.kwargs["tools"] == [{"type": "web_search", "search_context_size": "high"}]
     assert result.trace["model_calls"] == 2
     assert "• **Test Player**" in result.text
 

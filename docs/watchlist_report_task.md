@@ -66,7 +66,10 @@ response, then send all remaining chunks through the authorized DM channel.
 This avoids the user-installed webhook follow-up cap and preserves every player.
 Source previews are suppressed. The existing model uses at least high reasoning
 for multi-player source
-reconciliation; an already higher configured effort is preserved.
+reconciliation; an already higher configured effort is preserved. Watchlist research
+and interactive watchlist questions use the current `web_search` tool with high
+search context to inspect match-page details. Other report tools are unchanged.
+See the [OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
 Unused six-week trend and previous-season lookups are disabled for this report.
 Model/public-search call counts and elapsed
 time are included in the existing scheduled trace; no new persistence or

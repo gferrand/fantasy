@@ -1160,7 +1160,9 @@ async def run_advisor(
     }
     local_action_names = {"add_to_watchlist", "remove_from_watchlist", "acknowledge_guardian_alerts"}
     deterministic_names = {tool["name"] for tool in FANTASY_TOOLS}
-    web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
+    watchlist_question = "watchlist" in question.casefold()
+    web_tool = {"type": "web_search" if watchlist_question else "web_search_preview",
+                "search_context_size": "high" if watchlist_question else "medium"}
     executed_actions: set[tuple[str, str]] = set()
     used_deterministic_names: set[str] = set()
     tool_calls = 0
