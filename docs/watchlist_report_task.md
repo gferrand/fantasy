@@ -11,12 +11,16 @@ The mobile heading is `👀 WATCHLIST UPDATE` (bold in Discord). Use the active
 2026/27 Premier League season; exclude previous-season, preseason, cup and
 international performances from league-role and form claims.
 
-The scheduler renders cards from structured, validated research rather than the
-model's free-form report. Each card includes current identity, role/minutes,
-availability, season production, fantasy outlook, a concrete next signal to
-watch, and the next fixture. Up to three evidence-backed attention priorities
-lead the report. This is observation-only: no pickup, waiver, trade, or lineup
-instructions. Target 60–90 narrative words per player, fewer with limited evidence.
+The scheduler renders a short bullet list from structured, validated research.
+Every watched player gets one 15–25 word takeaway (30-word maximum), with
+important developments first. Each entry includes the name, club, one dated
+source, and a short evidence-gap or Sleeper availability flag when needed.
+There are no expanded cards, stat blocks, or duplicate priority section.
+This is observation-only: no pickup, waiver, trade, or lineup instructions.
+The footer explains the existing drilldown: use `/ask` with
+`Detailed watchlist outlook for <player>: latest PL match, role, form, fitness, next PL fixture. Observation only.`
+The interactive question obtains a fresh player assessment through the existing
+advisor; it does not claim to retrieve a saved detailed card.
 
 Research current-season role and availability even without breaking news. Use
 dated lineups, match reports, club/manager updates and reputable reporting.
@@ -35,6 +39,7 @@ and any outlook or priority that could depend on them is replaced with a safe
 interpretation of current Sleeper workload and a concrete selection check.
 Other players retain their valid research. A malformed or incomplete result
 gets one corrective retry explaining the actual failure, then fails visibly.
+Hidden SDK transport retries are disabled for this report; provider timeouts fail visibly.
 
 Verified role evidence must concern the active Premier League season and be no
 older than 21 days; prefer the last three matches. Verified availability must
@@ -48,16 +53,26 @@ times remain separate from fact dates.
 Current Sleeper identity, stats and maintained fixtures supply the displayed
 facts. Saved club/position are historical audit fields; unresolved identity
 withholds current club, position and fixture guidance. Missing stats remain
-explicitly unavailable. Available season totals, starts, minutes and rates are
-shown with `Sleeper standard: N pts` labels, never as Kick & Run scoring or
+explicitly unavailable in the evidence. Available season totals, starts, minutes
+and rates support research. If points are included, use `Sleeper standard: N pts`
+labels, never as Kick & Run scoring or
 future projections. Live season aggregates can already contain matches from the unfinished current
 GW, so label them as season stats as retrieved, not stats through the last
 completed GW. The header separates current GW from completed GW and
 human times use America/New_York.
 
-The existing Discord delivery, message splitting, schedule and persistence
-remain in place. Source previews are suppressed. The existing model uses at least high reasoning for multi-player source
-reconciliation; an already higher configured effort is preserved.
+The schedule and persistence remain in place. `/task watchlist_report` reuses
+the complete-DM delivery helper used by injury reports: edit the original
+response, then send all remaining chunks through the authorized DM channel.
+This avoids the user-installed webhook follow-up cap and preserves every player.
+Source previews are suppressed. The existing model uses at least high reasoning
+for multi-player source
+reconciliation; an already higher configured effort is preserved. Watchlist research
+and interactive watchlist questions use the current `web_search` tool with high
+search context to inspect match-page details. Other report tools are unchanged.
+See the [OpenAI web search guide](https://developers.openai.com/api/docs/guides/tools-web-search).
+One shared current-gameweek stats request supplies minutes and disciplinary
+events for cross-checking recent appearances; absent fields stay unknown.
 Unused six-week trend and previous-season lookups are disabled for this report.
 Model/public-search call counts and elapsed
 time are included in the existing scheduled trace; no new persistence or

@@ -39,16 +39,15 @@ def render(record=None, data=None):
     )
 
 
-def test_quiet_day_includes_outlook_evidence_production_and_watch_signal():
+def test_quiet_day_is_one_takeaway_with_source_and_drilldown():
     report, material, status, _ = render()
-    for expected in ("**Role:**", "**Availability:**", "**Outlook:**", "**Watch for:**",
-                     "Sleeper standard: 4.5 pts", "150.0 minutes", "2.0 starts",
-                     "Sleeper standard: 1.5 pts per appearance", "[Club report]", "vs Opponent",
-                     "GW4", "last completed GW3", "ET"):
-        assert expected in report
-    assert "Discard me" not in report
-    assert not material
-    assert status == "no_change"
+    assert "• **Test Player** (FUL) — Regular minutes" in report
+    assert "Source " in report and "https://club.example/report" in report
+    assert "`/ask`" in report and "Detailed watchlist outlook for <player>" in report
+    for hidden in ("**Role:**", "**Availability:**", "**Outlook:**", "**Watch for:**", "Season production", "Discard me"):
+        assert hidden not in report
+    assert not material and status == "no_change"
+    assert len(report) < 800
     assert all(len(chunk) <= 2000 for chunk in split_discord_message(report))
 
 
@@ -59,9 +58,8 @@ def test_partial_evidence_is_visible_and_keeps_deterministic_context(outcome):
                            "verified": False, "sources": []}
     report, _, status, _ = render(row)
     assert status == "partial"
-    assert "Availability unverified" in report
-    assert "4.5 pts" in report
-    assert "**Watch for:**" in report
+    assert ("availability unverified" if outcome != "research_failed" else "research incomplete") in report
+    assert "Regular minutes" in report
 
 
 @pytest.mark.parametrize("field", ["role", "availability"])
@@ -93,8 +91,8 @@ def test_missing_stats_and_unresolved_identity_do_not_erase_player_or_guess_fixt
     data["players"][0]["current_sleeper_stats"] = {"found": False}
     report, _, _, _ = render(data=data)
     assert "Test Player" in report
-    assert "Sleeper stats unavailable" in report
-    assert "Current club/positions/fixture unavailable" in report
+    assert "identity unverified" in report
+    assert "pts" not in report
     assert "Opponent" not in report
 
 
@@ -115,8 +113,8 @@ def test_material_news_and_supported_priority_are_visible():
     row["priority_reason"] = "Full training makes the next selection especially informative."
     report, material, status, _ = render(row)
     assert material and status == "complete"
-    assert report.index("Attention priorities") < report.index("**Update:**")
-    assert "return to full training" in report
+    assert report.count("• **Test Player**") == 1
+    assert "Attention priorities" not in report
 
 
 def test_unsupported_priority_and_transaction_instruction_rejected():
@@ -150,8 +148,9 @@ def test_quality_retry_reports_actual_failure_then_renders_repaired_outlook():
     assert client.responses.create.call_args.kwargs["reasoning"] == {"effort": "high"}
     assert schema["minItems"] == schema["maxItems"] == 1
     assert schema["items"]["properties"]["player_id"]["enum"] == ["one"]
+    assert client.responses.create.call_args.kwargs["tools"] == [{"type": "web_search", "search_context_size": "high"}]
     assert result.trace["model_calls"] == 2
-    assert "**Outlook:**" in result.text
+    assert "• **Test Player**" in result.text
 
 
 def test_suspension_flag_is_not_hidden_by_active_catalog_status():
@@ -159,7 +158,7 @@ def test_suspension_flag_is_not_hidden_by_active_catalog_status():
     data["players"][0]["current_identity"]["status"] = "A"
     data["players"][0]["current_sleeper_stats"]["injury_status"] = "SUS"
     report, _, _, _ = render(data=data)
-    assert "Sleeper availability flag: SUS" in report
+    assert "Sleeper: SUS" in report
     assert "status: A" not in report
     assert "season stats as retrieved" in report
     assert "stats through GW3" not in report
@@ -230,7 +229,7 @@ def test_stale_public_role_keeps_workload_but_removes_unsupported_outlook():
     assert "penalty" not in report
     assert "guaranteed" not in report
     assert "Repeated season starts support regular involvement" in report
-    assert "360.0 minutes" in report
+    assert "360.0 minutes" not in report
     assert "Attention priorities" not in report
 
 
@@ -241,3 +240,53 @@ def test_stale_news_is_not_a_material_change():
     assert not material and status == "partial"
     assert "**Update:**" not in report
     assert "2025-01-01" not in report
+
+
+def test_nine_players_remain_a_list_without_repeated_details():
+    data = packet()
+    data["players"] = [{**data["players"][0], "player_id": str(i), "canonical_name": f"Player {i}"} for i in range(9)]
+    rows = [watch_record(str(i)) for i in range(9)]
+    rows[7]["priority_reason"] = "Recent starting role makes the next lineup informative."
+    report, _, _, _ = _scheduled_response_payload(
+        TaskSpec("watchlist_report", "Watchlist", Path("x"), "daily"),
+        json.dumps({"status": "complete", "material_update": False, "report": "Label", "research": rows}),
+        evidence="EVIDENCE\n" + json.dumps(data),
+    )
+    assert report.count("• **Player") == 9
+    assert report.index("• **Player 7") < report.index("• **Player 0")
+    assert len(split_discord_message(report)) <= 2
+    assert report.count("Want details?") == 1
+
+
+def test_daily_takeaway_length_is_bounded():
+    row = watch_record("one")
+    row["outlook"] = "Regular minutes would improve the opportunity. " * 6
+    with pytest.raises(AutomationError, match="outlook exceeds 30"):
+        render(row)
+
+
+def test_compact_entry_links_to_recent_evidence_instead_of_older_context():
+    row = copy.deepcopy(watch_record("one"))
+    row["role"] = copy.deepcopy(row["role"])
+    row["role"]["sources"][0].update(as_of="2025-01-01", as_of_precision="date", url="https://club.example/old")
+    row["role"]["sources"].append({**row["availability"]["sources"][0], "url": "https://club.example/latest"})
+    report, _, _, _ = render(row)
+    assert "https://club.example/old" not in report
+    assert "https://club.example/latest" in report
+
+
+def test_watchlist_disables_hidden_provider_transport_retries():
+    from unittest.mock import patch
+    config = make_config()
+    config = config.__class__(**{**config.__dict__, "openai_api_key": "test"})
+    client = MagicMock()
+    client.responses.create.return_value = MagicMock(
+        output=[MagicMock(type="web_search_call")], id="test",
+        output_text=json.dumps({"status": "no_change", "material_update": False,
+                                "report": "Label", "research": [watch_record("one")]}),
+    )
+    with patch("openai.OpenAI", return_value=client) as constructor:
+        run_scheduled_advisor(config, TaskSpec("watchlist_report", "Watchlist", Path("x"), "daily"),
+                              invocation="manual", evidence="EVIDENCE\n"+json.dumps(packet()), previous_state="none")
+    assert constructor.call_args.kwargs["max_retries"] == 0
+    assert client.responses.create.call_count == 1

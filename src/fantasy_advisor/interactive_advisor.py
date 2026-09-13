@@ -77,7 +77,7 @@ FOLLOWUP_TOOL = {
 # Product-level tool catalog: no provider URLs, SQL, filesystem, or raw task execution.
 FANTASY_TOOLS = (
     {"type": "function", "name": "get_league_context", "description": "Current league scoring, roster-slot, season, and round context from Sleeper. Use for any exact Kick & Run scoring or league-rules question; it is a live snapshot.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {}, "required": []}},
-    {"type": "function", "name": "get_player_context", "description": "Fresh current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player. Use only for a decision about this Fantasy league—roster value, watchlist value, add/drop, trade, start/bench, or Fantasy fit. Do not use for a public-only question about a player’s club role, news, or availability.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
+    {"type": "function", "name": "get_player_context", "description": "Fresh current Sleeper identity, ownership, standard stats, and exact Kick & Run score for one named player. Use only for a decision about this Fantasy league—roster value, watchlist value or a detailed watchlist outlook (including observation-only), add/drop, trade, start/bench, or Fantasy fit. Do not use for a public-only question about a player’s club role, news, or availability.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
     {"type": "function", "name": "search_player_pool", "description": "Small local player-catalog search for an ambiguous or partial name only. Do not use it for a full-name ownership, player-value, role, or watchlist decision; use get_player_context for those current Fantasy facts. It does not provide a full waiver ranking.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 25}}, "required": ["query", "limit"]}},
     {"type": "function", "name": "get_team_context", "description": "Current roster and starters for one named league team.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"team_name": {"type": "string"}}, "required": ["team_name"]}},
     {"type": "function", "name": "get_draft_context", "description": "Observed current-league draft position and a compact nearby-picks window for one named player. Returns a truthful limitation when the draft is unavailable.", "strict": True, "parameters": {"type": "object", "additionalProperties": False, "properties": {"player_name": {"type": "string"}}, "required": ["player_name"]}},
@@ -318,6 +318,13 @@ For a start/bench question, if the current roster evidence says the named
 player is not on Los Blancos, say that the owner cannot start that player in
 this league. Do not offer conditional or counterfactual lineup advice for a
 player the current roster does not contain.
+
+For a detailed watchlist player outlook, verify the latest played Premier League
+match and distinguish starters from substitutes before describing role or form.
+Cross-check public match logs against current application appearances and minutes;
+if the log omits a played match, explicitly mark the gap instead of calling it
+current form. Do not infer role security from season totals or fitness from silence.
+Keep this outlook observation-only when requested and include the next PL fixture.
 
 Reply for a private Discord DM: use short paragraphs and bold player names; do
 not use tables, code blocks, backend names, task IDs, planner text, or retrieval
@@ -592,7 +599,10 @@ player decision, select the appropriate named capability. For a public-only
 question, call only no_private_fantasy_data_needed. A question solely about a
 player's club role, injury/news, or real-world availability is public-only even
 when it names a player; do not use a private player capability unless the Owner
-asks for a Fantasy-league decision. This is a short routing turn,
+asks for a Fantasy-league decision. A detailed watchlist outlook is a Fantasy
+value assessment even when observation-only: select get_player_context for the
+named player, plus get_watchlist when the saved list is requested. Never route
+that watchlist drilldown to no_private_fantasy_data_needed. This is a short routing turn,
 not analysis or a final response. A question about who to rotate out across the
 next few fixtures must select get_rotation_context, not get_gameweek_context.
 For "Who owns <full player name> right now?", select get_player_context for
@@ -1153,7 +1163,9 @@ async def run_advisor(
     }
     local_action_names = {"add_to_watchlist", "remove_from_watchlist", "acknowledge_guardian_alerts"}
     deterministic_names = {tool["name"] for tool in FANTASY_TOOLS}
-    web_tool = {"type": "web_search_preview", "search_context_size": "medium"}
+    watchlist_question = "watchlist" in question.casefold()
+    web_tool = {"type": "web_search" if watchlist_question else "web_search_preview",
+                "search_context_size": "high" if watchlist_question else "medium"}
     executed_actions: set[tuple[str, str]] = set()
     used_deterministic_names: set[str] = set()
     tool_calls = 0
