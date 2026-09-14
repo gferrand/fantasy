@@ -64,7 +64,7 @@ class DiscordBotTests(unittest.TestCase):
             'required_analysis_markers=("**Pursue now**", "**Watch next**")',
             rotation_source,
         )
-        self.assertIn("name the owning team for every trade candidate", rotation_source)
+        self.assertIn("Name the owning team whenever a trade candidate appears", rotation_source)
 
     def test_analytical_commands_use_the_shared_post_retrieval_finalizer(self):
         source = Path(discord_bot.__file__).read_text(encoding="utf-8")
