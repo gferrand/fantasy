@@ -25,6 +25,8 @@ ROTATION_HORIZON = 4
 MIN_INCOMING_MINUTES = 90.0
 MIN_INCOMING_STARTS = 1.0
 MIN_EXPECTED_MINUTES = 60.0
+MIN_EARLY_OPPORTUNITY_MINUTES = 240.0
+MIN_EARLY_OPPORTUNITY_STARTS = 3.0
 MAX_TARGET_FIXTURE_DIFFICULTY = 3.0
 TRADE_VALUE_PERCENTILE = 0.75
 DIFFICULT_FIXTURE_THRESHOLD = 3.1
@@ -158,8 +160,13 @@ def _rank_targets(
     # projection remains primary, while a player with an exceptional next two
     # is no longer hidden by a rounding-level threshold or one later hard game.
     if len(selected) < limit:
+        established = [
+            player for player in eligible
+            if float(player.get("minutes") or 0.0) >= MIN_EARLY_OPPORTUNITY_MINUTES
+            and float(player.get("starts") or 0.0) >= MIN_EARLY_OPPORTUNITY_STARTS
+        ]
         early_ranked = sorted(
-            eligible,
+            established or eligible,
             key=lambda player: (
                 -_early_fixture_difficulty(player),
                 float(player.get("projected_horizon_points") or 0.0),
@@ -560,8 +567,9 @@ def load_rotation_context(
             ),
             "fixture_priority": (
                 "Four-fixture projected Kick & Run points rank the screen, with fixture difficulty "
-                "used continuously as a tiebreaker and one slot reserved for the strongest next-two "
-                "fixture opportunity."
+                "used continuously as a tiebreaker and one slot reserved for the strongest established "
+                "next-two fixture opportunity. That slot requires at least three starts and 240 current "
+                "minutes when a player meeting that workload is available."
             ),
             "trade_value_gate": (
                 "Trade targets exclude the top quartile of reliable other-roster players by "

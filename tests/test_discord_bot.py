@@ -57,14 +57,14 @@ class DiscordBotTests(unittest.TestCase):
 
     def test_rotation_renders_moneyball_board_and_requires_scannable_verdicts(self):
         source = Path(discord_bot.__file__).read_text(encoding="utf-8")
-        rotation_source = source.split("async def rotation_command", 1)[1][:5_000]
+        rotation_source = source.split("async def rotation_command", 1)[1][:7_000]
 
         self.assertIn("rotation_moneyball_board(context.payload)", rotation_source)
         self.assertIn(
-            'required_analysis_markers=("**Pursue now**", "**Monitor**", "**Pass**")',
+            'required_analysis_markers=("**Pursue now**", "**Watch next**")',
             rotation_source,
         )
-        self.assertIn("name the owning team for every trade candidate", rotation_source)
+        self.assertIn("Name the owning team whenever a trade candidate appears", rotation_source)
 
     def test_analytical_commands_use_the_shared_post_retrieval_finalizer(self):
         source = Path(discord_bot.__file__).read_text(encoding="utf-8")

@@ -96,6 +96,12 @@ class RotationTests(unittest.TestCase):
             {"opponent": "C", "home": True, "difficulty": 4.2},
             {"opponent": "D", "home": False, "difficulty": 4.4},
         ]
+        rows[4].update(minutes=270, starts=3)
+        rows[5]["forecast_next_fixtures"] = [
+            {"opponent": "A", "home": True, "difficulty": 1.5},
+            {"opponent": "B", "home": False, "difficulty": 1.5},
+        ]
+        rows[5].update(minutes=90, starts=1)
 
         targets = _rank_targets(
             rows,

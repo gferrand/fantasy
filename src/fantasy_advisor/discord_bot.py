@@ -643,14 +643,28 @@ def build_client(config: AppConfig) -> discord.Client:
                     for row in context.payload.get(key, [])
                     if isinstance(row, dict) and str(row.get("name") or "").strip()
                 )
-                pickup_count = len(context.payload.get("pickup_targets", []))
-                trade_count = len(context.payload.get("trade_targets", []))
+                pickup_rows = context.payload.get("pickup_targets", [])
+                drop_rows = context.payload.get("drop_candidates", [])
+                best_pickup = pickup_rows[0] if pickup_rows else {}
+                lowest_roster_space = drop_rows[0] if drop_rows else {}
+                value_gap_context = (
+                    f"The current screen's top pickup, {best_pickup.get('name')}, projects for "
+                    f"{best_pickup.get('projected_horizon_points')} points versus "
+                    f"{lowest_roster_space.get('projected_horizon_points')} for the lowest projected "
+                    "non-core roster-space candidate. Treat a verified gap like this as a clear "
+                    "acquisition lead, while leaving the actual roster-space choice manual. "
+                ) if best_pickup and lowest_roster_space else ""
+                rotation_research_data = {
+                    key: context.payload.get(key, [])
+                    for key in ("pickup_targets", "trade_targets", "drop_candidates")
+                }
                 result = await finalize_advisor_from_evidence(
                     config,
                     command="/rotation",
                     question="Plan protected-core moves around the next four fixtures.",
                     evidence=slash_evidence(
                         context, capability="get_rotation_context", arguments={}, source="Fantasy rotation context",
+                        data=rotation_research_data,
                     ),
                     mandatory_web=True,
                     deadline=deadline,
@@ -660,20 +674,25 @@ def build_client(config: AppConfig) -> discord.Client:
                     ),
                     verification_failure_text=rotation_validation_failure_text(context.payload),
                     command_instructions=(
-                        "Use the deterministic protected core, roster, fixtures, pickup targets, trade targets, and drop candidates only. "
+                        "Use the deterministic pickup targets, trade targets, and non-core drop candidates only. "
+                        "The protected core is already handled outside this research packet; do not discuss it or use it as a reason to reject acquisition leads. "
                         "The deterministic Moneyball board is rendered separately, so do not repeat its full stats or protected-core inventory. "
-                        "Make the analysis concise and scannable with these exact headings in order: **Pursue now**, **Monitor**, **Pass**. "
-                        f"Use exactly one bullet for each of the {pickup_count} pickup and {trade_count} trade candidates, name the owning team for every trade candidate, and explain the fixture/value case. "
-                        "Only assess those incoming candidates under the verdict headings; do not substitute protected players or drop candidates. "
-                        f"The exact candidates that must each appear once are: {', '.join(rotation_screen_names)}. "
-                        "Do not collapse the answer to one player without explaining why every other candidate is Monitor or Pass. "
+                        "Make the analysis concise and scannable with these exact headings in order: **Pursue now**, **Watch next**. "
+                        "Pursue now may contain at most three final acquisition recommendations; Watch next may contain at most three screened alternatives. "
+                        "Assess the best pickup and best trade candidate independently so a worthwhile option in either market is not hidden by the other. "
+                        "Name the owning team whenever a trade candidate appears. Only use incoming candidates from the deterministic screens; never substitute protected players or drop candidates. "
+                        f"The screened incoming candidates are: {', '.join(rotation_screen_names)}. "
                         "Research current role, availability, injury, and club facts before recommending any incoming target. "
                         "Use web search now for every Pursue target; do not claim that public verification was absent merely because it was not supplied deterministically. "
-                        "The decision targets must contain every Pursue-now player and no Monitor/Pass player. An honest HOLD is preferred to a marginal move. "
+                        "Treat Pursue now as a worthwhile manual acquisition lead, not as a completed transaction or an automatic paired drop. "
+                        "Every player beneath Pursue now must be a final recommendation in decision.targets; put fallbacks and conditional options under Watch next instead. "
+                        "A protected core prevents using those players as outgoing pieces; it does not prevent pursuing a target who clearly outprojects a listed roster-space candidate. "
+                        "Do not choose HOLD solely because the best incoming target would still require the Owner to decide how to create roster space. "
+                        + value_gap_context
+                        + "The decision targets must contain every Pursue-now player and no Watch-next player. An honest HOLD is preferred to a marginal move. "
                         "Never combine a pickup with a drop automatically."
                     ),
-                    required_analysis_markers=("**Pursue now**", "**Monitor**", "**Pass**"),
-                    required_analysis_entities=rotation_screen_names,
+                    required_analysis_markers=("**Pursue now**", "**Watch next**"),
                 )
                 result = replace(
                     result,
