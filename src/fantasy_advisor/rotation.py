@@ -76,6 +76,22 @@ def _has_reliable_role(player: Mapping[str, Any]) -> bool:
     )
 
 
+def _early_fixture_difficulty(player: Mapping[str, Any]) -> float:
+    """Return the next-two average without turning a tiny cutoff into a cliff."""
+
+    fixtures = player.get("forecast_next_fixtures")
+    difficulties: list[float] = []
+    if isinstance(fixtures, list):
+        for fixture in fixtures[:2]:
+            if not isinstance(fixture, Mapping):
+                continue
+            try:
+                difficulties.append(float(fixture["difficulty"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return sum(difficulties) / len(difficulties) if difficulties else 5.0
+
+
 def _target_summary(
     player: Mapping[str, Any],
     *,
@@ -92,6 +108,7 @@ def _target_summary(
             "forecast_next_fixtures",
         )
     }
+    summary["early_fixture_difficulty"] = round(_early_fixture_difficulty(player), 3)
     summary["fixture_quality"] = (
         "favorable"
         if float(player.get("forecast_fixture_difficulty") or 5.0)
@@ -122,8 +139,6 @@ def _rank_targets(
     ranked = sorted(
         eligible,
         key=lambda player: (
-            float(player.get("forecast_fixture_difficulty") or 5.0)
-            <= MAX_TARGET_FIXTURE_DIFFICULTY,
             float(player.get("projected_horizon_points") or 0.0),
             -float(player.get("forecast_fixture_difficulty") or 5.0),
             float(player.get("minutes") or 0.0),
@@ -139,6 +154,29 @@ def _rank_targets(
             represented_positions.update(positions)
         if len(selected) == limit:
             break
+    # Reserve one slot for the strongest immediate fixture window. Four-match
+    # projection remains primary, while a player with an exceptional next two
+    # is no longer hidden by a rounding-level threshold or one later hard game.
+    if len(selected) < limit:
+        early_ranked = sorted(
+            eligible,
+            key=lambda player: (
+                -_early_fixture_difficulty(player),
+                float(player.get("projected_horizon_points") or 0.0),
+                float(player.get("minutes") or 0.0),
+            ),
+            reverse=True,
+        )
+        selected_ids = {str(player.get("player_id")) for player in selected}
+        early_option = next(
+            (
+                player for player in early_ranked
+                if str(player.get("player_id")) not in selected_ids
+            ),
+            None,
+        )
+        if early_option is not None:
+            selected.append(early_option)
     selected_ids = {str(player.get("player_id")) for player in selected}
     selected.extend(
         player
@@ -154,6 +192,95 @@ def _rank_targets(
         )
         for player in selected[:limit]
     ]
+
+
+def _display_number(value: object, *, decimals: int = 1) -> str:
+    try:
+        return f"{float(value):.{decimals}f}"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _fixture_run(row: Mapping[str, Any]) -> str:
+    fixtures = row.get("forecast_next_fixtures")
+    rendered: list[str] = []
+    if isinstance(fixtures, list):
+        for fixture in fixtures[:ROTATION_HORIZON]:
+            if not isinstance(fixture, Mapping):
+                continue
+            opponent = str(fixture.get("opponent") or "").strip()
+            if not opponent:
+                continue
+            home = fixture.get("home")
+            venue = "H" if home is True else "A" if home is False else "?"
+            rendered.append(f"{opponent} ({venue})")
+    return " · ".join(rendered) if rendered else "fixtures unavailable"
+
+
+def rotation_moneyball_board(payload: Mapping[str, Any]) -> str:
+    """Render authoritative rotation inventory before model judgment."""
+
+    lines = ["🔄 **Rotation · four-fixture Moneyball board**", "", "**Keep — protected core**"]
+    protected = payload.get("protected_players")
+    if isinstance(protected, list) and protected:
+        for row in protected:
+            if not isinstance(row, Mapping):
+                continue
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            reasons = row.get("reasons")
+            reason = ", ".join(str(item) for item in reasons) if isinstance(reasons, list) else "protected"
+            lines.append(f"- **{name}** — {reason}")
+    else:
+        lines.append("- Protected-core data unavailable.")
+
+    def add_targets(title: str, key: str, *, trade: bool) -> None:
+        lines.extend(["", title])
+        rows = payload.get(key)
+        if not isinstance(rows, list) or not rows:
+            lines.append("- No qualified players in the current screen.")
+            return
+        for index, row in enumerate(rows, 1):
+            if not isinstance(row, Mapping):
+                continue
+            ownership = row.get("ownership")
+            owner = ownership.get("team") if isinstance(ownership, Mapping) else None
+            owner_text = f" · **{owner}**" if trade and owner else " · unrostered"
+            positions = "/".join(str(item) for item in row.get("positions") or []) or "?"
+            lines.append(
+                f"{index}. **{row.get('name', 'Unknown')}** · {row.get('club', '?')} · {positions}{owner_text}"
+            )
+            lines.append(
+                "   "
+                f"Current: {_display_number(row.get('current_custom_points'))} K&R pts · "
+                f"{_display_number(row.get('custom_points_per_90'))}/90 · "
+                f"{_display_number(row.get('minutes'), decimals=0)} min / "
+                f"{_display_number(row.get('starts'), decimals=0)} starts"
+            )
+            lines.append(
+                "   "
+                f"Next four: {_fixture_run(row)} · "
+                f"{_display_number(row.get('projected_horizon_points'))} projected K&R pts · "
+                f"difficulty {_display_number(row.get('forecast_fixture_difficulty'), decimals=2)}"
+            )
+
+    add_targets("**Free agents / waivers — acquisition screen**", "pickup_targets", trade=False)
+    lines.append("_Sleeper public data cannot distinguish an immediate Add from waivers; confirm in Sleeper._")
+    add_targets("**Trade targets — other teams**", "trade_targets", trade=True)
+
+    lines.extend(["", "**Roster-space candidates — not automatic drops**"])
+    drops = payload.get("drop_candidates")
+    if isinstance(drops, list) and drops:
+        for row in drops[:5]:
+            if isinstance(row, Mapping) and str(row.get("name") or "").strip():
+                lines.append(
+                    f"- **{row['name']}** — {_display_number(row.get('projected_horizon_points'))} "
+                    "projected K&R pts over four fixtures"
+                )
+    else:
+        lines.append("- No non-core roster-space candidates.")
+    return "\n".join(lines)
 
 
 def rotation_validation_failure_text(payload: Mapping[str, Any]) -> str:
@@ -432,8 +559,9 @@ def load_rotation_context(
                 f"and {MIN_EXPECTED_MINUTES:.0f} expected minutes per fixture."
             ),
             "fixture_priority": (
-                f"Targets at or below {MAX_TARGET_FIXTURE_DIFFICULTY:.1f} difficulty rank first; "
-                "mixed runs remain visible as clearly labeled alternatives."
+                "Four-fixture projected Kick & Run points rank the screen, with fixture difficulty "
+                "used continuously as a tiebreaker and one slot reserved for the strongest next-two "
+                "fixture opportunity."
             ),
             "trade_value_gate": (
                 "Trade targets exclude the top quartile of reliable other-roster players by "

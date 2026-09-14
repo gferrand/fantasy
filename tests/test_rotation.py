@@ -15,6 +15,7 @@ from fantasy_advisor.rotation import (
     _rank_drop_candidates,
     _rank_targets,
     _rank_trade_targets,
+    rotation_moneyball_board,
     rotation_validation_failure_text,
 )
 from fantasy_advisor.interactive_advisor import _structured_finalization
@@ -72,12 +73,40 @@ class RotationTests(unittest.TestCase):
         )
 
         self.assertFalse(_has_reliable_role(thin_sample))
-        self.assertEqual([target["player_id"] for target in targets], ["easy", "hard"])
+        self.assertEqual([target["player_id"] for target in targets], ["hard", "easy"])
         self.assertNotIn("drop", targets[0])
-        self.assertEqual(targets[0]["fixture_quality"], "favorable")
+        self.assertEqual(targets[0]["fixture_quality"], "mixed_or_difficult")
+        self.assertEqual(targets[1]["fixture_quality"], "favorable")
         self.assertEqual(targets[0]["ownership"], {
             "rostered": False, "team": None, "on_your_team": False,
         })
+
+    def test_next_two_fixture_leader_gets_one_moneyball_screen_slot(self):
+        rows = [
+            player("d", "Projected Defender", "D", 20, 50, difficulty=3.0),
+            player("gk", "Projected Keeper", "GK", 20, 45, difficulty=3.0),
+            player("m", "Projected Mid", "M", 20, 40, difficulty=3.0),
+            player("f", "Projected Forward", "F", 20, 35, difficulty=3.0),
+            player("early", "Early Fixture Edge", "D", 20, 25, difficulty=3.2),
+            player("next", "Next Projection", "D", 20, 30, difficulty=3.0),
+        ]
+        rows[4]["forecast_next_fixtures"] = [
+            {"opponent": "A", "home": True, "difficulty": 2.0},
+            {"opponent": "B", "home": False, "difficulty": 2.2},
+            {"opponent": "C", "home": True, "difficulty": 4.2},
+            {"opponent": "D", "home": False, "difficulty": 4.4},
+        ]
+
+        targets = _rank_targets(
+            rows,
+            extended_by_id={row["player_id"]: row for row in rows},
+            limit=5,
+        )
+
+        self.assertEqual([target["player_id"] for target in targets], [
+            "d", "gk", "m", "f", "early",
+        ])
+        self.assertEqual(targets[-1]["early_fixture_difficulty"], 2.1)
 
     def test_trade_targets_include_current_owner_but_no_offer(self):
         target = player("target", "Trade Target", "M", 15, 25, difficulty=2.5)
@@ -134,6 +163,33 @@ class RotationTests(unittest.TestCase):
         self.assertIn("Pickup Target", rendered)
         self.assertIn("CHE (H)", rendered)
         self.assertNotIn("couldn’t verify current public", rendered)
+
+    def test_moneyball_board_is_split_into_scannable_authoritative_lists(self):
+        pickup_player = player("pickup", "Pickup Target", "D", 20, 30, difficulty=2.5)
+        trade_player = player("trade", "Trade Target", "M", 15, 25, difficulty=2.8)
+        pickup = _rank_targets(
+            [pickup_player], extended_by_id={"pickup": pickup_player},
+        )[0]
+        trade = _rank_targets(
+            [trade_player],
+            extended_by_id={"trade": trade_player},
+            owners={"trade": "Rival XI"},
+        )[0]
+        rendered = rotation_moneyball_board({
+            "protected_players": [{"name": "Core Player", "reasons": ["best current XI"]}],
+            "pickup_targets": [pickup],
+            "trade_targets": [trade],
+            "drop_candidates": [{"name": "Bench Player", "projected_horizon_points": 10}],
+        })
+
+        self.assertIn("**Keep — protected core**\n- **Core Player**", rendered)
+        self.assertIn("**Free agents / waivers — acquisition screen**", rendered)
+        self.assertIn("**Pickup Target** · ARS · D · unrostered", rendered)
+        self.assertIn("**Trade targets — other teams**", rendered)
+        self.assertIn("**Trade Target** · ARS · M · **Rival XI**", rendered)
+        self.assertIn("Current: 15.0 K&R pts", rendered)
+        self.assertIn("Next four: CHE (H)", rendered)
+        self.assertIn("**Roster-space candidates — not automatic drops**", rendered)
 
     @staticmethod
     def _action_payload(target):

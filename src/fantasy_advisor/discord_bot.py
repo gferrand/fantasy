@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import replace
 import json
 import logging
 import os
@@ -52,7 +53,7 @@ from .interactive_advisor import (
     run_advisor,
 )
 from .sleeper import SleeperDataError
-from .rotation import rotation_validation_failure_text
+from .rotation import rotation_moneyball_board, rotation_validation_failure_text
 from .discord_presentation import (
     advisor_header,
     error_card,
@@ -636,6 +637,14 @@ def build_client(config: AppConfig) -> discord.Client:
                     manager_id=EXPECTED_MANAGER_ID,
                     fixture_schedule=fixture_schedule,
                 )
+                rotation_screen_names = tuple(
+                    str(row["name"])
+                    for key in ("pickup_targets", "trade_targets")
+                    for row in context.payload.get(key, [])
+                    if isinstance(row, dict) and str(row.get("name") or "").strip()
+                )
+                pickup_count = len(context.payload.get("pickup_targets", []))
+                trade_count = len(context.payload.get("trade_targets", []))
                 result = await finalize_advisor_from_evidence(
                     config,
                     command="/rotation",
@@ -652,9 +661,23 @@ def build_client(config: AppConfig) -> discord.Client:
                     verification_failure_text=rotation_validation_failure_text(context.payload),
                     command_instructions=(
                         "Use the deterministic protected core, roster, fixtures, pickup targets, trade targets, and drop candidates only. "
+                        "The deterministic Moneyball board is rendered separately, so do not repeat its full stats or protected-core inventory. "
+                        "Make the analysis concise and scannable with these exact headings in order: **Pursue now**, **Monitor**, **Pass**. "
+                        f"Use exactly one bullet for each of the {pickup_count} pickup and {trade_count} trade candidates, name the owning team for every trade candidate, and explain the fixture/value case. "
+                        "Only assess those incoming candidates under the verdict headings; do not substitute protected players or drop candidates. "
+                        f"The exact candidates that must each appear once are: {', '.join(rotation_screen_names)}. "
+                        "Do not collapse the answer to one player without explaining why every other candidate is Monitor or Pass. "
                         "Research current role, availability, injury, and club facts before recommending any incoming target. "
-                        "An honest HOLD is preferred to a marginal move. Never combine a pickup with a drop automatically."
+                        "Use web search now for every Pursue target; do not claim that public verification was absent merely because it was not supplied deterministically. "
+                        "The decision targets must contain every Pursue-now player and no Monitor/Pass player. An honest HOLD is preferred to a marginal move. "
+                        "Never combine a pickup with a drop automatically."
                     ),
+                    required_analysis_markers=("**Pursue now**", "**Monitor**", "**Pass**"),
+                    required_analysis_entities=rotation_screen_names,
+                )
+                result = replace(
+                    result,
+                    text=f"{rotation_moneyball_board(context.payload)}\n\n{result.text}",
                 )
             await edit_interaction_with_chunks(interaction, result.text)
         except (AutomationError, SleeperDataError) as exc:

@@ -53,11 +53,16 @@ Planned read-only analyses include:
 - Weekly playoff and roster strategy
 
 The private `/rotation` command combines live custom-scoring rates with the
-persisted fixture calendar over four matches. Its protected core is the union
+persisted fixture calendar over four matches. It renders a deterministic,
+scannable Moneyball board before the public-research judgment: protected-core
+keeps, unrostered acquisition candidates, other-team trade candidates with
+authoritative owner names, and non-core roster-space candidates. Its protected core is the union
 of the best current XI, best projected four-fixture XI, and medical holds.
 Only legal-lineup-improving moves may be shown, and protected players are never
-used as outgoing pieces. Available-player and fair-trade paths share one
-five-move report with an explicit post-run reassessment window.
+used as outgoing pieces. Available-player and fair-trade screens each preserve
+positional breadth and one next-two-fixture opportunity before the advisor
+labels candidates Pursue, Monitor, or Pass. Every acquisition keeps an explicit
+post-run reassessment window.
 
 Every recommendation should explain the evidence, uncertainty, relevant scoring categories, and the action for the manager to consider.
 
