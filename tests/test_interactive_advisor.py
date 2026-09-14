@@ -267,6 +267,37 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.text, "Screen unavailable.")
         self.assertEqual(response.trace["analysis_format_error"], "required_entities_missing")
 
+    async def test_required_actionable_retries_a_model_hold_once(self):
+        actionable = json.dumps({
+            "analysis": "**Pursue now**\n- Target B\n\n**Watch next**\n- Target A",
+            "decision": {
+                "actionable": True,
+                "summary": "Add the strongest screened target.",
+                "targets": [self.target("target-b", "Target B")],
+            },
+        })
+        client = NS(responses=NS(create=AsyncMock(side_effect=[
+            NS(id="hold", output=[NS(type="web_search_call")], output_text=self.hold()),
+            NS(id="retry", output=[NS(type="web_search_call")], output_text=actionable),
+        ])))
+
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/rotation", question="Rotate", evidence=self.packet(),
+            command_instructions="Assess the acquisition screens independently.",
+            mandatory_web=True, partial_text="Screen unavailable.", client=client,
+            required_analysis_markers=("**Pursue now**", "**Watch next**"),
+            require_actionable=True,
+        )
+
+        self.assertEqual(response.trace["result_status"], "complete")
+        self.assertEqual(response.trace["actionable_retry"], "used")
+        self.assertIn("Add Target B", response.text)
+        self.assertEqual(client.responses.create.await_count, 2)
+        self.assertIn(
+            "previous HOLD was rejected",
+            client.responses.create.await_args_list[1].kwargs["instructions"],
+        )
+
     async def test_slot_formatted_xi_passes_when_locked_section_lines_are_exact(self):
         xi_line = "**F — Player One** · est. 4.0 Kick & Run pts"
         bench_line = "**Player Two** · est. 6.0 Kick & Run pts"
