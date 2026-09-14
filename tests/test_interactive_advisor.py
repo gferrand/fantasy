@@ -297,7 +297,7 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.trace["deterministic_capabilities"], ["get_rotation_context"])
         self.assertEqual(response.trace["runtime_sha"], "unknown")
 
-    async def test_missing_target_metadata_returns_a_traced_no_action_partial(self):
+    async def test_missing_target_metadata_returns_a_traced_validation_failure(self):
         output = [NS(type="web_search_call")]
         client = NS(responses=NS(create=AsyncMock(return_value=NS(id="slash-response", output=output, output_text="not-json"))))
         response = await advisor.finalize_advisor_from_evidence(
@@ -308,7 +308,25 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.text, "HOLD: public verification unavailable.")
         self.assertEqual(response.trace["recommended_targets"], [])
         self.assertFalse(response.trace["required_target_research_completed"])
-        self.assertEqual(response.trace["target_verification_fallback"], "no_action")
+        self.assertEqual(response.trace["target_verification_fallback"], "validation_failure")
+
+    async def test_target_validation_failure_uses_its_truthful_fallback(self):
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=[NS(type="web_search_call")], output_text="not-json",
+        ))))
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/rotation", question="Rotate my squad", evidence=self.packet(),
+            command_instructions="Use current rotation evidence.", mandatory_web=True,
+            partial_text="Public verification unavailable.",
+            verification_failure_text="Internal recommendation validation failed; fixture context retained.",
+            client=client,
+        )
+
+        self.assertEqual(
+            response.text,
+            "Internal recommendation validation failed; fixture context retained.",
+        )
+        self.assertEqual(response.trace["target_verification_fallback"], "validation_failure")
 
     async def test_multi_player_trade_with_one_unverified_target_fails_closed(self):
         output = [

@@ -900,6 +900,7 @@ async def finalize_advisor_from_evidence(
     command_instructions: str,
     mandatory_web: bool,
     partial_text: str,
+    verification_failure_text: str | None = None,
     web_enabled: bool = True,
     trace_fields: dict[str, Any] | None = None,
     deadline: RequestDeadline | None = None,
@@ -947,15 +948,17 @@ async def finalize_advisor_from_evidence(
         )
 
     def finish(text: str, status: str, response_id: str | None = None) -> WebResult:
-        # Every fail-closed partial text supplied by a slash command is an
-        # explicitly non-actionable HOLD/inventory response.  Make that fact
-        # observable even when a model omitted its otherwise-required marker;
-        # never return the unmarked model prose.
+        # Every fail-closed partial is non-actionable. Keep ordinary evidence
+        # gaps distinct from recommendation-validation failures in the trace;
+        # never return unvalidated model prose.
         if status == "partial" and not trace["target_verification_metadata_valid"]:
+            verification_failed = "target_verification_error" in trace
             trace.update({
                 "recommended_targets": [],
                 "target_verification_actionable": False,
-                "target_verification_fallback": "no_action",
+                "target_verification_fallback": (
+                    "validation_failure" if verification_failed else "no_action"
+                ),
             })
             # An invalid attempted acquisition remains observable as failed
             # verification even though the owner only sees the safe HOLD.
@@ -980,6 +983,7 @@ async def finalize_advisor_from_evidence(
                 config, command=command, question=question, evidence=evidence,
                 command_instructions=command_instructions, mandatory_web=mandatory_web,
                 partial_text=partial_text, web_enabled=web_enabled, trace_fields=trace_fields,
+                verification_failure_text=verification_failure_text,
                 deadline=deadline, client=owned_client,
                 request_id=request_id,
                 required_analysis_markers=required_analysis_markers,
@@ -1065,7 +1069,7 @@ async def finalize_advisor_from_evidence(
     )
     trace.update(target_trace)
     if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
-        return finish(partial_text, "partial")
+        return finish(verification_failure_text or partial_text, "partial")
     if required_analysis_markers:
         marker_positions = [text.find(marker) for marker in required_analysis_markers]
         if any(position < 0 for position in marker_positions) or marker_positions != sorted(marker_positions):
