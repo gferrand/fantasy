@@ -64,6 +64,7 @@ class DiscordBotTests(unittest.TestCase):
             'required_analysis_markers=("**Pursue now**", "**Watch next**")',
             rotation_source,
         )
+        self.assertIn("require_actionable=True", rotation_source)
         self.assertIn("Name the owning team whenever a trade candidate appears", rotation_source)
 
     def test_analytical_commands_use_the_shared_post_retrieval_finalizer(self):

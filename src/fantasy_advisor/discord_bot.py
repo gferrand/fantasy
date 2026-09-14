@@ -693,6 +693,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         "Never combine a pickup with a drop automatically."
                     ),
                     required_analysis_markers=("**Pursue now**", "**Watch next**"),
+                    require_actionable=True,
                 )
                 result = replace(
                     result,

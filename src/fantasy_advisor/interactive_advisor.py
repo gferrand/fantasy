@@ -913,6 +913,7 @@ async def finalize_advisor_from_evidence(
     required_ordered_section_fragments: dict[str, tuple[str, ...]] | None = None,
     required_exact_line_fragments: tuple[str, ...] = (),
     render_no_action_decision: bool = True,
+    require_actionable: bool = False,
 ) -> WebResult:
     """Synthesize an explicit slash command after its deterministic retrieval.
 
@@ -994,6 +995,7 @@ async def finalize_advisor_from_evidence(
                 required_ordered_section_fragments=required_ordered_section_fragments,
                 required_exact_line_fragments=required_exact_line_fragments,
                 render_no_action_decision=render_no_action_decision,
+                require_actionable=require_actionable,
             )
 
     # This call is the terminal model operation for a deterministically routed
@@ -1078,7 +1080,47 @@ async def finalize_advisor_from_evidence(
         evidence,
         render_no_action_decision=render_no_action_decision,
     )
+    if (
+        require_actionable
+        and target_trace.get("target_verification_metadata_valid") is True
+        and target_trace.get("target_verification_actionable") is False
+        and deadline.remaining() > 1
+    ):
+        retry_budget = min(45, deadline.remaining())
+        retry_kwargs = dict(request_kwargs)
+        retry_kwargs["timeout"] = retry_budget
+        retry_kwargs["instructions"] = (
+            str(request_kwargs["instructions"])
+            + "\nYour previous HOLD was rejected because this command requires at least one "
+            "verified incoming acquisition lead whenever the deterministic screen supplies qualified "
+            "candidates. Re-evaluate the pickup and trade screens independently, research the final "
+            "target or targets, and return actionable=true with at least one verified decision target. "
+            "Do not request or discuss protected-core details; roster-space decisions remain manual."
+        )
+        try:
+            response = await asyncio.wait_for(
+                client.responses.create(**retry_kwargs),
+                timeout=retry_budget,
+            )
+        except Exception:
+            LOGGER.warning("Advisor actionable retry failed command=%s", command, exc_info=True)
+            trace["actionable_retry"] = "failed"
+            return finish(verification_failure_text or partial_text, "partial")
+        trace["actionable_retry"] = "used"
+        trace["web_search_used"] = trace["web_search_used"] or any(
+            getattr(item, "type", None) == "web_search_call"
+            for item in getattr(response, "output", [])
+        )
+        retry_text = str(getattr(response, "output_text", "") or "").strip()
+        text, target_trace = _structured_finalization(
+            retry_text,
+            evidence,
+            render_no_action_decision=render_no_action_decision,
+        )
     trace.update(target_trace)
+    if require_actionable and target_trace.get("target_verification_actionable") is not True:
+        trace["target_verification_error"] = "actionable_recommendation_required"
+        return finish(verification_failure_text or partial_text, "partial")
     if not text or not target_trace["target_verification_metadata_valid"] or not target_trace["required_target_research_completed"]:
         return finish(verification_failure_text or partial_text, "partial")
     if required_analysis_markers:
