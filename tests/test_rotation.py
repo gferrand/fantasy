@@ -15,7 +15,9 @@ from fantasy_advisor.rotation import (
     _rank_drop_candidates,
     _rank_targets,
     _rank_trade_targets,
+    rotation_validation_failure_text,
 )
+from fantasy_advisor.interactive_advisor import _structured_finalization
 
 
 def player(player_id, name, position, current, projected, *, injury=None, difficulty=3.0):
@@ -73,6 +75,9 @@ class RotationTests(unittest.TestCase):
         self.assertEqual([target["player_id"] for target in targets], ["easy", "hard"])
         self.assertNotIn("drop", targets[0])
         self.assertEqual(targets[0]["fixture_quality"], "favorable")
+        self.assertEqual(targets[0]["ownership"], {
+            "rostered": False, "team": None, "on_your_team": False,
+        })
 
     def test_trade_targets_include_current_owner_but_no_offer(self):
         target = player("target", "Trade Target", "M", 15, 25, difficulty=2.5)
@@ -83,7 +88,73 @@ class RotationTests(unittest.TestCase):
         )
 
         self.assertEqual(targets[0]["current_fantasy_team"], "Other Manager")
+        self.assertEqual(targets[0]["ownership"], {
+            "rostered": True, "team": "Other Manager", "on_your_team": False,
+        })
         self.assertNotIn("you_send", targets[0])
+
+    def test_pickup_target_passes_the_real_recommendation_validator(self):
+        target = player("pickup", "Pickup Target", "M", 15, 25, difficulty=2.5)
+        evidence_target = _rank_targets(
+            [target], extended_by_id={"pickup": target},
+        )[0]
+        rendered, trace = _structured_finalization(
+            self._action_payload(evidence_target),
+            {"data": {"pickup_targets": [evidence_target]}},
+        )
+
+        self.assertTrue(trace["target_verification_metadata_valid"])
+        self.assertIn("Add Pickup Target", rendered)
+
+    def test_trade_target_passes_the_real_recommendation_validator(self):
+        target = player("trade", "Trade Target", "M", 15, 25, difficulty=2.5)
+        evidence_target = _rank_targets(
+            [target],
+            extended_by_id={"trade": target},
+            owners={"trade": "Other Manager"},
+        )[0]
+        rendered, trace = _structured_finalization(
+            self._action_payload(evidence_target),
+            {"data": {"trade_targets": [evidence_target]}},
+        )
+
+        self.assertTrue(trace["target_verification_metadata_valid"])
+        self.assertIn("Trade for Trade Target", rendered)
+
+    def test_validation_failure_text_retains_bounded_fixture_context(self):
+        target = player("pickup", "Pickup Target", "M", 15, 25, difficulty=2.5)
+        evidence_target = _rank_targets(
+            [target], extended_by_id={"pickup": target},
+        )[0]
+
+        rendered = rotation_validation_failure_text({"pickup_targets": [evidence_target]})
+
+        self.assertIn("internal recommendation check failed", rendered)
+        self.assertIn("Deterministic fixture context (not recommendations)", rendered)
+        self.assertIn("Pickup Target", rendered)
+        self.assertIn("CHE (H)", rendered)
+        self.assertNotIn("couldn’t verify current public", rendered)
+
+    @staticmethod
+    def _action_payload(target):
+        return json.dumps({
+            "analysis": "Current role and fixtures support this option.",
+            "decision": {
+                "actionable": True,
+                "summary": "Act.",
+                "targets": [{
+                    "player_id": target["player_id"],
+                    "name": target["name"],
+                    "rationale": "Current evidence supports the move.",
+                    "availability_injury_verified": True,
+                    "role_minutes_verified": True,
+                    "current_public_sources": [{
+                        "title": "Official club",
+                        "url": "https://example.com/current",
+                    }],
+                }],
+            },
+        })
 
     def test_trade_targets_exclude_top_quartile_premium_producers(self):
         players = [

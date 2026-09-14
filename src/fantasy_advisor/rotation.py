@@ -77,7 +77,11 @@ def _has_reliable_role(player: Mapping[str, Any]) -> bool:
 
 
 def _target_summary(
-    player: Mapping[str, Any], *, extended: Mapping[str, Any], owner: str | None = None
+    player: Mapping[str, Any],
+    *,
+    extended: Mapping[str, Any],
+    rostered: bool,
+    owner: str | None = None,
 ) -> dict[str, Any]:
     summary = {
         key: player.get(key)
@@ -95,6 +99,11 @@ def _target_summary(
         else "mixed_or_difficult"
     )
     summary["exit_plan"] = _exit_plan(player, extended)
+    summary["ownership"] = {
+        "rostered": rostered,
+        "team": owner,
+        "on_your_team": False,
+    }
     if owner is not None:
         summary["current_fantasy_team"] = owner
     return summary
@@ -140,10 +149,52 @@ def _rank_targets(
         _target_summary(
             player,
             extended=extended_by_id.get(str(player.get("player_id")), {}),
+            rostered=owners is not None,
             owner=(owners or {}).get(str(player.get("player_id"))),
         )
         for player in selected[:limit]
     ]
+
+
+def rotation_validation_failure_text(payload: Mapping[str, Any]) -> str:
+    """Retain safe fixture facts without disguising validation failure as advice."""
+
+    lines = [
+        "🔄 **Rotation · internal recommendation check failed**",
+        (
+            "Current Fantasy and fixture evidence was retrieved, but the recommendation "
+            "failed an internal validation check. No pickup or trade recommendation was delivered."
+        ),
+    ]
+    candidates: list[str] = []
+    for label, key in (("Pickup", "pickup_targets"), ("Trade", "trade_targets")):
+        rows = payload.get(key)
+        if not isinstance(rows, list):
+            continue
+        for row in rows[:3]:
+            if not isinstance(row, Mapping) or not str(row.get("name") or "").strip():
+                continue
+            fixtures = row.get("forecast_next_fixtures")
+            opponents = []
+            if isinstance(fixtures, list):
+                for fixture in fixtures[:4]:
+                    if not isinstance(fixture, Mapping):
+                        continue
+                    opponent = str(fixture.get("opponent") or "").strip()
+                    if opponent:
+                        home = fixture.get("home")
+                        venue = " (H)" if home is True else " (A)" if home is False else ""
+                        opponents.append(f"{opponent}{venue}")
+            fixture_text = ", ".join(opponents) if opponents else "fixtures unavailable"
+            candidates.append(f"- {label} context: **{row['name']}** — {fixture_text}")
+    if candidates:
+        lines.extend([
+            "",
+            "**Deterministic fixture context (not recommendations)**",
+            *candidates,
+        ])
+    lines.extend(["", "Please retry shortly; do not act on this failed response."])
+    return "\n".join(lines)
 
 
 def _percentile(values: Iterable[float], percentile: float) -> float:

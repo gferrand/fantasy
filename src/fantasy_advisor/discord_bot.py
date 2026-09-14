@@ -52,6 +52,7 @@ from .interactive_advisor import (
     run_advisor,
 )
 from .sleeper import SleeperDataError
+from .rotation import rotation_validation_failure_text
 from .discord_presentation import (
     advisor_header,
     error_card,
@@ -648,6 +649,7 @@ def build_client(config: AppConfig) -> discord.Client:
                         "🔄 **Rotation · current Fantasy evidence retrieved**\n"
                         "I couldn’t verify current public role and availability information, so I’m not recommending a pickup or trade target. HOLD rather than act on unverified news."
                     ),
+                    verification_failure_text=rotation_validation_failure_text(context.payload),
                     command_instructions=(
                         "Use the deterministic protected core, roster, fixtures, pickup targets, trade targets, and drop candidates only. "
                         "Research current role, availability, injury, and club facts before recommending any incoming target. "
