@@ -236,6 +236,37 @@ class SlashFinalizationTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(response.text, "Structured report unavailable.")
 
+    async def test_required_analysis_entities_are_checked_only_in_analysis(self):
+        payload = json.dumps({
+            "analysis": "**Pursue now**\n- Target B\n**Monitor**\n- Target A\n**Pass**\n- None.",
+            "decision": {"actionable": True, "summary": "Add B.", "targets": [
+                self.target("target-b", "Target B"),
+            ]},
+        })
+        client = NS(responses=NS(create=AsyncMock(return_value=NS(
+            id="slash-response", output=[NS(type="web_search_call")], output_text=payload,
+        ))))
+
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/rotation", question="Rotate", evidence=self.packet(),
+            command_instructions="Assess the screen.", mandatory_web=True,
+            partial_text="Screen unavailable.", client=client,
+            required_analysis_entities=("Target A", "Target B"),
+        )
+
+        self.assertEqual(response.trace["result_status"], "complete")
+        self.assertIn("Add Target B", response.text)
+
+        client.responses.create.return_value.output_text = payload.replace("- Target A", "- Missing")
+        response = await advisor.finalize_advisor_from_evidence(
+            config(), command="/rotation", question="Rotate", evidence=self.packet(),
+            command_instructions="Assess the screen.", mandatory_web=True,
+            partial_text="Screen unavailable.", client=client,
+            required_analysis_entities=("Target A", "Target B"),
+        )
+        self.assertEqual(response.text, "Screen unavailable.")
+        self.assertEqual(response.trace["analysis_format_error"], "required_entities_missing")
+
     async def test_slot_formatted_xi_passes_when_locked_section_lines_are_exact(self):
         xi_line = "**F — Player One** · est. 4.0 Kick & Run pts"
         bench_line = "**Player Two** · est. 6.0 Kick & Run pts"

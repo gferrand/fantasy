@@ -907,6 +907,7 @@ async def finalize_advisor_from_evidence(
     client: Any = None,
     request_id: str | None = None,
     required_analysis_markers: tuple[str, ...] = (),
+    required_analysis_entities: tuple[str, ...] = (),
     required_analysis_fragments: tuple[str, ...] = (),
     required_analysis_section_fragments: dict[str, tuple[str, ...]] | None = None,
     required_ordered_section_fragments: dict[str, tuple[str, ...]] | None = None,
@@ -987,6 +988,7 @@ async def finalize_advisor_from_evidence(
                 deadline=deadline, client=owned_client,
                 request_id=request_id,
                 required_analysis_markers=required_analysis_markers,
+                required_analysis_entities=required_analysis_entities,
                 required_analysis_fragments=required_analysis_fragments,
                 required_analysis_section_fragments=required_analysis_section_fragments,
                 required_ordered_section_fragments=required_ordered_section_fragments,
@@ -1062,6 +1064,15 @@ async def finalize_advisor_from_evidence(
     text = str(getattr(response, "output_text", "") or "").strip()
     if not text:
         return finish(partial_text, "partial")
+    if required_analysis_entities:
+        try:
+            raw_analysis = _object(text).get("analysis")
+        except ValueError:
+            raw_analysis = None
+        normalized_analysis = raw_analysis.casefold() if isinstance(raw_analysis, str) else ""
+        if any(entity.casefold() not in normalized_analysis for entity in required_analysis_entities):
+            trace["analysis_format_error"] = "required_entities_missing"
+            return finish(partial_text, "partial")
     text, target_trace = _structured_finalization(
         text,
         evidence,
