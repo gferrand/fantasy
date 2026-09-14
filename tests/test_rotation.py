@@ -89,6 +89,7 @@ class RotationTests(unittest.TestCase):
             player("f", "Projected Forward", "F", 20, 35, difficulty=3.0),
             player("early", "Early Fixture Edge", "D", 20, 25, difficulty=3.2),
             player("next", "Next Projection", "D", 20, 30, difficulty=3.0),
+            player("tiny", "Tiny Fixture Edge", "D", 20, 10, difficulty=3.2),
         ]
         rows[4]["forecast_next_fixtures"] = [
             {"opponent": "A", "home": True, "difficulty": 2.0},
@@ -102,6 +103,13 @@ class RotationTests(unittest.TestCase):
             {"opponent": "B", "home": False, "difficulty": 1.5},
         ]
         rows[5].update(minutes=90, starts=1)
+        rows[6]["forecast_next_fixtures"] = [
+            {"opponent": "A", "home": True, "difficulty": 1.9},
+            {"opponent": "B", "home": False, "difficulty": 1.9},
+            {"opponent": "C", "home": True, "difficulty": 4.4},
+            {"opponent": "D", "home": False, "difficulty": 4.4},
+        ]
+        rows[6].update(minutes=270, starts=3)
 
         targets = _rank_targets(
             rows,

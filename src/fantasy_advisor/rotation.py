@@ -27,6 +27,7 @@ MIN_INCOMING_STARTS = 1.0
 MIN_EXPECTED_MINUTES = 60.0
 MIN_EARLY_OPPORTUNITY_MINUTES = 240.0
 MIN_EARLY_OPPORTUNITY_STARTS = 3.0
+EARLY_FIXTURE_COMPARISON_MARGIN = 0.25
 MAX_TARGET_FIXTURE_DIFFICULTY = 3.0
 TRADE_VALUE_PERCENTILE = 0.75
 DIFFICULT_FIXTURE_THRESHOLD = 3.1
@@ -165,22 +166,32 @@ def _rank_targets(
             if float(player.get("minutes") or 0.0) >= MIN_EARLY_OPPORTUNITY_MINUTES
             and float(player.get("starts") or 0.0) >= MIN_EARLY_OPPORTUNITY_STARTS
         ]
-        early_ranked = sorted(
-            established or eligible,
+        selected_ids = {str(player.get("player_id")) for player in selected}
+        early_pool = [
+            player for player in (established or eligible)
+            if str(player.get("player_id")) not in selected_ids
+        ]
+        best_early_difficulty = min(
+            (_early_fixture_difficulty(player) for player in early_pool),
+            default=5.0,
+        )
+        # Fixture estimates are coarse signals, so differences of a few
+        # hundredths must not create another cutoff cliff. Among players whose
+        # next-two run is effectively as good as the easiest one, prefer the
+        # stronger four-fixture projection and workload.
+        comparable_early_options = [
+            player for player in early_pool
+            if _early_fixture_difficulty(player)
+            <= best_early_difficulty + EARLY_FIXTURE_COMPARISON_MARGIN
+        ]
+        early_option = max(
+            comparable_early_options,
             key=lambda player: (
-                -_early_fixture_difficulty(player),
                 float(player.get("projected_horizon_points") or 0.0),
                 float(player.get("minutes") or 0.0),
+                -_early_fixture_difficulty(player),
             ),
-            reverse=True,
-        )
-        selected_ids = {str(player.get("player_id")) for player in selected}
-        early_option = next(
-            (
-                player for player in early_ranked
-                if str(player.get("player_id")) not in selected_ids
-            ),
-            None,
+            default=None,
         )
         if early_option is not None:
             selected.append(early_option)
@@ -568,8 +579,9 @@ def load_rotation_context(
             "fixture_priority": (
                 "Four-fixture projected Kick & Run points rank the screen, with fixture difficulty "
                 "used continuously as a tiebreaker and one slot reserved for the strongest established "
-                "next-two fixture opportunity. That slot requires at least three starts and 240 current "
-                "minutes when a player meeting that workload is available."
+                "next-two fixture opportunity. Near-equivalent next-two runs are compared by four-fixture "
+                "projection instead of a tiny difficulty cutoff. That slot requires at least three starts "
+                "and 240 current minutes when a player meeting that workload is available."
             ),
             "trade_value_gate": (
                 "Trade targets exclude the top quartile of reliable other-roster players by "
