@@ -8,7 +8,8 @@ Use `/rotation` in the private Fantasy Advisor DM for a protected-core,
 four-fixture Moneyball board with a scannable keep list, an authoritative
 free-agent/waiver screen, a separate other-team trade screen with ownership and
 Kick & Run workload/projection data, and non-core drop/shop candidates. The
-final advisor assessment labels screened players Pursue, Monitor, or Pass. It
+final advisor assessment highlights up to three verified moves to pursue and a
+short watch-next list. It
 does not force one player into a paired move,
 never puts an automatically protected player on the drop/shop list, and leaves
 every action manual in Sleeper. Trade options exclude the current-production

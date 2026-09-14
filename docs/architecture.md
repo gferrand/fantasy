@@ -60,8 +60,8 @@ authoritative owner names, and non-core roster-space candidates. Its protected c
 of the best current XI, best projected four-fixture XI, and medical holds.
 Only legal-lineup-improving moves may be shown, and protected players are never
 used as outgoing pieces. Available-player and fair-trade screens each preserve
-positional breadth and one next-two-fixture opportunity before the advisor
-labels candidates Pursue, Monitor, or Pass. Every acquisition keeps an explicit
+positional breadth and one established next-two-fixture opportunity before the
+advisor highlights verified Pursue-now moves and a short Watch-next list. Every acquisition keeps an explicit
 post-run reassessment window.
 
 Every recommendation should explain the evidence, uncertainty, relevant scoring categories, and the action for the manager to consider.
