@@ -142,6 +142,14 @@ Performance is part of engineering quality.
 - Verify post-merge health and use the established rollback/recovery path if the new version is clearly unhealthy.
 - Keep repositories clean: no secrets, caches, virtual environments, logs, generated runtime state, local databases, or unrelated junk.
 
+## Fantasy recommendations
+
+Every waiver, free-agent, drop, IR, and lineup recommendation shows its reasoning and the numbers behind it, in plain English. The full rule is in `docs/advisor/ADVISOR_REASONING.md`.
+
+- **Show the work.** For each add, drop, and starting spot, state why that player, his key rates, the fixtures and why they are easy or hard (opponent attack and defense), the projected points and how they were computed, and who he beats and by how much. State why the formation is the one used.
+- **Drops use actual lineups.** Check starts and minutes in the last two or three matches from match lineups or FPL element history. Do not infer minutes from FPL chance-of-playing fields. Do not propose dropping a current club starter unless his projection is clearly worse than the add. Core keepers stay: Semenyo, Gakpo, Schade.
+- **Injury returns use a healthy baseline.** Project a player coming back from injury from his last full season plus pre-injury per-90 rates and his role when fit, scaled by a labeled minutes ramp. Do not use the injury-shortened season sample or a stale chance field as the rate. Say when the ramp is judgment. A healthy baseline is a projection input, not a claim that last season's team sheet is this week's unpublished lineup.
+
 ## QA gate
 
 QA is part of implementation. A feature is not complete because code was written or CI is green.

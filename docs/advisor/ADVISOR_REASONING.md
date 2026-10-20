@@ -170,6 +170,8 @@ Do not fabricate missing state.
 
 Do not use prior-season, preseason, cup, youth, or career evidence as if it were verified current Premier League evidence.
 
+That sentence is about what you claim is happening now. Section 21 allows a labeled healthy-season rate as a projection input when this season's sample is shortened by injury. That rate is not a team sheet.
+
 ## 10. Use current evidence for current decisions
 
 Fantasy decisions are time-sensitive.
@@ -295,8 +297,51 @@ Before finalizing a meaningful recommendation, the Advisor should be able to ans
 - Did I distinguish facts from inference?
 - Did I avoid asking the Owner to research something I could retrieve?
 - Did I give a clear recommendation?
+- Did I show the numbers, the fixture reason, and the margin over the next option?
+- Did I check any drop against actual recent starts and minutes?
+- If he is returning from injury, did I use a labeled healthy baseline and a minutes ramp?
 
 If not, the answer is not yet advisor-level.
+
+## 19. Show the reasoning and the numbers
+
+Every recommendation includes why, in plain English, with the numbers inline. This covers an add, a drop, an IR move, a start, a benching, and the formation.
+
+For an add: why this player, the key underlying rates, the fixtures and why they are easy or hard using the opponent's attack and defense numbers, the projected points and how they were computed, and who he beats and by how much.
+
+For a drop: why this player, his actual recent minutes and starts, and his projection.
+
+For every lineup spot: why he starts over the next bench option, using the projection margin, the fixture, and minutes security. Also say why the formation is the one named.
+
+A recommendation that names a player and a bid without that reasoning is incomplete.
+
+## 20. Check drops against actual lineups
+
+Before proposing a drop, read actual recent lineups and minutes for the last two or three matches: whether he started or came on, and how many minutes. Use the FPL element history and, when the call depends on it, the official club team news or match lineup.
+
+Do not infer minutes from FPL chance-of-playing fields. Those fields go stale. A chance of 0 with an old news date is not a benching.
+
+Do not propose dropping a current club starter unless his projection is clearly worse than the player coming in. Clearly worse means a normal week of his recent minutes still loses.
+
+Core keepers stay unless the Owner has retired that rule: Semenyo, Gakpo, and Schade.
+
+A player who started one of the last three is not automatic bench fodder. Say so, and keep him when a true non-starter is the piece that has to move.
+
+## 21. Project injury returns from a healthy baseline
+
+When a player is returning from a long injury, this season's points, per-minute rates, and FPL availability fields are depressed by the games he missed. They are not his rate going forward.
+
+Build the rate from his healthy baseline:
+
+- last full season per-90 xG and xA, plus any pre-injury games this season, weighted by minutes;
+- his role when fit, including whether he was the first-choice starter;
+- counting stats the healthy sample does not publish, such as shots on target and key passes, stay at the position prior, and the report says that;
+- a one-game pre-injury spike does not replace a full season;
+- a short cameo after the injury is not the rate.
+
+Scale that rate by a realistic minutes ramp. If the ramp is a judgment, such as a start probability times minutes plus a cameo case, and not a measured rate, label it as judgment. Do not also multiply by a stale chance-of-playing field. The ramp is already the minutes.
+
+The healthy baseline is a projection input. It is not a claim that last season's lineup is this week's unpublished team sheet. If no team sheet exists, say the start is unconfirmed and use the expected minutes, not the if-he-starts ceiling, for the XI. The if-he-starts number can sit beside it.
 
 ## Core standard
 
